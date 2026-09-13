@@ -124,18 +124,21 @@ exe.root_module.addImport("zosc", zosc_dep.module("zosc"));
 
 ### The mouse modes are one call, not six
 
-Mouse reporting is five or six independent DEC private modes, and a program
-that turns on what it wants without turning off what it does not is one that
-gets a report per cell the pointer crosses because something earlier set mode
-1003. `mouse` takes the whole set and writes an `h` or an `l` for each flag,
-in ascending mode number:
+Mouse reporting is six independent DEC private modes, and a program that turns
+on what it wants without turning off what it does not is one that gets a
+report per cell the pointer crosses because something earlier set mode 1003.
+`mouse` takes the whole set and writes an `h` or an `l` for each flag, in
+ascending mode number:
 
 ```zig
 try zosc.mouse(w, .{ .press = true, .sgr = true });
 ```
 
 is press and wheel reports, in SGR coordinates, and nothing else — regardless
-of what was on before. `mouseOff` is `mouse(w, .{})`.
+of what was on before. `mouseOff` is `mouse(w, .{})`. The cost of that reach
+is that `Mouse.focus` is mode 1004, the same mode as `focusEvents`: a `mouse`
+call that leaves it false turns focus reporting off, so a program that wants
+both says so in one call.
 
 ### Pixels are a caller's claim, not a wire fact
 
@@ -202,6 +205,13 @@ encoder for all 256 byte values; a clipboard round trip at every length from
 back; and a table of malformed inputs per parser — truncated, wrong
 terminator, wrong introducer, trailing rubbish, a field too many, and numbers
 too large for the field they are read into.
+
+Every parser that reads untrusted bytes — `parseMouse`, `parseClipboardReply`
+with `decodeClipboard`, `parseModeReply`, `parseCursorPosition` — also has a
+`std.testing.fuzz` test asserting it never panics and never overflows, and
+that whatever it does accept survives a round trip back through the writer.
+`zig build test` runs each one over its seed corpus in a few microseconds;
+`zig build test --fuzz` is what turns the same property into a search.
 
 Tests run under `std.testing.allocator`, so a leak or an invalid free fails
 the test rather than the process. CI runs them in Debug, ReleaseSafe,

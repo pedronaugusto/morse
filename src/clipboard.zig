@@ -7,6 +7,7 @@
 //! allocator is involved; the decoder writes into a buffer the caller owns.
 
 const std = @import("std");
+const corpus = @import("corpus.zig");
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -420,4 +421,49 @@ test "a clipboard round trip preserves every byte" {
         var decoded: [plain.len]u8 = undefined;
         try std.testing.expectEqualSlices(u8, plain[0..len], try decodeClipboard(reply, &decoded));
     }
+}
+
+test "fuzz parseClipboardReply and decodeClipboard" {
+    // The property: no input panics or overflows; a payload the parser accepts
+    // decodes into exactly `decodedLen` bytes; and re-encoding those bytes
+    // reproduces a reply that decodes to the same bytes again. The parser's
+    // promise -- that what it returns is base64 `decodeClipboard` cannot fail
+    // on -- is the one worth holding to an adversary.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const reply = parseClipboardReply(bytes) orelse return;
+            try std.testing.expect(reply.data.len % 4 == 0);
+
+            const len = reply.decodedLen();
+            try std.testing.expect(len <= reply.data.len / 4 * 3);
+
+            var decoded: [48]u8 = undefined;
+            const plain = try decodeClipboard(reply, &decoded);
+            try std.testing.expectEqual(len, plain.len);
+
+            var output: [128]u8 = undefined;
+            var w: Writer = .fixed(&output);
+            try clipboardWrite(&w, reply.target, plain);
+
+            const again = parseClipboardReply(w.buffered()).?;
+            try std.testing.expectEqual(reply.target, again.target);
+            try std.testing.expectEqualStrings(reply.data, again.data);
+
+            var redecoded: [48]u8 = undefined;
+            try std.testing.expectEqualSlices(u8, plain, try decodeClipboard(again, &redecoded));
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b]52;c;aGk=\x1b\\"),
+        corpus.seed("\x1b]52;p;Zm9vYmFy\x07"),
+        corpus.seed("\x1b]52;pc;\x1b\\"),
+        corpus.seed("\x1b]52;7;Zg==\x1b\\"),
+        corpus.seed("\x1b]52;c;?\x1b\\"),
+        corpus.seed("\x1b]52;c;aB==\x1b\\"),
+        corpus.seed("\x1b]52;c;a=k=\x1b\\"),
+        corpus.seed("\x1b]52;z;aGk=\x1b\\"),
+        corpus.seed("\x1b]52;c;aGk="),
+    } });
 }

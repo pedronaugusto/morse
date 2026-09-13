@@ -10,6 +10,7 @@
 //! SGR exists.
 
 const std = @import("std");
+const corpus = @import("corpus.zig");
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -414,4 +415,40 @@ test "toCells handles a one-pixel cell and the largest coordinate" {
     }, 1, 1);
     try std.testing.expectEqual(@as(u32, 4294967295), ev.x);
     try std.testing.expectEqual(@as(u32, 4294967295), ev.y);
+}
+
+test "fuzz parseMouse" {
+    // The property: no input panics or overflows, and every input that parses
+    // re-encodes to something that parses back to the same event. That is the
+    // encoder and the parser agreeing on inputs no test author enumerated.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const ev = parseMouse(bytes) orelse return;
+            try std.testing.expect(!ev.pixels);
+
+            var output: [64]u8 = undefined;
+            var w: Writer = .fixed(&output);
+            try encodeMouse(&w, ev);
+            try std.testing.expectEqual(ev, parseMouse(w.buffered()).?);
+
+            // And the conversion the parser's caller reaches for next.
+            var pixel = ev;
+            pixel.pixels = true;
+            const cells = toCells(pixel, 8, 16);
+            try std.testing.expect(cells.x >= 1 and cells.x <= ev.x);
+            try std.testing.expect(cells.y >= 1 and cells.y <= ev.y);
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b[<0;10;5M"),
+        corpus.seed("\x1b[<62;7;9m"),
+        corpus.seed("\x1b[<64;1;1M"),
+        corpus.seed("\x1b[<131;4294967295;4294967295m"),
+        corpus.seed("\x1b[<192;1;1M"),
+        corpus.seed("\x1b[<0;99999999999;5M"),
+        corpus.seed("\x1b[<0;10;5"),
+        corpus.seed("\x1b[0;10;5M"),
+    } });
 }

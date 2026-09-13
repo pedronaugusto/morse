@@ -8,6 +8,10 @@ const Writer = std.Io.Writer;
 
 /// Sets the window title: `OSC 2 ; text BEL`.
 ///
+/// `BEL` rather than the `ST` the rest of this package writes: OSC 2 is old
+/// enough that some terminals accept nothing else there, and every terminal
+/// that takes `ST` also takes `BEL`.
+///
 /// `text` is written through byte for byte. A terminal ends the string at the
 /// first `ESC`, `BEL` or other C0 control, so a caller whose text may contain
 /// one must strip it first; this function does not, because silently editing

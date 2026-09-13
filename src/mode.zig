@@ -82,6 +82,10 @@ pub const Mouse = packed struct {
 /// wanting press and wheel reports without a report per pointer cell says
 /// `.{ .press = true, .sgr = true }` and is not left with mode 1003 still on
 /// from some earlier call.
+///
+/// The same reach is why `Mouse.focus` is here: mode 1004 is also
+/// `focusEvents`, and a call that leaves `focus` false turns it off. A program
+/// that wants focus reports must say so here, not only through `focusEvents`.
 pub fn mouse(w: *Writer, modes: Mouse) Writer.Error!void {
     try setMode(w, 1000, modes.press);
     try setMode(w, 1002, modes.drag);
