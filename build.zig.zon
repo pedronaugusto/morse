@@ -1,0 +1,17 @@
+.{
+    .name = .zosc,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xb6e4092ea0ce40ff,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "ci",
+        "examples",
+        ".github",
+        "src",
+        "CHANGELOG.md",
+        "LICENSE",
+        "README.md",
+    },
+}

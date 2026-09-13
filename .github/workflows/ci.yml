@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ZIG_VERSION: 0.16.0
+
+jobs:
+  # The whole suite on every supported host. The steps are spelled out rather
+  # than looped so each one reports its own status.
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Formatting
+        run: zig fmt --check build.zig build.zig.zon src examples
+
+      # Four optimize modes, because the suite asserts on arithmetic that
+      # behaves differently under each: safety-checked overflow in Debug and
+      # ReleaseSafe, unchecked in ReleaseFast and ReleaseSmall.
+      - name: Test — Debug
+        run: zig build test -Doptimize=Debug
+
+      - name: Test — ReleaseSafe
+        run: zig build test -Doptimize=ReleaseSafe
+
+      - name: Test — ReleaseFast
+        run: zig build test -Doptimize=ReleaseFast
+
+      - name: Test — ReleaseSmall
+        run: zig build test -Doptimize=ReleaseSmall
+
+      # Built AND run, against the module a consumer gets.
+      - name: Examples
+        run: zig build examples
+
+  # README.md's Usage block is a region of examples/usage.zig, which the job
+  # above runs. This is what keeps the two the same thing. No Zig needed.
+  readme:
+    name: README usage block
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ci/check-readme.sh
