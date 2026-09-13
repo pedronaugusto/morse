@@ -81,6 +81,15 @@ pub const unicodeCore = PrivateMode(2027);
 /// `queryMode` or keep whatever size the program already had.
 pub const inBandResize = PrivateMode(2048);
 
+/// Auto-wrap, DECAWM (mode 7). On -- which is the default -- a glyph written
+/// in the last column moves the cursor to the start of the next row.
+///
+/// A full-screen program that paints the bottom-right cell wants this off:
+/// with it on, writing that cell scrolls the whole screen up by one row, and
+/// there is no sequence that undoes the scroll. Off, the cursor stays put and
+/// the glyph lands where it was asked for.
+pub const autoWrap = PrivateMode(7);
+
 /// Which mouse reports a program wants. Every field is one DEC private mode,
 /// switched independently by `mouse`.
 pub const Mouse = packed struct {
@@ -346,12 +355,18 @@ test "every cursor shape writes its DECSCUSR number" {
     }
 }
 
-test "in-band resize writes its mode number" {
+test "in-band resize and auto-wrap write their mode numbers" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
     try inBandResize.set(&out.writer, true);
     try inBandResize.set(&out.writer, false);
-    try std.testing.expectEqualStrings("\x1b[?2048h\x1b[?2048l", out.written());
+    try autoWrap.set(&out.writer, false);
+    try autoWrap.set(&out.writer, true);
+    try std.testing.expectEqualStrings(
+        "\x1b[?2048h\x1b[?2048l\x1b[?7l\x1b[?7h",
+        out.written(),
+    );
     try std.testing.expectEqual(@as(u16, 2048), inBandResize.number);
+    try std.testing.expectEqual(@as(u16, 7), autoWrap.number);
 }

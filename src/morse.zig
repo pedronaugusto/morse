@@ -97,6 +97,8 @@ pub const cursorVisible = mode.cursorVisible;
 pub const unicodeCore = mode.unicodeCore;
 /// Resize reports on the input stream rather than by signal (mode 2048).
 pub const inBandResize = mode.inBandResize;
+/// Auto-wrap at the last column, DECAWM (mode 7).
+pub const autoWrap = mode.autoWrap;
 /// Which mouse reports a program wants.
 pub const Mouse = mode.Mouse;
 /// Sets every mouse mode at once, each flag its own `h` or `l`.
@@ -175,6 +177,8 @@ pub const cursorNextLine = cursor.cursorNextLine;
 pub const cursorPrevLine = cursor.cursorPrevLine;
 /// Moves the cursor to a column in the row it is on.
 pub const cursorColumn = cursor.cursorColumn;
+/// Moves the cursor to a row in the column it is on.
+pub const cursorRow = cursor.cursorRow;
 /// Saves the cursor's position and attributes, DECSC.
 pub const cursorSave = cursor.cursorSave;
 /// Restores what `cursorSave` saved, DECRC.
@@ -199,6 +203,12 @@ pub const scrollDown = cursor.scrollDown;
 pub const insertLines = cursor.insertLines;
 /// Removes rows at the cursor, pulling the rest of the region up.
 pub const deleteLines = cursor.deleteLines;
+/// Opens blank cells at the cursor, pushing the rest of the row right.
+pub const insertChars = cursor.insertChars;
+/// Removes cells at the cursor, pulling the rest of the row left.
+pub const deleteChars = cursor.deleteChars;
+/// Erases cells from the cursor rightwards, without moving anything.
+pub const eraseChars = cursor.eraseChars;
 
 //=========================================================================
 // Styles and colour, SGR.
@@ -345,6 +355,7 @@ test "the root module re-exports what the README promises" {
     try titlePop(w);
     try workingDirectory(w, "file://host/tmp");
     try inBandResize.set(w, true);
+    try autoWrap.set(w, false);
     try queryWindowSize(w, .text_area_cells);
     try resizeTextArea(w, 24, 80);
 
@@ -366,6 +377,10 @@ test "the root module re-exports what the README promises" {
     try scrollDown(w, 1);
     try insertLines(w, 1);
     try deleteLines(w, 1);
+    try cursorRow(w, 1);
+    try insertChars(w, 1);
+    try deleteChars(w, 1);
+    try eraseChars(w, 1);
 
     try resetStyle(w);
     try setStyle(w, .{ .bold = true, .fg = .{ .ansi = .red } });

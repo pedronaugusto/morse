@@ -94,6 +94,16 @@ pub fn cursorColumn(w: *Writer, col: u32) Writer.Error!void {
     try csi1(w, col, 'G');
 }
 
+/// Moves the cursor to row `row` in the column it is already on, VPA:
+/// `CSI row d`.
+///
+/// The vertical mirror of `cursorColumn`, and what a program that is walking
+/// down a fixed column writes so that it does not have to know how far the
+/// cursor moved sideways.
+pub fn cursorRow(w: *Writer, row: u32) Writer.Error!void {
+    try csi1(w, row, 'd');
+}
+
 /// Saves the cursor, DECSC: `ESC 7`.
 ///
 /// Two bytes, not a CSI sequence. What is saved is the cursor's position and
@@ -206,6 +216,34 @@ pub fn scrollDown(w: *Writer, n: u32) Writer.Error!void {
 /// why this beats repainting everything below the insertion point.
 pub fn insertLines(w: *Writer, n: u32) Writer.Error!void {
     try csi1(w, n, 'L');
+}
+
+/// Inserts `n` blank cells at the cursor, ICH: `CSI n @`.
+///
+/// The cells to the right shift along the row and whatever falls off the end
+/// of it is lost. The row's own counterpart to `insertLines`, and cheap for
+/// the same reason: shifting cells the terminal already has beats repainting
+/// the rest of the row.
+pub fn insertChars(w: *Writer, n: u32) Writer.Error!void {
+    try csi1(w, n, '@');
+}
+
+/// Deletes `n` cells at the cursor, DCH: `CSI n P`.
+///
+/// The cells to the right shift back and `n` blanks come in at the end of the
+/// row. The counterpart to `insertChars`.
+pub fn deleteChars(w: *Writer, n: u32) Writer.Error!void {
+    try csi1(w, n, 'P');
+}
+
+/// Erases `n` cells from the cursor rightwards, ECH: `CSI n X`.
+///
+/// Erases in place: nothing shifts, the cursor does not move, and the cells
+/// keep the current background colour. Unlike `clearLine` it takes a count,
+/// so it is what clears a field of known width without touching the rest of
+/// the row.
+pub fn eraseChars(w: *Writer, n: u32) Writer.Error!void {
+    try csi1(w, n, 'X');
 }
 
 /// Deletes `n` rows starting at the cursor's row, DL: `CSI n M`.
@@ -342,4 +380,32 @@ test "a writer with no room left reports the failure" {
     var buffer: [4]u8 = undefined;
     var w: Writer = .fixed(&buffer);
     try std.testing.expectError(error.WriteFailed, cursorTo(&w, 24, 80));
+}
+
+test "cursorRow writes the vertical position absolute" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try cursorRow(&out.writer, 12);
+    try std.testing.expectEqualStrings("\x1b[12d", out.written());
+}
+
+test "the character-level edits write their own finals" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try insertChars(&out.writer, 3);
+    try deleteChars(&out.writer, 4);
+    try eraseChars(&out.writer, 5);
+    try std.testing.expectEqualStrings("\x1b[3@\x1b[4P\x1b[5X", out.written());
+}
+
+test "a count of zero is written as given, as everywhere else here" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try insertChars(&out.writer, 0);
+    try eraseChars(&out.writer, 0);
+    try cursorRow(&out.writer, 0);
+    try std.testing.expectEqualStrings("\x1b[0@\x1b[0X\x1b[0d", out.written());
 }
