@@ -11,13 +11,20 @@
 //! taxonomy of malformed. What a parser returns borrows from the bytes it was
 //! given, and is valid for exactly as long as they are.
 //!
+//! The one exception to both rules is `KeyParser`, which has to remember
+//! half a sequence between reads and does it in a buffer the caller owns and
+//! can see. It is also the only thing here that decides where a sequence ends
+//! — which is what makes it the layer everything else on the input side hangs
+//! off, since a reply and a keypress arrive down the same pipe.
+//!
 //! `zosc` does not read the terminal, does not size the screen, does not
-//! manage the termios state, and does not decide when a sequence has ended.
-//! It turns intent into bytes and bytes back into intent.
+//! manage the termios state, and holds no capability database. It turns
+//! intent into bytes and bytes back into intent.
 
 const clipboard = @import("clipboard.zig");
 const cursor = @import("cursor.zig");
 const device = @import("device.zig");
+const key = @import("key.zig");
 const mode = @import("mode.zig");
 const mouse_events = @import("mouse.zig");
 const notifications = @import("notify.zig");
@@ -207,6 +214,25 @@ pub const setStyle = style.setStyle;
 pub const diffStyle = style.diffStyle;
 
 //=========================================================================
+// Keyboard input.
+//=========================================================================
+
+/// A key, either the codepoint it stands for or the name it goes by.
+pub const Key = key.Key;
+/// Which modifiers were held.
+pub const Modifiers = key.Modifiers;
+/// Press, repeat or release.
+pub const Kind = key.Kind;
+/// One keypress, as a value that borrows nothing.
+pub const KeyEvent = key.KeyEvent;
+/// One thing that arrived on the terminal's input.
+pub const Event = key.Event;
+/// A byte stream turned into events, over a buffer the caller owns.
+pub const KeyParser = key.KeyParser;
+/// The events one `KeyParser.feed` completes.
+pub const Events = key.Events;
+
+//=========================================================================
 // Asking the terminal what it is.
 //=========================================================================
 
@@ -251,6 +277,7 @@ test {
     _ = @import("clipboard.zig");
     _ = @import("cursor.zig");
     _ = @import("device.zig");
+    _ = @import("key.zig");
     _ = @import("mode.zig");
     _ = @import("mouse.zig");
     _ = @import("notify.zig");
@@ -352,6 +379,15 @@ test "the root module re-exports what the README promises" {
     ).?.target);
     try std.testing.expect(parseGraphicsResponse("\x1b_Gi=31;OK\x1b\\").?.ok());
 
+    var keys: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&keys);
+    var events: Events = parser.feed("\x1b[97;5u");
+    const event: Event = events.next().?;
+    try std.testing.expectEqual(Key{ .char = 'a' }, event.key.key);
+    try std.testing.expectEqual(Kind.press, event.key.kind);
+    try std.testing.expect(event.key.mods.ctrl);
+    try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
+
     const erase: ClearLine = .all;
     const wipe: ClearScreen = .scrollback;
     try std.testing.expect(erase == .all and wipe == .scrollback);
@@ -372,6 +408,10 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(@as(u8, 255), wide.to8().r);
     try std.testing.expect(da.class == 1 and da2.version == 0);
     try std.testing.expect(colours.target == .cursor and graphics.ok());
+
+    const pressed: KeyEvent = .{ .key = .escape };
+    const mods: Modifiers = .{};
+    try std.testing.expect(pressed.key == .escape and !mods.any());
 
     const shape: CursorShape = .block;
     const flags: KittyFlags = .{};
