@@ -38,6 +38,7 @@ pub fn main() !void {
         .report_associated_text = true,
     });
     try morse.bracketedPaste.set(w, true);
+    try morse.inBandResize.set(w, true);
 
     // A frame: clear, go to the top-left, write a heading in a style. The
     // second style call writes only what changed -- four bytes rather than a
@@ -75,7 +76,7 @@ pub fn main() !void {
     var keys: morse.KeyParser = .init(&input);
 
     // Control and a in the kitty protocol, then an SGR mouse click.
-    var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M");
+    var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t");
     while (events.next()) |event| switch (event) {
         // A key, and whatever text the terminal said it produced.
         .key => |key| std.debug.print("key:        {s}{t} {s}\n", .{
@@ -88,6 +89,9 @@ pub fn main() !void {
             "click:      {s} at {d},{d}\n",
             .{ @tagName(click.button), click.x, click.y },
         ),
+        // A terminal asked for in-band resize says so here rather than
+        // through a signal.
+        .resize => |size| std.debug.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),
         .paste_start, .paste_end, .focus_in, .focus_out => {},
     };
 
@@ -113,6 +117,7 @@ pub fn main() !void {
     const cell = morse.toCells(pixel, 8, 16);
 
     // On the way out, in reverse.
+    try morse.inBandResize.set(w, false);
     try morse.bracketedPaste.set(w, false);
     try morse.kittyKeyboardPop(w);
     try morse.mouseOff(w);

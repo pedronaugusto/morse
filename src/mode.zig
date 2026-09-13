@@ -66,6 +66,21 @@ pub const cursorVisible = PrivateMode(25);
 /// answers `not_recognized` is one measuring by codepoint.
 pub const unicodeCore = PrivateMode(2027);
 
+/// In-band resize reporting (mode 2048). On, the terminal sends
+/// `CSI 48 ; rows ; cols ; ypixels ; xpixels t` whenever it changes size, and
+/// `KeyParser` hands it back as `Event.resize`.
+///
+/// The point of it is that the answer arrives on the same file descriptor as
+/// everything else. A program that learns its size this way needs no signal
+/// handler, no `ioctl`, and no file descriptor it can call one on -- so it
+/// works unchanged inside a multiplexer, down a pipe, and against a terminal
+/// on another machine, all of which are cases where asking the operating
+/// system asks the wrong computer.
+///
+/// Newer than the rest of this file and not yet universal, so pair it with
+/// `queryMode` or keep whatever size the program already had.
+pub const inBandResize = PrivateMode(2048);
+
 /// Which mouse reports a program wants. Every field is one DEC private mode,
 /// switched independently by `mouse`.
 pub const Mouse = packed struct {
@@ -329,4 +344,14 @@ test "every cursor shape writes its DECSCUSR number" {
         try cursorShape(&out.writer, case.shape);
         try std.testing.expectEqualStrings(case.bytes, out.written());
     }
+}
+
+test "in-band resize writes its mode number" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try inBandResize.set(&out.writer, true);
+    try inBandResize.set(&out.writer, false);
+    try std.testing.expectEqualStrings("\x1b[?2048h\x1b[?2048l", out.written());
+    try std.testing.expectEqual(@as(u16, 2048), inBandResize.number);
 }

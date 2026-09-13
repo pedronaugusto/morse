@@ -89,6 +89,8 @@ pub const focusEvents = mode.focusEvents;
 pub const cursorVisible = mode.cursorVisible;
 /// Measuring text by grapheme cluster rather than codepoint (mode 2027).
 pub const unicodeCore = mode.unicodeCore;
+/// Resize reports on the input stream rather than by signal (mode 2048).
+pub const inBandResize = mode.inBandResize;
 /// Which mouse reports a program wants.
 pub const Mouse = mode.Mouse;
 /// Sets every mouse mode at once, each flag its own `h` or `l`.
@@ -227,6 +229,8 @@ pub const Kind = key.Kind;
 pub const KeyEvent = key.KeyEvent;
 /// One thing that arrived on the terminal's input.
 pub const Event = key.Event;
+/// How big the terminal became, as an in-band resize report gives it.
+pub const Resize = key.Resize;
 /// A byte stream turned into events, over a buffer the caller owns.
 pub const KeyParser = key.KeyParser;
 /// The events one `KeyParser.feed` completes.
@@ -321,6 +325,8 @@ test "the root module re-exports what the README promises" {
     try requestCursorPosition(w);
     try encodeMouse(w, .{ .button = .left, .x = 1, .y = 1, .press = true });
 
+    try inBandResize.set(w, true);
+
     try cursorTo(w, 1, 1);
     try cursorUp(w, 1);
     try cursorDown(w, 1);
@@ -408,6 +414,9 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(@as(u8, 255), wide.to8().r);
     try std.testing.expect(da.class == 1 and da2.version == 0);
     try std.testing.expect(colours.target == .cursor and graphics.ok());
+
+    const grew: Resize = .{ .rows = 24, .cols = 80 };
+    try std.testing.expect(grew.rows == 24 and grew.xpixels == 0);
 
     const pressed: KeyEvent = .{ .key = .escape };
     const mods: Modifiers = .{};

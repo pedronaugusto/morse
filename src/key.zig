@@ -318,6 +318,24 @@ pub const KeyEvent = struct {
     }
 };
 
+/// How big the terminal became, as an in-band resize report gives it.
+///
+/// The pixel fields are the size of the text area, not of the window: a
+/// terminal with a border reports the inside of it. Both are zero on a
+/// terminal that does not know its own pixel size, which is every terminal
+/// that is not drawing the glyphs itself -- a multiplexer, most obviously --
+/// so a program that divides by them must check first.
+pub const Resize = struct {
+    /// Rows of text.
+    rows: u32,
+    /// Columns of text.
+    cols: u32,
+    /// The height of the text area in pixels, or zero when unknown.
+    ypixels: u32 = 0,
+    /// The width of the text area in pixels, or zero when unknown.
+    xpixels: u32 = 0,
+};
+
 /// One thing that arrived on the terminal's input.
 pub const Event = union(enum) {
     /// A key went down, repeated, or came up.
@@ -331,6 +349,14 @@ pub const Event = union(enum) {
     focus_in,
     /// The window lost focus (`CSI O`).
     focus_out,
+    /// The terminal resized, and said so on the input stream rather than
+    /// through a signal (`CSI 48 ; ... t`, DEC mode 2048).
+    ///
+    /// Only a terminal asked for `inBandResize` sends these. It is the one
+    /// way a program learns its own size without asking the operating
+    /// system, which is what makes it work unchanged down a pipe, inside a
+    /// multiplexer, and on a machine whose terminal is somewhere else.
+    resize: Resize,
     /// A complete sequence the parser framed but does not read as input: a
     /// mouse report, a reply to a query, an OSC or DCS the terminal sent
     /// back. Hand it to the parser that does read it.
@@ -796,6 +822,7 @@ fn csiEvent(final: u8, params: Params) ?Event {
         },
         'I' => return if (params.count == 0) .focus_in else null,
         'O' => return if (params.count == 0) .focus_out else null,
+        't' => return resizeEvent(params),
         // R is the cursor position report. A terminal that wants to send F3
         // with modifiers sends `CSI 13 ; mods ~` instead, for this reason.
         else => return null,
@@ -826,6 +853,29 @@ fn tildeEvent(params: Params) ?Event {
             return .{ .key = ev };
         },
     }
+}
+
+/// Reads an in-band resize report: `CSI 48 ; rows ; cols ; ypixels ; xpixels t`.
+///
+/// `CSI ... t` is the window manipulation family, and every other member of
+/// it is a request a program sends or a reply to one it asked for -- read by
+/// `parseWindowSize`, not here. Only the leading 48 is a report the terminal
+/// sends unprompted, so only that one is a key-stream event; the rest come
+/// back as `Event.unhandled` for the parser that asked.
+///
+/// The two pixel parameters are optional, because a terminal that does not
+/// know its pixel size omits them rather than sending zeroes.
+fn resizeEvent(params: Params) ?Event {
+    if (params.get(0, 0) != 48) return null;
+    if (params.count < 3 or params.count > 5) return null;
+
+    const rows = params.get(1, 0) orelse return null;
+    const cols = params.get(2, 0) orelse return null;
+
+    var resize: Resize = .{ .rows = rows, .cols = cols };
+    if (params.count > 3) resize.ypixels = params.get(3, 0) orelse return null;
+    if (params.count > 4) resize.xpixels = params.get(4, 0) orelse return null;
+    return .{ .resize = resize };
 }
 
 /// Reads a kitty `CSI u` sequence, at every flag level the protocol defines.
@@ -1770,4 +1820,40 @@ test "a CSI M carrying parameters is not an X10 report" {
     // With parameters it is delete-lines, which a terminal never sends as
     // input -- so it is framed by its final byte and handed back.
     try expectUnhandled("\x1b[2M");
+}
+
+test "an in-band resize report decodes to its size" {
+    const event = one("\x1b[48;24;80;384;640t").?;
+    try std.testing.expectEqual(@as(u32, 24), event.resize.rows);
+    try std.testing.expectEqual(@as(u32, 80), event.resize.cols);
+    try std.testing.expectEqual(@as(u32, 384), event.resize.ypixels);
+    try std.testing.expectEqual(@as(u32, 640), event.resize.xpixels);
+}
+
+test "an in-band resize report without pixels leaves them zero" {
+    const event = one("\x1b[48;24;80t").?;
+    try std.testing.expectEqual(@as(u32, 24), event.resize.rows);
+    try std.testing.expectEqual(@as(u32, 80), event.resize.cols);
+    try std.testing.expectEqual(@as(u32, 0), event.resize.ypixels);
+    try std.testing.expectEqual(@as(u32, 0), event.resize.xpixels);
+}
+
+test "a window report that is not the in-band resize is handed back whole" {
+    // Every other CSI t is a reply to something the program asked for, so it
+    // goes to parseWindowSize rather than coming out as an event here.
+    try expectUnhandled("\x1b[8;24;80t");
+    try expectUnhandled("\x1b[6;16;8t");
+    try expectUnhandled("\x1b[t");
+    // 48 with too few or too many fields is not a report this parser claims.
+    try expectUnhandled("\x1b[48;24t");
+    try expectUnhandled("\x1b[48;24;80;384;640;1t");
+}
+
+test "a resize report arrives among keys without disturbing them" {
+    var buffer: [8]Event = undefined;
+    const events = collect("a\x1b[48;24;80tb", &buffer);
+    try std.testing.expectEqual(@as(usize, 3), events.len);
+    try std.testing.expectEqual(Key{ .char = 'a' }, events[0].key.key);
+    try std.testing.expectEqual(@as(u32, 80), events[1].resize.cols);
+    try std.testing.expectEqual(Key{ .char = 'b' }, events[2].key.key);
 }
