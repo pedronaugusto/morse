@@ -22,6 +22,50 @@ pub fn title(w: *Writer, text: []const u8) Writer.Error!void {
     try w.writeByte(seq.bel);
 }
 
+/// Pushes the window title onto the terminal's title stack:
+/// `CSI 22 ; 2 t`.
+///
+/// The same bargain `kittyKeyboardPush` makes, for the same reason: a program
+/// that sets a title is editing state it did not create and cannot read back,
+/// so the way to leave the terminal as it was found is to push on entry and
+/// `titlePop` on every exit path. There is no sequence that asks what the
+/// title is, which is what makes the stack the only way.
+///
+/// The stack is the terminal's and its depth is the terminal's business. A
+/// terminal that does not implement window operations ignores this, and then
+/// ignores the matching pop, so the pair is safe to write unconditionally but
+/// is not a guarantee.
+pub fn titlePush(w: *Writer) Writer.Error!void {
+    try w.writeAll(seq.csi ++ "22;2t");
+}
+
+/// Pops the window title off the terminal's title stack: `CSI 23 ; 2 t`.
+/// Undoes exactly one `titlePush`.
+pub fn titlePop(w: *Writer) Writer.Error!void {
+    try w.writeAll(seq.csi ++ "23;2t");
+}
+
+/// Tells the terminal which directory the program considers current:
+/// `OSC 7 ; uri ST`.
+///
+/// `uri` is a `file://` URL whose host is the machine the program is running
+/// on and whose path is the directory -- `file://hostname/home/user/src`.
+/// The hostname is the load-bearing part: it is how a terminal knows not to
+/// open a new tab in a path that only exists at the far end of an ssh
+/// session.
+///
+/// Written through byte for byte, like every other string here. The URI must
+/// be percent-encoded already, and a directory whose name contains a space or
+/// a `%` is exactly the case where an unencoded one goes wrong.
+///
+/// A shell is the usual writer of this; a program that changes directory on
+/// the user's behalf is the other one.
+pub fn workingDirectory(w: *Writer, uri: []const u8) Writer.Error!void {
+    try w.writeAll(seq.osc ++ "7;");
+    try w.writeAll(uri);
+    try w.writeAll(seq.st);
+}
+
 /// Opens a hyperlink: every cell written until the matching `hyperlinkEnd`
 /// carries `uri`, which the terminal opens on click.
 ///
@@ -108,4 +152,36 @@ test "a writer with no room left reports the failure" {
     var buffer: [4]u8 = undefined;
     var w: Writer = .fixed(&buffer);
     try std.testing.expectError(error.WriteFailed, title(&w, "too long for four bytes"));
+}
+
+test "the title stack pushes and pops the window title" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try titlePush(&out.writer);
+    try title(&out.writer, "morse");
+    try titlePop(&out.writer);
+    try std.testing.expectEqualStrings(
+        "\x1b[22;2t\x1b]2;morse\x07\x1b[23;2t",
+        out.written(),
+    );
+}
+
+test "workingDirectory writes OSC 7 with the URI as given" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try workingDirectory(&out.writer, "file://host/home/user/src");
+    try std.testing.expectEqualStrings(
+        "\x1b]7;file://host/home/user/src\x1b\\",
+        out.written(),
+    );
+}
+
+test "workingDirectory accepts an empty URI" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try workingDirectory(&out.writer, "");
+    try std.testing.expectEqualStrings("\x1b]7;\x1b\\", out.written());
 }

@@ -38,6 +38,12 @@ const style = @import("style.zig");
 
 /// Sets the window title: `OSC 2 ; text BEL`.
 pub const title = osc.title;
+/// Pushes the window title onto the terminal's title stack.
+pub const titlePush = osc.titlePush;
+/// Pops the window title off the terminal's title stack.
+pub const titlePop = osc.titlePop;
+/// Tells the terminal which directory is current (OSC 7).
+pub const workingDirectory = osc.workingDirectory;
 /// Opens an OSC 8 hyperlink, optionally with a `key=value` parameter list.
 pub const hyperlinkStart = osc.hyperlinkStart;
 /// Closes the hyperlink opened by `hyperlinkStart`.
@@ -335,6 +341,9 @@ test "the root module re-exports what the README promises" {
     try requestCursorPosition(w);
     try encodeMouse(w, .{ .button = .left, .x = 1, .y = 1, .press = true });
 
+    try titlePush(w);
+    try titlePop(w);
+    try workingDirectory(w, "file://host/tmp");
     try inBandResize.set(w, true);
     try queryWindowSize(w, .text_area_cells);
     try resizeTextArea(w, 24, 80);
