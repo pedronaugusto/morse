@@ -70,6 +70,17 @@ pub fn parseModeReply(bytes: []const u8) ?ModeReport {
     return .{ .mode = mode.value, .state = @enumFromInt(state.value) };
 }
 
+/// Asks where the cursor is, CPR: `CSI 6 n`.
+///
+/// The answer arrives on the terminal's input as a sequence
+/// `parseCursorPosition` reads. Every terminal answers this one, which is
+/// what makes it the query to pair with one that may go unanswered — and
+/// what makes it the way a program that has lost track of the cursor finds
+/// it again.
+pub fn requestCursorPosition(w: *Writer) Writer.Error!void {
+    try w.writeAll(seq.csi ++ "6n");
+}
+
 /// A cursor position, in cells, counting from one at the top-left.
 pub const CursorPosition = struct {
     /// The row, where the topmost row is 1.
@@ -148,6 +159,14 @@ test "parseModeReply returns null on anything it does not recognise" {
 test "parseModeReply survives a number long enough to overflow" {
     try std.testing.expect(parseModeReply("\x1b[?99999999999999999999;1$y") == null);
     try std.testing.expect(parseModeReply("\x1b[?1;99999999999999999999$y") == null);
+}
+
+test "requestCursorPosition asks with CPR" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try requestCursorPosition(&out.writer);
+    try std.testing.expectEqualStrings("\x1b[6n", out.written());
 }
 
 test "parseCursorPosition reads a report" {

@@ -16,6 +16,7 @@
 //! It turns intent into bytes and bytes back into intent.
 
 const clipboard = @import("clipboard.zig");
+const cursor = @import("cursor.zig");
 const mode = @import("mode.zig");
 const mouse_events = @import("mouse.zig");
 const notifications = @import("notify.zig");
@@ -107,6 +108,8 @@ pub const cursorShape = mode.cursorShape;
 
 /// Asks whether a DEC private mode is set, DECRQM.
 pub const queryMode = query.queryMode;
+/// Asks where the cursor is, CPR.
+pub const requestCursorPosition = query.requestCursorPosition;
 /// What a terminal says about a mode it was asked about.
 pub const ModeState = query.ModeState;
 /// A terminal's answer to `queryMode`.
@@ -133,8 +136,54 @@ pub const parseMouse = mouse_events.parseMouse;
 /// Converts a pixel report into cells.
 pub const toCells = mouse_events.toCells;
 
+//=========================================================================
+// Cursor and screen.
+//=========================================================================
+
+/// Moves the cursor to a row and a column, counting from one.
+pub const cursorTo = cursor.cursorTo;
+/// Moves the cursor up, stopping at the top of the screen or the region.
+pub const cursorUp = cursor.cursorUp;
+/// Moves the cursor down, stopping at the bottom; it does not scroll.
+pub const cursorDown = cursor.cursorDown;
+/// Moves the cursor right, stopping at the last column.
+pub const cursorRight = cursor.cursorRight;
+/// Moves the cursor left, stopping at column one.
+pub const cursorLeft = cursor.cursorLeft;
+/// Moves the cursor down and to column one.
+pub const cursorNextLine = cursor.cursorNextLine;
+/// Moves the cursor up and to column one.
+pub const cursorPrevLine = cursor.cursorPrevLine;
+/// Moves the cursor to a column in the row it is on.
+pub const cursorColumn = cursor.cursorColumn;
+/// Saves the cursor's position and attributes, DECSC.
+pub const cursorSave = cursor.cursorSave;
+/// Restores what `cursorSave` saved, DECRC.
+pub const cursorRestore = cursor.cursorRestore;
+/// How much of the cursor's row `clearLine` erases.
+pub const ClearLine = cursor.ClearLine;
+/// Erases part or all of the cursor's row.
+pub const clearLine = cursor.clearLine;
+/// How much of the screen `clearScreen` erases.
+pub const ClearScreen = cursor.ClearScreen;
+/// Erases part or all of the screen, or the scrollback.
+pub const clearScreen = cursor.clearScreen;
+/// Sets the rows scrolling is confined to, DECSTBM.
+pub const scrollRegion = cursor.scrollRegion;
+/// Puts the whole screen back as the scroll region.
+pub const scrollRegionReset = cursor.scrollRegionReset;
+/// Scrolls the region up, bringing blank rows in at the bottom.
+pub const scrollUp = cursor.scrollUp;
+/// Scrolls the region down, bringing blank rows in at the top.
+pub const scrollDown = cursor.scrollDown;
+/// Opens blank rows at the cursor, pushing the rest of the region down.
+pub const insertLines = cursor.insertLines;
+/// Removes rows at the cursor, pulling the rest of the region up.
+pub const deleteLines = cursor.deleteLines;
+
 test {
     _ = @import("clipboard.zig");
+    _ = @import("cursor.zig");
     _ = @import("mode.zig");
     _ = @import("mouse.zig");
     _ = @import("notify.zig");
@@ -173,7 +222,27 @@ test "the root module re-exports what the README promises" {
     try kittyKeyboardQuery(w);
     try cursorShape(w, .bar);
     try queryMode(w, 2026);
+    try requestCursorPosition(w);
     try encodeMouse(w, .{ .button = .left, .x = 1, .y = 1, .press = true });
+
+    try cursorTo(w, 1, 1);
+    try cursorUp(w, 1);
+    try cursorDown(w, 1);
+    try cursorRight(w, 1);
+    try cursorLeft(w, 1);
+    try cursorNextLine(w, 1);
+    try cursorPrevLine(w, 1);
+    try cursorColumn(w, 1);
+    try cursorSave(w);
+    try cursorRestore(w);
+    try clearLine(w, .all);
+    try clearScreen(w, .all);
+    try scrollRegion(w, 1, 2);
+    try scrollRegionReset(w);
+    try scrollUp(w, 1);
+    try scrollDown(w, 1);
+    try insertLines(w, 1);
+    try deleteLines(w, 1);
 
     try std.testing.expectEqual(Clipboard.clipboard, parseClipboardReply("\x1b]52;c;aGk=\x1b\\").?.target);
     try std.testing.expectEqual(ModeState.set, parseModeReply("\x1b[?2026;1$y").?.state);
@@ -190,6 +259,10 @@ test "the root module re-exports what the README promises" {
     var buffer: [8]u8 = undefined;
     const reply: ClipboardReply = parseClipboardReply("\x1b]52;c;aGk=\x1b\\").?;
     try std.testing.expectEqualStrings("hi", try decodeClipboard(reply, &buffer));
+
+    const erase: ClearLine = .all;
+    const wipe: ClearScreen = .scrollback;
+    try std.testing.expect(erase == .all and wipe == .scrollback);
 
     const shape: CursorShape = .block;
     const flags: KittyFlags = .{};
