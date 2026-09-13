@@ -5,9 +5,19 @@
 //! `parseMouse` cannot tell them apart and always reports cells. A program
 //! knows which mode it asked for; see `MouseEvent.pixels` and `toCells`.
 //!
-//! The older X10 and UTF-8 mouse encodings are out of scope. They cap
-//! coordinates at column 223 and are ambiguous about release, which is why
-//! SGR exists.
+//! The original X10 encoding is read too, by `parseMouseX10`, but is never
+//! asked for -- `mouse` always offers SGR. It is here because a terminal put
+//! into mode 1000, 1002 or 1003 *without* mode 1006 reports in it, and a
+//! sequence that cannot be read still has to be framed: three arbitrary bytes
+//! mistaken for three keypresses is a worse failure than a report this
+//! package declines to interpret. Its own limits are why SGR exists -- it
+//! caps coordinates at 223 and does not say which button was released.
+//!
+//! The UTF-8 encoding (mode 1005) is not read. It is the same report with the
+//! coordinates spelled as codepoints rather than bytes, which makes its length
+//! depend on a mode the input stream does not carry -- so it cannot even be
+//! framed without knowing what was asked for. It was superseded by SGR before
+//! it was widely implemented.
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
@@ -150,6 +160,78 @@ pub fn parseMouse(bytes: []const u8) ?MouseEvent {
         .shift = code.value & 4 != 0,
         .alt = code.value & 8 != 0,
         .ctrl = code.value & 16 != 0,
+    };
+}
+
+/// The byte an X10 mouse report biases its fields by, so that every byte of
+/// the report is printable and none of them is a control code.
+const x10_bias = 32;
+
+/// The most an X10 field can say once the bias is taken off: 255 - 32. The
+/// cap that made SGR necessary, and the reason a program on a terminal wider
+/// than 223 columns must ask for mode 1006.
+pub const x10_max = 255 - x10_bias;
+
+/// Reads the original X10 mouse report: `CSI M b x y`, where each of the
+/// three bytes carries its value plus 32.
+///
+/// This is what a terminal in mode 1000, 1002 or 1003 sends when mode 1006
+/// was not also asked for. `mouse` always asks for 1006, so a program that
+/// sets its modes through this package never sees one; it is read because a
+/// terminal left in that state by something earlier still sends them, and
+/// `KeyParser` frames them either way.
+///
+/// Two things the encoding cannot say, both of which `parseMouse` can. A
+/// release names no button -- every release is `Button.none`, so a program
+/// cannot tell which button came up. And a coordinate above `x10_max` does
+/// not fit in a byte: terminals variously clamp it, wrap it, or send a byte
+/// below the bias, so a report from beyond column 223 is wrong rather than
+/// missing. Returns null for a field below the bias; everything else is
+/// reported as sent.
+///
+/// Returns null for anything that is not exactly this sequence, and never an
+/// error. `bytes` must be exactly the sequence. The returned event always has
+/// `pixels` false: the X10 encoding has no pixel form.
+pub fn parseMouseX10(bytes: []const u8) ?MouseEvent {
+    const prefix = seq.csi ++ "M";
+    if (!std.mem.startsWith(u8, bytes, prefix)) return null;
+    const fields = bytes[prefix.len..];
+    if (fields.len != 3) return null;
+    for (fields) |b| {
+        if (b < x10_bias) return null;
+    }
+
+    const code = fields[0] - x10_bias;
+
+    // The same button bits as the SGR form, and the same "both at once names
+    // nothing" rule -- only the transport differs.
+    const button = switch (code & 0b1100_0011) {
+        0 => Button.left,
+        1 => Button.middle,
+        2 => Button.right,
+        3 => Button.none,
+        64 => Button.wheel_up,
+        65 => Button.wheel_down,
+        66 => Button.wheel_left,
+        67 => Button.wheel_right,
+        128 => Button.button_8,
+        129 => Button.button_9,
+        130 => Button.button_10,
+        131 => Button.button_11,
+        else => return null,
+    };
+
+    return .{
+        .button = button,
+        .x = fields[1] - x10_bias,
+        .y = fields[2] - x10_bias,
+        // Button 3 is the release, and it is the only one this encoding has.
+        // A wheel notch is a press, as it is in the SGR form.
+        .press = button != .none,
+        .motion = code & 32 != 0,
+        .shift = code & 4 != 0,
+        .alt = code & 8 != 0,
+        .ctrl = code & 16 != 0,
     };
 }
 
@@ -450,5 +532,138 @@ test "fuzz parseMouse" {
         corpus.seed("\x1b[<0;99999999999;5M"),
         corpus.seed("\x1b[<0;10;5"),
         corpus.seed("\x1b[0;10;5M"),
+    } });
+}
+
+test "parseMouseX10 reads a press, its coordinates and its modifiers" {
+    // 32 is the bias, so a field byte of 0x21 is 1.
+    const ev = parseMouseX10("\x1b[M\x20\x21\x22").?;
+    try std.testing.expectEqual(Button.left, ev.button);
+    try std.testing.expectEqual(@as(u32, 1), ev.x);
+    try std.testing.expectEqual(@as(u32, 2), ev.y);
+    try std.testing.expect(ev.press);
+    try std.testing.expect(!ev.motion and !ev.shift and !ev.alt and !ev.ctrl);
+    try std.testing.expect(!ev.pixels);
+}
+
+test "parseMouseX10 reads every button the encoding can name" {
+    const cases = [_]struct { code: u8, button: Button, press: bool }{
+        .{ .code = 0, .button = .left, .press = true },
+        .{ .code = 1, .button = .middle, .press = true },
+        .{ .code = 2, .button = .right, .press = true },
+        // Button 3 is the release, and it names no button -- the limit of
+        // this encoding and the reason SGR exists.
+        .{ .code = 3, .button = .none, .press = false },
+        .{ .code = 64, .button = .wheel_up, .press = true },
+        .{ .code = 65, .button = .wheel_down, .press = true },
+        .{ .code = 66, .button = .wheel_left, .press = true },
+        .{ .code = 67, .button = .wheel_right, .press = true },
+        .{ .code = 128, .button = .button_8, .press = true },
+        .{ .code = 131, .button = .button_11, .press = true },
+    };
+    for (cases) |case| {
+        const bytes = [_]u8{ 0x1b, '[', 'M', case.code + 32, 33, 33 };
+        const ev = parseMouseX10(&bytes).?;
+        try std.testing.expectEqual(case.button, ev.button);
+        try std.testing.expectEqual(case.press, ev.press);
+    }
+}
+
+test "parseMouseX10 reads the modifier and motion bits" {
+    const shift = parseMouseX10("\x1b[M\x24\x21\x21").?;
+    try std.testing.expect(shift.shift and !shift.alt and !shift.ctrl);
+
+    const alt = parseMouseX10("\x1b[M\x28\x21\x21").?;
+    try std.testing.expect(alt.alt and !alt.shift and !alt.ctrl);
+
+    const ctrl = parseMouseX10("\x1b[M\x30\x21\x21").?;
+    try std.testing.expect(ctrl.ctrl and !ctrl.shift and !ctrl.alt);
+
+    const drag = parseMouseX10("\x1b[M\x40\x21\x21").?;
+    try std.testing.expect(drag.motion and drag.button == .left);
+}
+
+test "parseMouseX10 reads the first cell and the last one it can spell" {
+    const first = parseMouseX10("\x1b[M\x20\x21\x21").?;
+    try std.testing.expectEqual(@as(u32, 1), first.x);
+    try std.testing.expectEqual(@as(u32, 1), first.y);
+
+    const last = parseMouseX10(&[_]u8{ 0x1b, '[', 'M', 32, 255, 255 }).?;
+    try std.testing.expectEqual(@as(u32, x10_max), last.x);
+    try std.testing.expectEqual(@as(u32, x10_max), last.y);
+    try std.testing.expectEqual(@as(u32, 223), @as(u32, x10_max));
+}
+
+test "parseMouseX10 returns null on anything it does not recognise" {
+    const rejected = [_][]const u8{
+        "", // nothing at all
+        "\x1b[M", // no fields
+        "\x1b[M\x20\x21", // one field short
+        "\x1b[M\x20\x21\x21\x21", // one field too many
+        "\x1b[m\x20\x21\x21", // the SGR release final, not this one
+        "\x1b[<0;1;1M", // an SGR report
+        "\x1bM\x20\x21\x21", // no CSI
+        "\x1b[M\x1f\x21\x21", // a button byte below the bias
+        "\x1b[M\x20\x1f\x21", // a column byte below the bias
+        "\x1b[M\x20\x21\x00", // a row byte below the bias
+        "\x1b[M\xe0\x21\x21", // wheel and extra-button bits at once
+    };
+    for (rejected) |bytes| {
+        try std.testing.expect(parseMouseX10(bytes) == null);
+    }
+}
+
+test "parseMouseX10 reads a button whose code needs the high bit" {
+    // 0xc0 is 160 once the bias is off, which masks to button 8 -- the bit
+    // pattern that looks illegal and is not.
+    const ev = parseMouseX10("\x1b[M\xc0\x21\x21").?;
+    try std.testing.expectEqual(Button.button_8, ev.button);
+    try std.testing.expect(ev.motion);
+}
+
+test "parseMouse and parseMouseX10 each refuse the other's form" {
+    try std.testing.expect(parseMouse("\x1b[M\x20\x21\x21") == null);
+    try std.testing.expect(parseMouseX10("\x1b[<0;1;1M") == null);
+}
+
+test "fuzz parseMouseX10" {
+    // The property: no input panics or overflows, and every report that
+    // parses re-encodes to the same three biased bytes and parses back to an
+    // identical event. The encoder is inline because this package writes no
+    // X10 reports -- it only reads them.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const ev = parseMouseX10(bytes) orelse return;
+            try std.testing.expect(ev.x <= x10_max and ev.y <= x10_max);
+            try std.testing.expect(!ev.pixels);
+
+            var code: u8 = @intFromEnum(ev.button);
+            if (ev.shift) code |= 4;
+            if (ev.alt) code |= 8;
+            if (ev.ctrl) code |= 16;
+            if (ev.motion) code |= 32;
+
+            const round = [_]u8{
+                0x1b,
+                '[',
+                'M',
+                code +% x10_bias,
+                @intCast(ev.x + x10_bias),
+                @intCast(ev.y + x10_bias),
+            };
+            try std.testing.expectEqual(ev, parseMouseX10(&round).?);
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b[M\x20\x21\x21"),
+        corpus.seed("\x1b[M\x23\x21\x21"),
+        corpus.seed("\x1b[M\x60\x21\x21"),
+        corpus.seed("\x1b[M\xa0\xff\xff"),
+        corpus.seed("\x1b[M\x20\x20\x20"),
+        corpus.seed("\x1b[M\x1f\x21\x21"),
+        corpus.seed("\x1b[M\x20\x21"),
+        corpus.seed("\x1b[<0;1;1M"),
     } });
 }

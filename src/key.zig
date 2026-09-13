@@ -754,6 +754,17 @@ fn decodeCsi(bytes: []const u8) Decoded {
     const final = bytes[i];
     if (final < 0x40 or final > 0x7e) return .{ .skip = 1 };
 
+    // `CSI M` with no parameters is an X10 mouse report, whose three
+    // coordinate bytes are arbitrary and are part of the sequence. Framing
+    // them here is what keeps a terminal left in mode 1000 without mode 1006
+    // from delivering three of them as three keypresses. Nothing else in the
+    // input stream has a length the final byte alone does not give.
+    if (!private and final == 'M' and param_start == param_end and intermediate_end == param_end) {
+        const report_len = i + 1 + x10_mouse_fields;
+        if (bytes.len < report_len) return .incomplete;
+        return ready(.{ .unhandled = bytes[0..report_len] }, report_len);
+    }
+
     const len = i + 1;
     const whole = bytes[0..len];
     if (private or intermediate_end != param_end) return ready(.{ .unhandled = whole }, len);
@@ -1000,6 +1011,14 @@ fn fillText(ev: *KeyEvent, params: Params, index: usize) bool {
 //=========================================================================
 // CSI parameters.
 //=========================================================================
+
+/// How many bytes follow `CSI M` in an X10 mouse report: a button and two
+/// coordinates, each biased by 32 so that none of them is a control code.
+///
+/// They are framed but not decoded here -- `parseMouseX10` reads them -- and
+/// framing them is not optional: they are arbitrary bytes, so a parser that
+/// stopped at the `M` would hand the next three to the key decoder.
+const x10_mouse_fields = 3;
 
 /// The most parameters a sequence may carry and still be one this parser
 /// reads. Three is all any keyboard protocol uses.
@@ -1704,4 +1723,51 @@ test "fuzz the parameter scanner" {
         corpus.seed("99999999999"),
         corpus.seed("1;a"),
     } });
+}
+
+test "an X10 mouse report is framed whole, not split into keypresses" {
+    // The regression this framing exists for: without it the three biased
+    // bytes are handed to the key decoder as space, A and A.
+    try expectUnhandled("\x1b[M\x20\x41\x41");
+}
+
+test "an X10 mouse report does not swallow what follows it" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+    var events = parser.feed("\x1b[M\x20\x41\x41hi");
+
+    try std.testing.expectEqualStrings("\x1b[M\x20\x41\x41", events.next().?.unhandled);
+    try std.testing.expectEqual(Key{ .char = 'h' }, events.next().?.key.key);
+    try std.testing.expectEqual(Key{ .char = 'i' }, events.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+}
+
+test "an X10 mouse report whose fields look like an escape is still one sequence" {
+    // A coordinate byte may be any value at all, ESC included, and framing
+    // by length is the only thing that gets this right.
+    try expectUnhandled("\x1b[M\x20\x1b\x5b");
+}
+
+test "an X10 mouse report split across reads is held until it is whole" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    const whole = "\x1b[M\x20\x41\x41";
+    var split: usize = 1;
+    while (split < whole.len) : (split += 1) {
+        parser.reset();
+        var first = parser.feed(whole[0..split]);
+        try std.testing.expectEqual(@as(?Event, null), first.next());
+        try std.testing.expectEqual(split, parser.pending().len);
+
+        var second = parser.feed(whole[split..]);
+        try std.testing.expectEqualStrings(whole, second.next().?.unhandled);
+        try std.testing.expectEqual(@as(?Event, null), second.next());
+    }
+}
+
+test "a CSI M carrying parameters is not an X10 report" {
+    // With parameters it is delete-lines, which a terminal never sends as
+    // input -- so it is framed by its final byte and handed back.
+    try expectUnhandled("\x1b[2M");
 }
