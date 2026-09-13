@@ -423,9 +423,9 @@ test "the root module re-exports what the README promises" {
     const solid: Rgb = .{ .r = 255, .g = 0, .b = 0 };
     const line: Underline = .curly;
     const shade: Ansi = .bright_blue;
-    const attrs: Style = .{};
+    const attrs: Style = .{ .overline = true };
     try std.testing.expect(colour == .rgb and line == .curly and shade == .bright_blue);
-    try std.testing.expect(!attrs.bold and solid.r == 255);
+    try std.testing.expect(!attrs.bold and attrs.overline and solid.r == 255);
 
     const wide: Rgb16 = .{ .r = 0xffff, .g = 0, .b = 0 };
     const da: DeviceAttributes = .{ .class = 1 };

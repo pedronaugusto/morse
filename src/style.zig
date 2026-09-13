@@ -164,6 +164,11 @@ pub const Style = struct {
     hidden: bool = false,
     /// A line through the middle of the glyphs.
     strikethrough: bool = false,
+    /// A line above the glyphs, SGR 53. The counterpart to `underline` and,
+    /// unlike it, a plain on-off with no styles -- SGR has no sub-parameter
+    /// form for the overline and no code for its colour. Terminals that do
+    /// not implement it ignore both codes.
+    overline: bool = false,
 };
 
 /// One `CSI ... m` being built up, parameter by parameter.
@@ -291,6 +296,7 @@ pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
     if (from.reverse and !to.reverse) try params.code(27);
     if (from.hidden and !to.hidden) try params.code(28);
     if (from.strikethrough and !to.strikethrough) try params.code(29);
+    if (from.overline and !to.overline) try params.code(55);
 
     // Hence the `or off_bold_dim`: turning one of the pair off has just
     // turned the other off too, so the survivor is stated again.
@@ -311,6 +317,7 @@ pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
     if (to.reverse and !from.reverse) try params.code(7);
     if (to.hidden and !from.hidden) try params.code(8);
     if (to.strikethrough and !from.strikethrough) try params.code(9);
+    if (to.overline and !from.overline) try params.code(53);
 
     if (!std.meta.eql(from.fg, to.fg)) try writeFgBg(&params, to.fg, 39, 30, 90, 38);
     if (!std.meta.eql(from.bg, to.bg)) try writeFgBg(&params, to.bg, 49, 40, 100, 48);
@@ -640,17 +647,18 @@ test "everything on and everything off again, in both directions" {
         .reverse = true,
         .hidden = true,
         .strikethrough = true,
+        .overline = true,
     };
 
     var on: Writer.Allocating = .init(std.testing.allocator);
     defer on.deinit();
     try diffStyle(&on.writer, .{}, everything);
-    try std.testing.expectEqualStrings("\x1b[1;2;3;4:5;5;7;8;9;31;104;58:5:2m", on.written());
+    try std.testing.expectEqualStrings("\x1b[1;2;3;4:5;5;7;8;9;53;31;104;58:5:2m", on.written());
 
     var off: Writer.Allocating = .init(std.testing.allocator);
     defer off.deinit();
     try diffStyle(&off.writer, everything, .{});
-    try std.testing.expectEqualStrings("\x1b[22;23;24;25;27;28;29;39;49;59m", off.written());
+    try std.testing.expectEqualStrings("\x1b[22;23;24;25;27;28;29;55;39;49;59m", off.written());
 }
 
 test "setStyle is the diff from the default style" {
@@ -681,4 +689,46 @@ test "a writer with no room left reports the failure" {
         .italic = true,
         .underline = .curly,
     }));
+}
+
+test "overline writes its own on and off codes" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try setStyle(&out.writer, .{ .overline = true });
+    try std.testing.expectEqualStrings("\x1b[53m", out.written());
+
+    out.clearRetainingCapacity();
+    try diffStyle(&out.writer, .{ .overline = true }, .{});
+    try std.testing.expectEqualStrings("\x1b[55m", out.written());
+}
+
+test "overline is independent of the underline" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    // The off pass first, then the on pass -- 55 turns the overline off and
+    // cannot disturb the underline that arrives in the same sequence.
+    try diffStyle(
+        &out.writer,
+        .{ .overline = true },
+        .{ .underline = .single },
+    );
+    try std.testing.expectEqualStrings("\x1b[55;4m", out.written());
+
+    out.clearRetainingCapacity();
+    try diffStyle(&out.writer, .{ .underline = .curly }, .{ .overline = true });
+    try std.testing.expectEqualStrings("\x1b[24;53m", out.written());
+}
+
+test "an overline that stays on writes nothing" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try diffStyle(
+        &out.writer,
+        .{ .overline = true, .bold = true },
+        .{ .overline = true, .bold = true },
+    );
+    try std.testing.expectEqualStrings("", out.written());
 }
