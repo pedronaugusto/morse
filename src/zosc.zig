@@ -22,6 +22,7 @@ const mouse_events = @import("mouse.zig");
 const notifications = @import("notify.zig");
 const osc = @import("osc.zig");
 const query = @import("query.zig");
+const style = @import("style.zig");
 
 //=========================================================================
 // Titles and hyperlinks.
@@ -181,6 +182,27 @@ pub const insertLines = cursor.insertLines;
 /// Removes rows at the cursor, pulling the rest of the region up.
 pub const deleteLines = cursor.deleteLines;
 
+//=========================================================================
+// Styles and colour, SGR.
+//=========================================================================
+
+/// The sixteen palette entries a terminal theme defines.
+pub const Ansi = style.Ansi;
+/// A colour given directly, eight bits a channel.
+pub const Rgb = style.Rgb;
+/// A colour, in the forms SGR can spell.
+pub const Color = style.Color;
+/// Which underline a cell carries.
+pub const Underline = style.Underline;
+/// Everything SGR can say about a cell, in one value.
+pub const Style = style.Style;
+/// Clears every attribute and both colours.
+pub const resetStyle = style.resetStyle;
+/// Writes a style, from a terminal at its default.
+pub const setStyle = style.setStyle;
+/// Writes only what differs between two styles.
+pub const diffStyle = style.diffStyle;
+
 test {
     _ = @import("clipboard.zig");
     _ = @import("cursor.zig");
@@ -190,6 +212,7 @@ test {
     _ = @import("osc.zig");
     _ = @import("query.zig");
     _ = @import("seq.zig");
+    _ = @import("style.zig");
 }
 
 test "the root module re-exports what the README promises" {
@@ -244,6 +267,10 @@ test "the root module re-exports what the README promises" {
     try insertLines(w, 1);
     try deleteLines(w, 1);
 
+    try resetStyle(w);
+    try setStyle(w, .{ .bold = true, .fg = .{ .ansi = .red } });
+    try diffStyle(w, .{ .bold = true }, .{ .italic = true });
+
     try std.testing.expectEqual(Clipboard.clipboard, parseClipboardReply("\x1b]52;c;aGk=\x1b\\").?.target);
     try std.testing.expectEqual(ModeState.set, parseModeReply("\x1b[?2026;1$y").?.state);
     try std.testing.expectEqual(@as(u32, 12), parseCursorPosition("\x1b[12;40R").?.row);
@@ -263,6 +290,14 @@ test "the root module re-exports what the README promises" {
     const erase: ClearLine = .all;
     const wipe: ClearScreen = .scrollback;
     try std.testing.expect(erase == .all and wipe == .scrollback);
+
+    const colour: Color = .{ .rgb = .{ .r = 1, .g = 2, .b = 3 } };
+    const solid: Rgb = .{ .r = 255, .g = 0, .b = 0 };
+    const line: Underline = .curly;
+    const shade: Ansi = .bright_blue;
+    const attrs: Style = .{};
+    try std.testing.expect(colour == .rgb and line == .curly and shade == .bright_blue);
+    try std.testing.expect(!attrs.bold and solid.r == 255);
 
     const shape: CursorShape = .block;
     const flags: KittyFlags = .{};
