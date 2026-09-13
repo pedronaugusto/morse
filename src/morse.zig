@@ -276,6 +276,16 @@ pub const parseColorReply = device.parseColorReply;
 pub const GraphicsResponse = device.GraphicsResponse;
 /// Reads a kitty graphics response, or null.
 pub const parseGraphicsResponse = device.parseGraphicsResponse;
+/// Which size a program is asking the terminal for.
+pub const SizeQuery = device.SizeQuery;
+/// Asks the terminal how big something is, XTWINOPS.
+pub const queryWindowSize = device.queryWindowSize;
+/// Asks the terminal to resize its text area.
+pub const resizeTextArea = device.resizeTextArea;
+/// What a terminal says about one of its sizes.
+pub const WindowSize = device.WindowSize;
+/// Reads a window size report, or null.
+pub const parseWindowSize = device.parseWindowSize;
 
 test {
     _ = @import("clipboard.zig");
@@ -326,6 +336,8 @@ test "the root module re-exports what the README promises" {
     try encodeMouse(w, .{ .button = .left, .x = 1, .y = 1, .press = true });
 
     try inBandResize.set(w, true);
+    try queryWindowSize(w, .text_area_cells);
+    try resizeTextArea(w, 24, 80);
 
     try cursorTo(w, 1, 1);
     try cursorUp(w, 1);
@@ -414,6 +426,12 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(@as(u8, 255), wide.to8().r);
     try std.testing.expect(da.class == 1 and da2.version == 0);
     try std.testing.expect(colours.target == .cursor and graphics.ok());
+
+    try std.testing.expectEqual(
+        WindowSize.What.text_area_cells,
+        parseWindowSize("\x1b[8;24;80t").?.what,
+    );
+    try std.testing.expectEqual(SizeQuery.cell_pixels, SizeQuery.cell_pixels);
 
     const grew: Resize = .{ .rows = 24, .cols = 80 };
     try std.testing.expect(grew.rows == 24 and grew.xpixels == 0);

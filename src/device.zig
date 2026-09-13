@@ -398,6 +398,132 @@ fn scanChannel(text: []const u8) ?u16 {
 }
 
 //=========================================================================
+// How big the terminal is, XTWINOPS.
+//=========================================================================
+
+/// Which size a program is asking the terminal for.
+///
+/// The values are the parameter `CSI ... t` takes, and each has its own reply
+/// code -- see `WindowSize.what`.
+pub const SizeQuery = enum(u8) {
+    /// The text area in pixels (`CSI 14 t`). Answered with code 4.
+    text_area_pixels = 14,
+    /// One character cell in pixels (`CSI 16 t`). Answered with code 6, and
+    /// the one that makes a pixel mouse report usable: it is the `cell_w` and
+    /// `cell_h` that `toCells` needs and that nothing else reports.
+    cell_pixels = 16,
+    /// The text area in characters (`CSI 18 t`). Answered with code 8. The
+    /// terminal size, asked for over the wire rather than through an `ioctl`
+    /// on a file descriptor this package never touches.
+    text_area_cells = 18,
+    /// The whole screen in characters (`CSI 19 t`). Answered with code 9.
+    screen_cells = 19,
+};
+
+/// Asks the terminal how big something is: `CSI what t`.
+///
+/// The answer arrives on the terminal's input as a sequence `parseWindowSize`
+/// reads. This is the size question asked of the terminal instead of of the
+/// operating system, which is the only form of it that survives a
+/// multiplexer, a pipe, or a terminal running on another machine -- and the
+/// only form available to a program holding no file descriptor it may call
+/// `ioctl` on.
+///
+/// Not every terminal answers, and xterm itself disables these unless its
+/// `allowWindowOps` resource is set, so pair this with a query that is always
+/// answered and be ready for silence. A program that also has an `ioctl` to
+/// hand should prefer it and keep this for the cases where it has none.
+pub fn queryWindowSize(w: *Writer, what: SizeQuery) Writer.Error!void {
+    try w.writeAll(seq.csi);
+    try w.print("{d}", .{@intFromEnum(what)});
+    try w.writeByte('t');
+}
+
+/// Asks the terminal to resize its text area: `CSI 8 ; rows ; cols t`.
+///
+/// A request, not a command: a terminal is free to refuse, to clamp it to the
+/// screen, or to ignore window operations entirely, and it does not say which
+/// it did. The way to find out is to ask with `queryWindowSize`, or to have
+/// `inBandResize` on and wait for the report.
+pub fn resizeTextArea(w: *Writer, rows: u32, cols: u32) Writer.Error!void {
+    try w.writeAll(seq.csi ++ "8;");
+    try w.print("{d};{d}", .{ rows, cols });
+    try w.writeByte('t');
+}
+
+/// What a terminal says about one of its sizes.
+pub const WindowSize = struct {
+    /// Which size this is, as the reply's own code names it. Compare it
+    /// against what was asked, because replies can arrive out of order and a
+    /// program that asks two questions at once has no other way to pair them
+    /// up.
+    pub const What = enum(u8) {
+        /// The text area in pixels: the answer to `.text_area_pixels`.
+        text_area_pixels = 4,
+        /// The screen in pixels. No `SizeQuery` asks for this one; xterm's
+        /// `CSI 15 t` does, and the reply is read here for a program that
+        /// wrote that sequence itself.
+        screen_pixels = 5,
+        /// One character cell in pixels: the answer to `.cell_pixels`.
+        cell_pixels = 6,
+        /// The text area in characters: the answer to `.text_area_cells`.
+        text_area_cells = 8,
+        /// The screen in characters: the answer to `.screen_cells`.
+        screen_cells = 9,
+    };
+
+    /// Which size the terminal answered about.
+    what: What,
+    /// The height: rows for a size in characters, pixels for one in pixels.
+    height: u32,
+    /// The width: columns for a size in characters, pixels for one in pixels.
+    width: u32,
+};
+
+/// Reads a window size report: `CSI code ; height ; width t`.
+///
+/// Height before width, which is the order xterm chose and the opposite of
+/// the order `cursorTo` takes -- a reply saying `24 ; 80` is 24 rows of 80
+/// columns.
+///
+/// Returns null for anything else, a code this package does not name
+/// included. The one-parameter window reports -- `CSI 1 t` for the window
+/// state and the rest -- are not sizes and are not read here. `bytes` must be
+/// exactly the sequence, with nothing before or after it.
+///
+/// The in-band resize report, `CSI 48 ; ... t`, is a different sequence: the
+/// terminal sends it unprompted, so `KeyParser` decodes it as `Event.resize`
+/// rather than handing it back for this.
+pub fn parseWindowSize(bytes: []const u8) ?WindowSize {
+    if (!std.mem.startsWith(u8, bytes, seq.csi)) return null;
+    var rest = bytes[seq.csi.len..];
+
+    const code = seq.scanInt(u8, rest) orelse return null;
+    rest = rest[code.len..];
+    const what: WindowSize.What = switch (code.value) {
+        4 => .text_area_pixels,
+        5 => .screen_pixels,
+        6 => .cell_pixels,
+        8 => .text_area_cells,
+        9 => .screen_cells,
+        else => return null,
+    };
+    if (rest.len == 0 or rest[0] != ';') return null;
+    rest = rest[1..];
+
+    const height = seq.scanInt(u32, rest) orelse return null;
+    rest = rest[height.len..];
+    if (rest.len == 0 or rest[0] != ';') return null;
+    rest = rest[1..];
+
+    const width = seq.scanInt(u32, rest) orelse return null;
+    rest = rest[width.len..];
+    if (!std.mem.eql(u8, rest, "t")) return null;
+
+    return .{ .what = what, .height = height.value, .width = width.value };
+}
+
+//=========================================================================
 // The kitty graphics response.
 //=========================================================================
 
@@ -1183,5 +1309,104 @@ test "fuzz parseGraphicsResponse" {
         corpus.seed("\x1b_Gii=31;OK\x1b\\"),
         corpus.seed("\x1b_Gi=1,;OK\x1b\\"),
         corpus.seed("\x1b_Gi=31;OK"),
+    } });
+}
+
+test "queryWindowSize asks with the number for each size" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try queryWindowSize(&out.writer, .text_area_pixels);
+    try queryWindowSize(&out.writer, .cell_pixels);
+    try queryWindowSize(&out.writer, .text_area_cells);
+    try queryWindowSize(&out.writer, .screen_cells);
+    try std.testing.expectEqualStrings("\x1b[14t\x1b[16t\x1b[18t\x1b[19t", out.written());
+}
+
+test "resizeTextArea asks in rows and then columns" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try resizeTextArea(&out.writer, 24, 80);
+    try std.testing.expectEqualStrings("\x1b[8;24;80t", out.written());
+}
+
+test "parseWindowSize reads every code it names" {
+    const cases = [_]struct { bytes: []const u8, what: WindowSize.What }{
+        .{ .bytes = "\x1b[4;384;640t", .what = .text_area_pixels },
+        .{ .bytes = "\x1b[5;1080;1920t", .what = .screen_pixels },
+        .{ .bytes = "\x1b[6;16;8t", .what = .cell_pixels },
+        .{ .bytes = "\x1b[8;24;80t", .what = .text_area_cells },
+        .{ .bytes = "\x1b[9;67;240t", .what = .screen_cells },
+    };
+    for (cases) |case| {
+        const size = parseWindowSize(case.bytes).?;
+        try std.testing.expectEqual(case.what, size.what);
+    }
+}
+
+test "parseWindowSize reads height before width" {
+    const size = parseWindowSize("\x1b[8;24;80t").?;
+    try std.testing.expectEqual(@as(u32, 24), size.height);
+    try std.testing.expectEqual(@as(u32, 80), size.width);
+}
+
+test "a cell size reply is what toCells needs" {
+    const cell = parseWindowSize("\x1b[6;16;8t").?;
+    try std.testing.expectEqual(WindowSize.What.cell_pixels, cell.what);
+    try std.testing.expectEqual(@as(u32, 8), cell.width);
+    try std.testing.expectEqual(@as(u32, 16), cell.height);
+}
+
+test "parseWindowSize returns null on anything it does not recognise" {
+    const rejected = [_][]const u8{
+        "", // nothing at all
+        "\x1b[8;24;80", // truncated
+        "\x1b[8;24;80T", // wrong final byte
+        "\x1b[8;24t", // a field short
+        "\x1b[8;24;80;1t", // a field too many
+        "\x1b[7;24;80t", // a code this package does not name
+        "\x1b[48;24;80t", // the in-band resize report, which is an event
+        "\x1b[1t", // a window state report, which is not a size
+        "\x1b[?8;24;80t", // a private marker
+        "\x1b8;24;80t", // no CSI
+        "\x1b[8;24;80tt", // trailing rubbish
+        "\x1b[8;4294967296;80t", // a height too large for its field
+        "\x1b[8;24;4294967296t", // a width too large for its field
+        "\x1b[256;24;80t", // a code too large for its field
+    };
+    for (rejected) |bytes| {
+        try std.testing.expect(parseWindowSize(bytes) == null);
+    }
+}
+
+test "fuzz parseWindowSize" {
+    // The property: no input panics or overflows, and every report that
+    // parses renders back to a report that parses to the same size.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const size = parseWindowSize(bytes) orelse return;
+
+            var output: [64]u8 = undefined;
+            var w: Writer = .fixed(&output);
+            try w.print("\x1b[{d};{d};{d}t", .{
+                @intFromEnum(size.what),
+                size.height,
+                size.width,
+            });
+            try std.testing.expectEqual(size, parseWindowSize(w.buffered()).?);
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b[8;24;80t"),
+        corpus.seed("\x1b[6;16;8t"),
+        corpus.seed("\x1b[4;0;0t"),
+        corpus.seed("\x1b[9;4294967295;4294967295t"),
+        corpus.seed("\x1b[8;4294967296;80t"),
+        corpus.seed("\x1b[7;24;80t"),
+        corpus.seed("\x1b[48;24;80t"),
+        corpus.seed("\x1b[8;24;80"),
     } });
 }
