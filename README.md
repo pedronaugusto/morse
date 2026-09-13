@@ -1,6 +1,6 @@
-# zosc
+# morse
 
-[![CI](https://github.com/pedronaugusto/zosc/actions/workflows/ci.yml/badge.svg)](https://github.com/pedronaugusto/zosc/actions/workflows/ci.yml)
+[![CI](https://github.com/pedronaugusto/morse/actions/workflows/ci.yml/badge.svg)](https://github.com/pedronaugusto/morse/actions/workflows/ci.yml)
 
 Terminal control sequences as typed writers and parsers, in pure Zig. No
 dependencies, no C, no allocations.
@@ -8,7 +8,7 @@ dependencies, no C, no allocations.
 Every terminal program ends up writing the same dozen escape sequences by
 hand, with the numbers spelled out in string literals, the key decoder
 guessing at a lone `ESC`, and the mouse report parsed with a loop that
-overflows on a long number. zosc is those sequences with names, the flags as
+overflows on a long number. morse is those sequences with names, the flags as
 `packed struct`s, the styles as a diff, and everything that arrives on the
 input as a parser that returns `null` instead of garbage.
 
@@ -29,7 +29,7 @@ bytes out, and nothing above it.
   all arrive down the same pipe, so `KeyParser` decides where each sequence
   ends, decodes the keys, and hands back everything else whole for the parser
   that reads it.
-- **No state, with one exception you can see.** zosc holds nothing between
+- **No state, with one exception you can see.** morse holds nothing between
   calls except in `KeyParser`, which has to remember half a sequence between
   reads and does it in a buffer you hand it and can inspect.
 - **No terminfo.** See below.
@@ -45,7 +45,7 @@ something executes.
 <!-- BEGIN GENERATED ci/readme_usage.sh -->
 ```zig
 const std = @import("std");
-const zosc = @import("zosc");
+const morse = @import("morse");
 
 // Any `*std.Io.Writer` will do -- a buffered writer over stdout is the
 // real one. Nothing below allocates or flushes: batching is yours.
@@ -54,57 +54,57 @@ var out: std.Io.Writer = .fixed(&buffer);
 const w = &out;
 
 // Take the screen: alternate buffer, no cursor, synchronised repaints.
-try zosc.altScreen.set(w, true);
-try zosc.cursorVisible.set(w, false);
-try zosc.syncOutput.set(w, true);
+try morse.altScreen.set(w, true);
+try morse.cursorVisible.set(w, false);
+try morse.syncOutput.set(w, true);
 
 // Ask for mouse press and wheel reports in SGR form -- and, by saying so
 // in one call, for no report per cell the pointer crosses.
-try zosc.mouse(w, .{ .press = true, .sgr = true });
+try morse.mouse(w, .{ .press = true, .sgr = true });
 
 // Keys in the kitty protocol, pushed so exiting restores what was there,
 // and pasted text bracketed so it can be told from typing.
-try zosc.kittyKeyboardPush(w, .{
+try morse.kittyKeyboardPush(w, .{
     .disambiguate_escape_codes = true,
     .report_event_types = true,
     .report_associated_text = true,
 });
-try zosc.bracketedPaste.set(w, true);
+try morse.bracketedPaste.set(w, true);
 
 // A frame: clear, go to the top-left, write a heading in a style. The
 // second style call writes only what changed -- four bytes rather than a
 // reset and a repaint of attributes that were already right.
-const heading: zosc.Style = .{ .bold = true, .fg = .{ .ansi = .cyan } };
-const body: zosc.Style = .{ .fg = .{ .ansi = .cyan } };
-try zosc.clearScreen(w, .all);
-try zosc.cursorTo(w, 1, 1);
-try zosc.setStyle(w, heading);
-try w.writeAll("zosc");
-try zosc.diffStyle(w, heading, body);
+const heading: morse.Style = .{ .bold = true, .fg = .{ .ansi = .cyan } };
+const body: morse.Style = .{ .fg = .{ .ansi = .cyan } };
+try morse.clearScreen(w, .all);
+try morse.cursorTo(w, 1, 1);
+try morse.setStyle(w, heading);
+try w.writeAll("morse");
+try morse.diffStyle(w, heading, body);
 try w.writeAll(" -- terminal control sequences");
-try zosc.resetStyle(w);
+try morse.resetStyle(w);
 
 // A title, a clickable link, and a desktop notification.
-try zosc.title(w, "zosc");
-try zosc.hyperlink(w, "ziglang.org", "https://ziglang.org");
-try zosc.notify(w, "Build finished", "0 errors");
+try morse.title(w, "morse");
+try morse.hyperlink(w, "ziglang.org", "https://ziglang.org");
+try morse.notify(w, "Build finished", "0 errors");
 
 // Put text on the clipboard of whichever machine the terminal runs on,
 // base64 encoded on the fly -- no allocation, no buffer sized to the text.
-try zosc.clipboardWrite(w, .clipboard, "copied by zosc");
+try morse.clipboardWrite(w, .clipboard, "copied by morse");
 
 // Ask the terminal what it is. None of these is guaranteed an answer, so
 // none of them may be waited on without a timeout of your own.
-try zosc.queryMode(w, zosc.syncOutput.number);
-try zosc.queryDeviceAttributes(w);
-try zosc.queryColor(w, .background);
+try morse.queryMode(w, morse.syncOutput.number);
+try morse.queryDeviceAttributes(w);
+try morse.queryColor(w, .background);
 
 // Input is one byte stream carrying keys, mouse reports and replies all
 // at once, so one parser frames it. The buffer is yours, nothing here
 // allocates, and a sequence split across two reads is held until the rest
 // of it arrives.
 var input: [1024]u8 = undefined;
-var keys: zosc.KeyParser = .init(&input);
+var keys: morse.KeyParser = .init(&input);
 
 // Control and a in the kitty protocol, then an SGR mouse click.
 var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M");
@@ -116,7 +116,7 @@ while (events.next()) |event| switch (event) {
         key.text(),
     }),
     // Anything framed but not a key: a mouse report, a reply, an OSC.
-    .unhandled => |bytes| if (zosc.parseMouse(bytes)) |click| std.debug.print(
+    .unhandled => |bytes| if (morse.parseMouse(bytes)) |click| std.debug.print(
         "click:      {s} at {d},{d}\n",
         .{ @tagName(click.button), click.x, click.y },
     ),
@@ -134,31 +134,31 @@ const escape = keys.flush().?;
 // A reply parses on its own too, for a program that framed it some other
 // way. Every parser takes a whole sequence and returns null for anything
 // it does not recognise.
-const mode = zosc.parseModeReply("\x1b[?2026;1$y").?;
-const position = zosc.parseCursorPosition("\x1b[12;40R").?;
-const background = zosc.parseColorReply("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\").?;
+const mode = morse.parseModeReply("\x1b[?2026;1$y").?;
+const position = morse.parseCursorPosition("\x1b[12;40R").?;
+const background = morse.parseColorReply("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\").?;
 
 // A pixel report (mode 1016) is byte-identical to a cell report, so the
 // program that asked for pixels is the one that says so.
-var pixel = zosc.parseMouse("\x1b[<0;321;97M").?;
+var pixel = morse.parseMouse("\x1b[<0;321;97M").?;
 pixel.pixels = true;
-const cell = zosc.toCells(pixel, 8, 16);
+const cell = morse.toCells(pixel, 8, 16);
 
 // On the way out, in reverse.
-try zosc.bracketedPaste.set(w, false);
-try zosc.kittyKeyboardPop(w);
-try zosc.mouseOff(w);
-try zosc.syncOutput.set(w, false);
-try zosc.cursorVisible.set(w, true);
-try zosc.altScreen.set(w, false);
+try morse.bracketedPaste.set(w, false);
+try morse.kittyKeyboardPop(w);
+try morse.mouseOff(w);
+try morse.syncOutput.set(w, false);
+try morse.cursorVisible.set(w, true);
+try morse.altScreen.set(w, false);
 ```
 <!-- END GENERATED -->
 
 Add it as a dependency and import the module:
 
 ```zig
-const zosc_dep = b.dependency("zosc", .{ .target = target, .optimize = optimize });
-exe.root_module.addImport("zosc", zosc_dep.module("zosc"));
+const morse_dep = b.dependency("morse", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("morse", morse_dep.module("morse"));
 ```
 
 ## The surface
@@ -184,7 +184,7 @@ exe.root_module.addImport("zosc", zosc_dep.module("zosc"));
 
 **Modes.** `altScreen`, `bracketedPaste`, `syncOutput`, `focusEvents`,
 `cursorVisible`, `unicodeCore` — each a type with `set(w, on)` and a `number`
-— plus `setMode` for any mode zosc does not name, and `Mouse` / `mouse` /
+— plus `setMode` for any mode morse does not name, and `Mouse` / `mouse` /
 `mouseOff`.
 
 **Keyboard protocol and cursor shape.** `KittyFlags`, `kittyKeyboardPush`,
@@ -207,7 +207,7 @@ exe.root_module.addImport("zosc", zosc_dep.module("zosc"));
 
 ### There is no terminfo here, and that is the design
 
-zosc carries no capability database, consults none, and has no compile-time
+morse carries no capability database, consults none, and has no compile-time
 knowledge of terminal names. It writes the sequences directly.
 
 terminfo exists because in 1980 terminals genuinely disagreed: a VT52, an
@@ -221,7 +221,7 @@ compatibility and they are all tested against the same programs. The variation
 that remains is not *which bytes clear the screen*; it is *whether a feature
 exists at all*, and that is a different question with a better answer.
 
-So zosc's answer to variation is to ask the terminal, not a file about the
+So morse's answer to variation is to ask the terminal, not a file about the
 terminal:
 
 - `queryMode` (DECRQM) asks whether a mode is really implemented, and the
@@ -237,7 +237,7 @@ terminal:
   alone says the other question went unanswered rather than that the terminal
   is slow.
 
-What a program does with silence is policy, and policy is the caller's. zosc
+What a program does with silence is policy, and policy is the caller's. morse
 does not decide a timeout, does not cache, and does not fall back.
 
 The practical effect is that this package has no dependency on ncurses, no
@@ -261,7 +261,7 @@ colours. The off codes go first because SGR 22 turns off bold and dim
 together — there is no code for only one of them — so turning bold off while
 dim stays on has to write `22;2`, and writing the `2` first would lose it.
 
-zosc holds no state, so `from` is yours to remember. It is the style of
+morse holds no state, so `from` is yours to remember. It is the style of
 whatever you wrote last, and getting it wrong shows on screen.
 
 ### A lone ESC is the caller's ambiguity to resolve
@@ -293,7 +293,7 @@ report per cell the pointer crosses because something earlier set mode 1003.
 ascending mode number:
 
 ```zig
-try zosc.mouse(w, .{ .press = true, .sgr = true });
+try morse.mouse(w, .{ .press = true, .sgr = true });
 ```
 
 is press and wheel reports, in SGR coordinates, and nothing else — regardless
@@ -325,7 +325,7 @@ while (events.next()) |event| switch (event) {
     .key => |key| ...,
     .paste_start, .paste_end => ...,
     .focus_in, .focus_out => ...,
-    .unhandled => |bytes| if (zosc.parseMouse(bytes)) |click| ...,
+    .unhandled => |bytes| if (morse.parseMouse(bytes)) |click| ...,
 };
 ```
 
@@ -353,21 +353,21 @@ payload is well-formed base64 — including that the bits padding discards are
 zero. Decoding therefore cannot fail on content; the only error is a buffer
 too small.
 
-## What zosc does not do
+## What morse does not do
 
 Everything above the bytes is not here, deliberately:
 
-- **No I/O.** zosc never touches a file descriptor, never reads a reply, and
+- **No I/O.** morse never touches a file descriptor, never reads a reply, and
   never puts a terminal into raw mode. `termios` and `SetConsoleMode` are the
   caller's, and so is every timeout.
 - **No screen model.** No cells, no damage tracking, no layout, no diffing of
   a frame, no width tables, no grapheme segmentation. `diffStyle` diffs two
-  styles; nothing here diffs two screens. zosc writes what you ask for, where
+  styles; nothing here diffs two screens. morse writes what you ask for, where
   you say.
 - **No widgets and no event loop.** No windows, no focus stack, no redraw
   scheduling. Those are a framework, and a framework built on this package is
   a different package.
-- **No terminal capability database.** See the design note above: zosc asks
+- **No terminal capability database.** See the design note above: morse asks
   the terminal rather than a file about the terminal, and what a program does
   with silence is its own policy.
 - **No graphics protocol.** `parseGraphicsResponse` reads the terminal's
@@ -378,7 +378,7 @@ Everything above the bytes is not here, deliberately:
   package can usefully name.
 - **No legacy mouse encodings.** X10 and UTF-8 mouse modes cap coordinates at
   column 223 and are ambiguous about release. SGR exists for that reason and
-  is what zosc reads.
+  is what morse reads.
 - **No guessing at text a terminal did not report.** `KeyEvent.text` is what
   the terminal said the key produced — from the bytes themselves for plain
   input, and from the protocol's associated-text field when you asked for it.

@@ -17,7 +17,7 @@
 //! — which is what makes it the layer everything else on the input side hangs
 //! off, since a reply and a keypress arrive down the same pipe.
 //!
-//! `zosc` does not read the terminal, does not size the screen, does not
+//! `morse` does not read the terminal, does not size the screen, does not
 //! manage the termios state, and holds no capability database. It turns
 //! intent into bytes and bytes back into intent.
 

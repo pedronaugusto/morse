@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# zosc — the suite on Linux, from a machine that is not one.
+# morse — the suite on Linux, from a machine that is not one.
 #
 # CI runs Linux, macOS and Windows on every push; this is the same Linux job
 # reachable before the push, because "it passed on my Mac" is not a claim
@@ -18,7 +18,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-image=zosc-linux-zig-0.16.0
+image=morse-linux-zig-0.16.0
 
 if ! docker image inspect "$image" >/dev/null 2>&1; then
     echo "==> building $image"

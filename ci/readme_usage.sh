@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# zosc — README.md's Usage snippet, extracted from examples/usage.zig.
+# morse — README.md's Usage snippet, extracted from examples/usage.zig.
 #
 # A code snippet in a README is a claim about how the library is used, and
 # nothing compiles it. This one is a region of an example that `zig build
@@ -33,10 +33,10 @@ imports = [
     line
     for line in text.splitlines()
     if line.startswith('const std = @import("std");')
-    or line.startswith('const zosc = @import("zosc");')
+    or line.startswith('const morse = @import("morse");')
 ]
 if len(imports) != 2:
-    sys.exit("%s: expected one std import and one zosc import" % source)
+    sys.exit("%s: expected one std import and one morse import" % source)
 
 body = []
 for line in parts[1].splitlines():

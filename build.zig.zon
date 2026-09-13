@@ -1,8 +1,8 @@
 .{
-    .name = .zosc,
+    .name = .morse,
     .version = "0.1.0",
     .minimum_zig_version = "0.16.0",
-    .fingerprint = 0xb6e4092ea0ce40ff,
+    .fingerprint = 0xaa7aa068a1c6a938,
     .paths = .{
         "build.zig",
         "build.zig.zon",

@@ -1,6 +1,6 @@
 //! Seed inputs for the fuzz tests.
 //!
-//! Test support only: nothing here is re-exported by `zosc.zig`, and nothing
+//! Test support only: nothing here is re-exported by `morse.zig`, and nothing
 //! outside a `test` block references it, so it is never compiled into a
 //! consuming program.
 

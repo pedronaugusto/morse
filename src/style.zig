@@ -1,7 +1,7 @@
 //! Character attributes and colour: SGR, `CSI ... m`.
 //!
 //! Every other sequence in this package means the same thing whenever it is
-//! written. SGR does not. It is the one place zosc writes bytes whose effect
+//! written. SGR does not. It is the one place morse writes bytes whose effect
 //! depends on what came before, because `CSI 1 m` turns bold on and leaves
 //! every other attribute exactly as it was. A terminal has one current style
 //! and SGR edits it; there is no sequence that says "this style and nothing
@@ -15,7 +15,7 @@
 //! same call from a terminal known to be at its default, and `resetStyle` is
 //! what puts it back there.
 //!
-//! zosc holds no state, so `from` is the caller's to remember: it is the
+//! morse holds no state, so `from` is the caller's to remember: it is the
 //! style of whatever it wrote last, and getting it wrong shows on screen.
 
 const std = @import("std");

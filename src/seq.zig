@@ -1,7 +1,7 @@
 //! The introducers and terminators every sequence in this package is built
 //! from, and the two scanners its parsers share.
 //!
-//! Nothing here is re-exported by `zosc.zig`: a caller who wants to write a
+//! Nothing here is re-exported by `morse.zig`: a caller who wants to write a
 //! sequence this package does not name is better served by `setMode` or by
 //! writing the bytes directly than by a half-typed byte vocabulary.
 

@@ -1,7 +1,7 @@
 //! Moving the cursor and clearing parts of the screen: the CSI sequences a
 //! full-screen program writes on every frame.
 //!
-//! These are the bytes, not a screen model. zosc does not know where the
+//! These are the bytes, not a screen model. morse does not know where the
 //! cursor is, does not track what is on screen, and does not clamp a row or a
 //! column to a terminal size it has not been told.
 //!

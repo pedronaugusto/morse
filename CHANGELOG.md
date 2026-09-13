@@ -48,7 +48,7 @@ Everything a program needs below a TUI framework, on both sides of the wire.
 
 ### Changed
 
-- The README says why there is no terminfo here, and what zosc does instead.
+- The README says why there is no terminfo here, and what morse does instead.
 
 ## [0.1.0] - 2026-09-13
 
@@ -81,5 +81,5 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
-[Unreleased]: https://github.com/pedronaugusto/zosc/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/pedronaugusto/zosc/releases/tag/v0.1.0
+[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.1.0

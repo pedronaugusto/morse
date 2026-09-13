@@ -1,7 +1,7 @@
 //! Keyboard input: the bytes a terminal sends when a key goes down, turned
 //! back into the key.
 //!
-//! This is the one place in `zosc` that holds state between calls, and it
+//! This is the one place in `morse` that holds state between calls, and it
 //! holds it in a buffer the caller owns. It has to: a key arrives as up to a
 //! few dozen bytes and a read can end anywhere, so something has to remember
 //! half a sequence until the rest of it arrives. `KeyParser` is that

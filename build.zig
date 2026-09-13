@@ -8,8 +8,8 @@ pub fn build(b: *std.Build) void {
     // The module. Pure Zig, no dependencies, nothing to link.
     //=====================================================================
 
-    const module = b.addModule("zosc", .{
-        .root_source_file = b.path("src/zosc.zig"),
+    const module = b.addModule("morse", .{
+        .root_source_file = b.path("src/morse.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -20,15 +20,15 @@ pub fn build(b: *std.Build) void {
     //=====================================================================
 
     const tests = b.addTest(.{
-        .name = "zosc-tests",
+        .name = "morse-tests",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/zosc.zig"),
+            .root_source_file = b.path("src/morse.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
 
-    const test_step = b.step("test", "Run the zosc tests");
+    const test_step = b.step("test", "Run the morse tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
     //=====================================================================
@@ -49,7 +49,7 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path(source),
                 .target = target,
                 .optimize = optimize,
-                .imports = &.{.{ .name = "zosc", .module = module }},
+                .imports = &.{.{ .name = "morse", .module = module }},
             }),
         });
         examples_step.dependOn(&b.addRunArtifact(example).step);

@@ -9,7 +9,7 @@ const Writer = std.Io.Writer;
 /// Turns any DEC private mode on or off: `CSI ? mode h` or `CSI ? mode l`.
 ///
 /// The named modes below are this function with the number filled in; reach
-/// for this one for a mode `zosc` does not name.
+/// for this one for a mode `morse` does not name.
 pub fn setMode(w: *Writer, mode: u16, on: bool) Writer.Error!void {
     try w.writeAll(seq.csi ++ "?");
     try w.print("{d}", .{mode});
@@ -229,7 +229,7 @@ test "the named modes write the sequences they document" {
     );
 }
 
-test "setMode reaches a mode zosc does not name" {
+test "setMode reaches a mode morse does not name" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 

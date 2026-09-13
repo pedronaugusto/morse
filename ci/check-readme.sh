@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# zosc — README.md's Usage block is what ci/readme_usage.sh produces.
+# morse — README.md's Usage block is what ci/readme_usage.sh produces.
 #
 # The block is delimited in the document by the two GENERATED markers; this
 # script rebuilds the file with the region replaced and diffs it against what

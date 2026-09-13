@@ -10,7 +10,7 @@
 //! CI does not leave a build machine's terminal on the alternate screen.
 
 const std = @import("std");
-const zosc = @import("zosc");
+const morse = @import("morse");
 
 pub fn main() !void {
     // --- README:usage ---
@@ -22,57 +22,57 @@ pub fn main() !void {
     const w = &out;
 
     // Take the screen: alternate buffer, no cursor, synchronised repaints.
-    try zosc.altScreen.set(w, true);
-    try zosc.cursorVisible.set(w, false);
-    try zosc.syncOutput.set(w, true);
+    try morse.altScreen.set(w, true);
+    try morse.cursorVisible.set(w, false);
+    try morse.syncOutput.set(w, true);
 
     // Ask for mouse press and wheel reports in SGR form -- and, by saying so
     // in one call, for no report per cell the pointer crosses.
-    try zosc.mouse(w, .{ .press = true, .sgr = true });
+    try morse.mouse(w, .{ .press = true, .sgr = true });
 
     // Keys in the kitty protocol, pushed so exiting restores what was there,
     // and pasted text bracketed so it can be told from typing.
-    try zosc.kittyKeyboardPush(w, .{
+    try morse.kittyKeyboardPush(w, .{
         .disambiguate_escape_codes = true,
         .report_event_types = true,
         .report_associated_text = true,
     });
-    try zosc.bracketedPaste.set(w, true);
+    try morse.bracketedPaste.set(w, true);
 
     // A frame: clear, go to the top-left, write a heading in a style. The
     // second style call writes only what changed -- four bytes rather than a
     // reset and a repaint of attributes that were already right.
-    const heading: zosc.Style = .{ .bold = true, .fg = .{ .ansi = .cyan } };
-    const body: zosc.Style = .{ .fg = .{ .ansi = .cyan } };
-    try zosc.clearScreen(w, .all);
-    try zosc.cursorTo(w, 1, 1);
-    try zosc.setStyle(w, heading);
-    try w.writeAll("zosc");
-    try zosc.diffStyle(w, heading, body);
+    const heading: morse.Style = .{ .bold = true, .fg = .{ .ansi = .cyan } };
+    const body: morse.Style = .{ .fg = .{ .ansi = .cyan } };
+    try morse.clearScreen(w, .all);
+    try morse.cursorTo(w, 1, 1);
+    try morse.setStyle(w, heading);
+    try w.writeAll("morse");
+    try morse.diffStyle(w, heading, body);
     try w.writeAll(" -- terminal control sequences");
-    try zosc.resetStyle(w);
+    try morse.resetStyle(w);
 
     // A title, a clickable link, and a desktop notification.
-    try zosc.title(w, "zosc");
-    try zosc.hyperlink(w, "ziglang.org", "https://ziglang.org");
-    try zosc.notify(w, "Build finished", "0 errors");
+    try morse.title(w, "morse");
+    try morse.hyperlink(w, "ziglang.org", "https://ziglang.org");
+    try morse.notify(w, "Build finished", "0 errors");
 
     // Put text on the clipboard of whichever machine the terminal runs on,
     // base64 encoded on the fly -- no allocation, no buffer sized to the text.
-    try zosc.clipboardWrite(w, .clipboard, "copied by zosc");
+    try morse.clipboardWrite(w, .clipboard, "copied by morse");
 
     // Ask the terminal what it is. None of these is guaranteed an answer, so
     // none of them may be waited on without a timeout of your own.
-    try zosc.queryMode(w, zosc.syncOutput.number);
-    try zosc.queryDeviceAttributes(w);
-    try zosc.queryColor(w, .background);
+    try morse.queryMode(w, morse.syncOutput.number);
+    try morse.queryDeviceAttributes(w);
+    try morse.queryColor(w, .background);
 
     // Input is one byte stream carrying keys, mouse reports and replies all
     // at once, so one parser frames it. The buffer is yours, nothing here
     // allocates, and a sequence split across two reads is held until the rest
     // of it arrives.
     var input: [1024]u8 = undefined;
-    var keys: zosc.KeyParser = .init(&input);
+    var keys: morse.KeyParser = .init(&input);
 
     // Control and a in the kitty protocol, then an SGR mouse click.
     var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M");
@@ -84,7 +84,7 @@ pub fn main() !void {
             key.text(),
         }),
         // Anything framed but not a key: a mouse report, a reply, an OSC.
-        .unhandled => |bytes| if (zosc.parseMouse(bytes)) |click| std.debug.print(
+        .unhandled => |bytes| if (morse.parseMouse(bytes)) |click| std.debug.print(
             "click:      {s} at {d},{d}\n",
             .{ @tagName(click.button), click.x, click.y },
         ),
@@ -102,23 +102,23 @@ pub fn main() !void {
     // A reply parses on its own too, for a program that framed it some other
     // way. Every parser takes a whole sequence and returns null for anything
     // it does not recognise.
-    const mode = zosc.parseModeReply("\x1b[?2026;1$y").?;
-    const position = zosc.parseCursorPosition("\x1b[12;40R").?;
-    const background = zosc.parseColorReply("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\").?;
+    const mode = morse.parseModeReply("\x1b[?2026;1$y").?;
+    const position = morse.parseCursorPosition("\x1b[12;40R").?;
+    const background = morse.parseColorReply("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\").?;
 
     // A pixel report (mode 1016) is byte-identical to a cell report, so the
     // program that asked for pixels is the one that says so.
-    var pixel = zosc.parseMouse("\x1b[<0;321;97M").?;
+    var pixel = morse.parseMouse("\x1b[<0;321;97M").?;
     pixel.pixels = true;
-    const cell = zosc.toCells(pixel, 8, 16);
+    const cell = morse.toCells(pixel, 8, 16);
 
     // On the way out, in reverse.
-    try zosc.bracketedPaste.set(w, false);
-    try zosc.kittyKeyboardPop(w);
-    try zosc.mouseOff(w);
-    try zosc.syncOutput.set(w, false);
-    try zosc.cursorVisible.set(w, true);
-    try zosc.altScreen.set(w, false);
+    try morse.bracketedPaste.set(w, false);
+    try morse.kittyKeyboardPop(w);
+    try morse.mouseOff(w);
+    try morse.syncOutput.set(w, false);
+    try morse.cursorVisible.set(w, true);
+    try morse.altScreen.set(w, false);
     // --- README:usage ---
 
     std.debug.print("escape:     {t}\n", .{escape.key.key});
