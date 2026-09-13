@@ -54,6 +54,18 @@ pub const focusEvents = PrivateMode(1004);
 /// draws its own cursor turns it off for the duration.
 pub const cursorVisible = PrivateMode(25);
 
+/// The Unicode core mode (2027). On, the terminal measures text by grapheme
+/// cluster rather than by codepoint, so an emoji with a skin tone modifier
+/// occupies the cells it is drawn in rather than the cells each of its
+/// codepoints would occupy alone.
+///
+/// Worth querying rather than setting blind: a program that lays text out
+/// itself has to measure it the same way the terminal does, and the two
+/// answers differ for exactly the text users complain about. `queryMode` with
+/// this number is how to find out which one is in effect, and a terminal that
+/// answers `not_recognized` is one measuring by codepoint.
+pub const unicodeCore = PrivateMode(2027);
+
 /// Which mouse reports a program wants. Every field is one DEC private mode,
 /// switched independently by `mouse`.
 pub const Mouse = packed struct {
@@ -199,6 +211,7 @@ test "every named mode carries the number it documents" {
     try std.testing.expectEqual(@as(u16, 2026), syncOutput.number);
     try std.testing.expectEqual(@as(u16, 1004), focusEvents.number);
     try std.testing.expectEqual(@as(u16, 25), cursorVisible.number);
+    try std.testing.expectEqual(@as(u16, 2027), unicodeCore.number);
 }
 
 test "the named modes write the sequences they document" {
@@ -209,8 +222,9 @@ test "the named modes write the sequences they document" {
     try syncOutput.set(&out.writer, true);
     try focusEvents.set(&out.writer, true);
     try cursorVisible.set(&out.writer, false);
+    try unicodeCore.set(&out.writer, true);
     try std.testing.expectEqualStrings(
-        "\x1b[?2004h\x1b[?2026h\x1b[?1004h\x1b[?25l",
+        "\x1b[?2004h\x1b[?2026h\x1b[?1004h\x1b[?25l\x1b[?2027h",
         out.written(),
     );
 }

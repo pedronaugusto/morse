@@ -17,6 +17,7 @@
 
 const clipboard = @import("clipboard.zig");
 const cursor = @import("cursor.zig");
+const device = @import("device.zig");
 const mode = @import("mode.zig");
 const mouse_events = @import("mouse.zig");
 const notifications = @import("notify.zig");
@@ -79,6 +80,8 @@ pub const syncOutput = mode.syncOutput;
 pub const focusEvents = mode.focusEvents;
 /// Cursor visibility, DECTCEM (mode 25).
 pub const cursorVisible = mode.cursorVisible;
+/// Measuring text by grapheme cluster rather than codepoint (mode 2027).
+pub const unicodeCore = mode.unicodeCore;
 /// Which mouse reports a program wants.
 pub const Mouse = mode.Mouse;
 /// Sets every mouse mode at once, each flag its own `h` or `l`.
@@ -203,9 +206,51 @@ pub const setStyle = style.setStyle;
 /// Writes only what differs between two styles.
 pub const diffStyle = style.diffStyle;
 
+//=========================================================================
+// Asking the terminal what it is.
+//=========================================================================
+
+/// Asks what the terminal is and what it implements, DA1.
+pub const queryDeviceAttributes = device.queryDeviceAttributes;
+/// A terminal's answer to `queryDeviceAttributes`.
+pub const DeviceAttributes = device.DeviceAttributes;
+/// Reads a DA1 reply, or null.
+pub const parseDeviceAttributes = device.parseDeviceAttributes;
+/// Asks for the terminal's identity and version, DA2.
+pub const querySecondaryDeviceAttributes = device.querySecondaryDeviceAttributes;
+/// A terminal's answer to `querySecondaryDeviceAttributes`.
+pub const SecondaryDeviceAttributes = device.SecondaryDeviceAttributes;
+/// Reads a DA2 reply, or null.
+pub const parseSecondaryDeviceAttributes = device.parseSecondaryDeviceAttributes;
+/// Asks the terminal to name itself in words, XTVERSION.
+pub const queryVersion = device.queryVersion;
+/// Reads an XTVERSION reply, or null.
+pub const parseVersion = device.parseVersion;
+/// Reads the reply to `kittyKeyboardQuery`, or null.
+pub const parseKittyKeyboardReply = device.parseKittyKeyboardReply;
+/// A terminal colour that is not part of the palette.
+pub const ColorTarget = device.ColorTarget;
+/// A colour with sixteen bits per channel, as OSC 10 and 11 carry it.
+pub const Rgb16 = device.Rgb16;
+/// Asks the terminal for one of its colours.
+pub const queryColor = device.queryColor;
+/// Sets one of the terminal's colours.
+pub const setColor = device.setColor;
+/// Puts one of the terminal's colours back to the user's.
+pub const resetColor = device.resetColor;
+/// What a terminal says about one of its colours.
+pub const ColorReport = device.ColorReport;
+/// Reads a reply to `queryColor`, or null.
+pub const parseColorReply = device.parseColorReply;
+/// What a terminal says about a kitty graphics command.
+pub const GraphicsResponse = device.GraphicsResponse;
+/// Reads a kitty graphics response, or null.
+pub const parseGraphicsResponse = device.parseGraphicsResponse;
+
 test {
     _ = @import("clipboard.zig");
     _ = @import("cursor.zig");
+    _ = @import("device.zig");
     _ = @import("mode.zig");
     _ = @import("mouse.zig");
     _ = @import("notify.zig");
@@ -244,6 +289,7 @@ test "the root module re-exports what the README promises" {
     try kittyKeyboardPop(w);
     try kittyKeyboardQuery(w);
     try cursorShape(w, .bar);
+    try unicodeCore.set(w, true);
     try queryMode(w, 2026);
     try requestCursorPosition(w);
     try encodeMouse(w, .{ .button = .left, .x = 1, .y = 1, .press = true });
@@ -271,6 +317,13 @@ test "the root module re-exports what the README promises" {
     try setStyle(w, .{ .bold = true, .fg = .{ .ansi = .red } });
     try diffStyle(w, .{ .bold = true }, .{ .italic = true });
 
+    try queryDeviceAttributes(w);
+    try querySecondaryDeviceAttributes(w);
+    try queryVersion(w);
+    try queryColor(w, .background);
+    try setColor(w, .foreground, .{ .r = 0, .g = 0, .b = 0 });
+    try resetColor(w, .cursor);
+
     try std.testing.expectEqual(Clipboard.clipboard, parseClipboardReply("\x1b]52;c;aGk=\x1b\\").?.target);
     try std.testing.expectEqual(ModeState.set, parseModeReply("\x1b[?2026;1$y").?.state);
     try std.testing.expectEqual(@as(u32, 12), parseCursorPosition("\x1b[12;40R").?.row);
@@ -287,6 +340,18 @@ test "the root module re-exports what the README promises" {
     const reply: ClipboardReply = parseClipboardReply("\x1b]52;c;aGk=\x1b\\").?;
     try std.testing.expectEqualStrings("hi", try decodeClipboard(reply, &buffer));
 
+    try std.testing.expectEqual(@as(u16, 62), parseDeviceAttributes("\x1b[?62;22c").?.class);
+    try std.testing.expectEqual(
+        @as(u32, 4000),
+        parseSecondaryDeviceAttributes("\x1b[>1;4000;29c").?.version,
+    );
+    try std.testing.expectEqualStrings("xterm(390)", parseVersion("\x1bP>|xterm(390)\x1b\\").?);
+    try std.testing.expect(parseKittyKeyboardReply("\x1b[?1u").?.disambiguate_escape_codes);
+    try std.testing.expectEqual(ColorTarget.background, parseColorReply(
+        "\x1b]11;rgb:0000/0000/0000\x1b\\",
+    ).?.target);
+    try std.testing.expect(parseGraphicsResponse("\x1b_Gi=31;OK\x1b\\").?.ok());
+
     const erase: ClearLine = .all;
     const wipe: ClearScreen = .scrollback;
     try std.testing.expect(erase == .all and wipe == .scrollback);
@@ -298,6 +363,15 @@ test "the root module re-exports what the README promises" {
     const attrs: Style = .{};
     try std.testing.expect(colour == .rgb and line == .curly and shade == .bright_blue);
     try std.testing.expect(!attrs.bold and solid.r == 255);
+
+    const wide: Rgb16 = .{ .r = 0xffff, .g = 0, .b = 0 };
+    const da: DeviceAttributes = .{ .class = 1 };
+    const da2: SecondaryDeviceAttributes = .{ .terminal_type = 0, .version = 0 };
+    const colours: ColorReport = .{ .target = .cursor, .color = wide };
+    const graphics: GraphicsResponse = .{ .message = "OK" };
+    try std.testing.expectEqual(@as(u8, 255), wide.to8().r);
+    try std.testing.expect(da.class == 1 and da2.version == 0);
+    try std.testing.expect(colours.target == .cursor and graphics.ok());
 
     const shape: CursorShape = .block;
     const flags: KittyFlags = .{};
