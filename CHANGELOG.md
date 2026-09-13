@@ -46,9 +46,48 @@ Everything a program needs below a TUI framework, on both sides of the wire.
 - **`ci/linux.sh`** and `ci/linux.Dockerfile`, which run the suite on Linux in
   Docker from a machine that is not Linux.
 
+- **How big the terminal is, asked over the wire.** `queryWindowSize` with
+  `SizeQuery` writes the XTWINOPS requests for the text area in pixels or in
+  characters, the screen in characters, and one character cell in pixels;
+  `parseWindowSize` reads the replies into a `WindowSize`. The cell-size reply
+  is what `toCells` needs and what nothing else reports. `resizeTextArea` asks
+  the terminal to change size. This is the size question asked of the terminal
+  rather than of the operating system, which is the only form of it that
+  survives a multiplexer, a pipe, or a terminal on another machine.
+- **In-band resize**, mode 2048 as `inBandResize`, with the terminal's report
+  decoded as `Event.resize` carrying a `Resize`. A program learns its own size
+  with no signal handler and no file descriptor to call `ioctl` on.
+- **The X10 mouse report**, read by `parseMouseX10` and — more importantly —
+  framed by `KeyParser`. A terminal in mode 1000 without mode 1006 sends
+  these, and its three coordinate bytes are arbitrary, so a parser that
+  stopped at the `M` handed them to the key decoder as three keypresses. It
+  no longer does. `mouse_x10_max` is the 223-column cap that made SGR
+  necessary.
+- **The title stack**, `titlePush` and `titlePop` (`CSI 22 ; 2 t` and
+  `CSI 23 ; 2 t`). No sequence reads a window title back, so pushing on entry
+  and popping on exit is the only way to leave one as it was found.
+- **`workingDirectory`** (OSC 7), which tells the terminal the current
+  directory and the host it is on.
+- **`autoWrap`**, DECAWM (mode 7), which a program painting the bottom-right
+  cell turns off so that painting it does not scroll the screen.
+- **`Style.overline`**, SGR 53 and 55, diffed like every other attribute.
+- **The character-level edits**: `insertChars` (ICH), `deleteChars` (DCH),
+  `eraseChars` (ECH) and `cursorRow` (VPA) — the row's counterparts to the
+  line-level sequences already here.
+
+### Fixed
+
+- `KeyParser` framed an X10 mouse report as the three bytes `CSI M` and
+  delivered the report's button and coordinates as three separate keypresses.
+  The report is now framed by its length, so the key stream survives a
+  terminal that was left in mode 1000 by something earlier.
+
 ### Changed
 
 - The README says why there is no terminfo here, and what morse does instead.
+- "What morse does not do" no longer claims morse reads no legacy mouse
+  encoding — it reads X10 — and now says why 8-bit C1 introducers are not
+  read on the input side.
 
 ## [0.1.0] - 2026-09-13
 
