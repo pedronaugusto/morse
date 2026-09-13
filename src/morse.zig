@@ -154,6 +154,10 @@ pub const MouseEvent = mouse_events.MouseEvent;
 pub const encodeMouse = mouse_events.encodeMouse;
 /// Reads an SGR mouse report, or null.
 pub const parseMouse = mouse_events.parseMouse;
+/// Reads the original X10 mouse report, or null.
+pub const parseMouseX10 = mouse_events.parseMouseX10;
+/// The largest coordinate an X10 mouse report can carry.
+pub const mouse_x10_max = mouse_events.x10_max;
 /// Converts a pixel report into cells.
 pub const toCells = mouse_events.toCells;
 
@@ -397,6 +401,8 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(ModeState.set, parseModeReply("\x1b[?2026;1$y").?.state);
     try std.testing.expectEqual(@as(u32, 12), parseCursorPosition("\x1b[12;40R").?.row);
     try std.testing.expectEqual(Button.left, parseMouse("\x1b[<0;1;1M").?.button);
+    try std.testing.expectEqual(Button.left, parseMouseX10("\x1b[M\x20\x21\x21").?.button);
+    try std.testing.expectEqual(@as(u32, 223), @as(u32, mouse_x10_max));
     try std.testing.expectEqual(@as(u32, 1), toCells(.{
         .button = .left,
         .x = 4,
@@ -420,6 +426,14 @@ test "the root module re-exports what the README promises" {
         "\x1b]11;rgb:0000/0000/0000\x1b\\",
     ).?.target);
     try std.testing.expect(parseGraphicsResponse("\x1b_Gi=31;OK\x1b\\").?.ok());
+    try std.testing.expectEqual(
+        WindowSize.What.text_area_cells,
+        parseWindowSize("\x1b[8;24;80t").?.what,
+    );
+    try std.testing.expectEqual(SizeQuery.cell_pixels, SizeQuery.cell_pixels);
+
+    const grew: Resize = .{ .rows = 24, .cols = 80 };
+    try std.testing.expect(grew.rows == 24 and grew.xpixels == 0);
 
     var keys: [KeyParser.min_buffer]u8 = undefined;
     var parser: KeyParser = .init(&keys);
@@ -450,15 +464,6 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(@as(u8, 255), wide.to8().r);
     try std.testing.expect(da.class == 1 and da2.version == 0);
     try std.testing.expect(colours.target == .cursor and graphics.ok());
-
-    try std.testing.expectEqual(
-        WindowSize.What.text_area_cells,
-        parseWindowSize("\x1b[8;24;80t").?.what,
-    );
-    try std.testing.expectEqual(SizeQuery.cell_pixels, SizeQuery.cell_pixels);
-
-    const grew: Resize = .{ .rows = 24, .cols = 80 };
-    try std.testing.expect(grew.rows == 24 and grew.xpixels == 0);
 
     const pressed: KeyEvent = .{ .key = .escape };
     const mods: Modifiers = .{};

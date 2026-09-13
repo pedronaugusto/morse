@@ -70,6 +70,7 @@ try morse.kittyKeyboardPush(w, .{
     .report_associated_text = true,
 });
 try morse.bracketedPaste.set(w, true);
+try morse.inBandResize.set(w, true);
 
 // A frame: clear, go to the top-left, write a heading in a style. The
 // second style call writes only what changed -- four bytes rather than a
@@ -107,7 +108,7 @@ var input: [1024]u8 = undefined;
 var keys: morse.KeyParser = .init(&input);
 
 // Control and a in the kitty protocol, then an SGR mouse click.
-var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M");
+var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t");
 while (events.next()) |event| switch (event) {
     // A key, and whatever text the terminal said it produced.
     .key => |key| std.debug.print("key:        {s}{t} {s}\n", .{
@@ -120,6 +121,9 @@ while (events.next()) |event| switch (event) {
         "click:      {s} at {d},{d}\n",
         .{ @tagName(click.button), click.x, click.y },
     ),
+    // A terminal asked for in-band resize says so here rather than
+    // through a signal.
+    .resize => |size| std.debug.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),
     .paste_start, .paste_end, .focus_in, .focus_out => {},
 };
 
@@ -145,6 +149,7 @@ pixel.pixels = true;
 const cell = morse.toCells(pixel, 8, 16);
 
 // On the way out, in reverse.
+try morse.inBandResize.set(w, false);
 try morse.bracketedPaste.set(w, false);
 try morse.kittyKeyboardPop(w);
 try morse.mouseOff(w);
@@ -164,18 +169,19 @@ exe.root_module.addImport("morse", morse_dep.module("morse"));
 ## The surface
 
 **Keyboard input.** `KeyParser`, `Events`, `Event`, `KeyEvent`, `Key`,
-`Modifiers`, `Kind`.
+`Modifiers`, `Kind`, `Resize`.
 
 **Styles and colour.** `Style`, `Color`, `Ansi`, `Rgb`, `Underline`,
 `setStyle`, `diffStyle`, `resetStyle`.
 
 **Cursor and screen.** `cursorTo`, `cursorUp`, `cursorDown`, `cursorRight`,
-`cursorLeft`, `cursorNextLine`, `cursorPrevLine`, `cursorColumn`,
+`cursorLeft`, `cursorNextLine`, `cursorPrevLine`, `cursorColumn`, `cursorRow`,
 `cursorSave`, `cursorRestore`, `ClearLine` / `clearLine`, `ClearScreen` /
 `clearScreen`, `scrollRegion`, `scrollRegionReset`, `scrollUp`, `scrollDown`,
-`insertLines`, `deleteLines`.
+`insertLines`, `deleteLines`, `insertChars`, `deleteChars`, `eraseChars`.
 
-**Titles and links.** `title`, `hyperlinkStart`, `hyperlinkEnd`, `hyperlink`.
+**Titles and links.** `title`, `titlePush`, `titlePop`, `workingDirectory`
+(OSC 7), `hyperlinkStart`, `hyperlinkEnd`, `hyperlink`.
 
 **Clipboard (OSC 52).** `Clipboard`, `clipboardWrite`, `clipboardRequest`,
 `ClipboardReply`, `parseClipboardReply`, `decodeClipboard`.
@@ -183,9 +189,9 @@ exe.root_module.addImport("morse", morse_dep.module("morse"));
 **Notifications.** `notify` (OSC 777), `notify9` (OSC 9).
 
 **Modes.** `altScreen`, `bracketedPaste`, `syncOutput`, `focusEvents`,
-`cursorVisible`, `unicodeCore` — each a type with `set(w, on)` and a `number`
-— plus `setMode` for any mode morse does not name, and `Mouse` / `mouse` /
-`mouseOff`.
+`cursorVisible`, `unicodeCore`, `inBandResize`, `autoWrap` — each a type with
+`set(w, on)` and a `number` — plus `setMode` for any mode morse does not name,
+and `Mouse` / `mouse` / `mouseOff`.
 
 **Keyboard protocol and cursor shape.** `KittyFlags`, `kittyKeyboardPush`,
 `kittyKeyboardPop`, `kittyKeyboardQuery`, `parseKittyKeyboardReply`,
@@ -198,10 +204,11 @@ exe.root_module.addImport("morse", morse_dep.module("morse"));
 `SecondaryDeviceAttributes` / `parseSecondaryDeviceAttributes`,
 `queryVersion` / `parseVersion`, `queryColor` / `setColor` / `resetColor` /
 `ColorTarget` / `Rgb16` / `ColorReport` / `parseColorReply`,
-`GraphicsResponse` / `parseGraphicsResponse`.
+`GraphicsResponse` / `parseGraphicsResponse`, `SizeQuery` /
+`queryWindowSize` / `resizeTextArea` / `WindowSize` / `parseWindowSize`.
 
 **Mouse reports.** `Button`, `MouseEvent`, `encodeMouse`, `parseMouse`,
-`toCells`.
+`parseMouseX10`, `mouse_x10_max`, `toCells`.
 
 ## Design
 
@@ -376,9 +383,22 @@ Everything above the bytes is not here, deliberately:
   here: transmitting an image is a protocol of its own, with chunking,
   formats, compression and placement rules, and it is not a sequence this
   package can usefully name.
-- **No legacy mouse encodings.** X10 and UTF-8 mouse modes cap coordinates at
-  column 223 and are ambiguous about release. SGR exists for that reason and
-  is what morse reads.
+- **No mouse encoding morse cannot frame.** `mouse` only ever asks for SGR,
+  which is the encoding without a 223-column cap and the only one that says
+  which button came up. The original X10 report is nevertheless read, by
+  `parseMouseX10`, and framed by `KeyParser` — because a terminal left in
+  mode 1000 by something earlier still sends them, and three arbitrary bytes
+  delivered as three keypresses is a worse failure than a report morse
+  declines to interpret. The UTF-8 encoding (mode 1005) is not read: its
+  length depends on a mode the input stream does not carry, so it cannot even
+  be framed without knowing what was asked for.
+
+- **No 8-bit C1 controls.** `0x9b` is not read as `CSI`, nor `0x9d` as `OSC`.
+  On the input side those bytes are UTF-8 continuation bytes far more often
+  than they are controls, no terminal sends 8-bit C1 on input unless asked
+  with `S8C1T`, and a parser accepting both would corrupt non-ASCII
+  keystrokes to buy a form nothing sends. A terminal emulator reading a
+  program's *output* needs them; this package reads the other direction.
 - **No guessing at text a terminal did not report.** `KeyEvent.text` is what
   the terminal said the key produced — from the bytes themselves for plain
   input, and from the protocol's associated-text field when you asked for it.
@@ -421,7 +441,8 @@ accept survives a round trip back through the writer: `parseMouse`,
 `parseClipboardReply` with `decodeClipboard`, `parseModeReply`,
 `parseCursorPosition`, `parseDeviceAttributes`,
 `parseSecondaryDeviceAttributes`, `parseVersion`, `parseKittyKeyboardReply`,
-`parseColorReply` and `parseGraphicsResponse`. `KeyParser` is fuzzed too, fed
+`parseColorReply`, `parseWindowSize`, `parseMouseX10` and
+`parseGraphicsResponse`. `KeyParser` is fuzzed too, fed
 in two pieces so the split lands anywhere a real read could have landed, and
 asserting the properties a stream parser has to have: every event's text is
 valid UTF-8, every `unhandled` slice lies inside the buffer it was given, the
