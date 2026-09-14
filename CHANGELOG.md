@@ -74,6 +74,22 @@ Everything a program needs below a TUI framework, on both sides of the wire.
   decimal, so it carries a column past the 223 the biased byte caps at; a
   terminal left in mode 1015 by something earlier sends it, and the three
   mouse parsers each return null for the other two forms.
+- **Win32 input mode**, DEC private mode 9001, as `win32Input` and as a
+  `KeyParser` decoder. A terminal on Windows in that mode sends every key as
+  `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _` — the fields of a console key record —
+  with all six optional and each with its documented default. The repeat
+  count becomes that many events, the control-key state becomes `Modifiers`,
+  and the key coming up is dropped unless `KeyParser.report_key_up` is set,
+  so a caller sees the same `Key` values the kitty and legacy paths produce.
+- **Console input records**, translated by `fromInputRecord` through the same
+  virtual-key table. `ConsoleKeyRecord`, `ConsoleMouseRecord` and
+  `ConsoleSizeRecord` declare the fields of `KEY_EVENT_RECORD`,
+  `MOUSE_EVENT_RECORD` and `WINDOW_BUFFER_SIZE_RECORD`, so the translation
+  compiles and is tested on every platform and nothing here imports an
+  operating system API: a program reads the records with whichever API it
+  likes and hands the fields over. A key record becomes a `KeyEvent`, a mouse
+  record a `MouseEvent` counted from one, a size record a `Resize`, and
+  everything else null.
 - **Modes.** `unicodeCore` (2027), the mode that decides whether the terminal
   measures text by grapheme cluster or by codepoint.
 - **`requestCursorPosition`**, which was missing beside `parseCursorPosition`.

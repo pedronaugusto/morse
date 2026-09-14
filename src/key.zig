@@ -31,6 +31,7 @@
 const std = @import("std");
 const corpus = @import("corpus.zig");
 const seq = @import("seq.zig");
+const win32 = @import("win32.zig");
 
 //=========================================================================
 // What a key is.
@@ -395,6 +396,19 @@ pub const KeyParser = struct {
     start: usize = 0,
     /// Where the unread bytes end.
     end: usize = 0,
+    /// Report the key coming up as well as going down, in win32 input mode.
+    ///
+    /// Mode 9001 reports both halves of every keystroke, which is twice what
+    /// a program that only wants what was typed asks for, so the up half is
+    /// dropped unless this is set. It changes nothing about the other
+    /// protocols: a kitty release arrives only when the terminal was asked
+    /// for event types, and is always reported.
+    report_key_up: bool = false,
+    /// A key still owed repeats, and how many. One win32 sequence can stand
+    /// for several keypresses.
+    repeating: ?KeyEvent = null,
+    /// How many more times `repeating` is still to be reported.
+    repeat_left: u16 = 0,
 
     /// A parser over `buffer`, which must be at least `min_buffer` bytes.
     pub fn init(buffer: []u8) KeyParser {
@@ -469,6 +483,8 @@ pub const KeyParser = struct {
     pub fn reset(p: *KeyParser) void {
         p.start = 0;
         p.end = 0;
+        p.repeating = null;
+        p.repeat_left = 0;
     }
 
     /// Moves the unread bytes to the front, making room at the end.
@@ -493,6 +509,17 @@ pub const Events = struct {
     /// Null does not mean the parser is empty: see `KeyParser.pending`.
     pub fn next(it: *Events) ?Event {
         const p = it.parser;
+
+        // A repeat owed from a win32 sequence comes before any new bytes, so
+        // that a held key arrives in the order it was typed.
+        if (p.repeating) |held| {
+            p.repeat_left -= 1;
+            if (p.repeat_left == 0) p.repeating = null;
+            var again = held;
+            again.kind = .repeat;
+            return .{ .key = again };
+        }
+
         while (true) {
             // Topping up here rather than in `feed` is what lets one feed of
             // many kilobytes drain through a buffer of a few dozen bytes.
@@ -507,9 +534,16 @@ pub const Events = struct {
 
             if (p.start == p.end) return null;
 
-            switch (decode(p.buffer[p.start..p.end])) {
+            switch (decode(p.buffer[p.start..p.end], p.report_key_up)) {
                 .ready => |done| {
                     p.start += done.len;
+                    if (done.repeat > 1) switch (done.event) {
+                        .key => |ev| {
+                            p.repeating = ev;
+                            p.repeat_left = done.repeat - 1;
+                        },
+                        else => {},
+                    };
                     return done.event;
                 },
                 .skip => |n| {
@@ -539,8 +573,12 @@ pub const Events = struct {
 
 /// What the decoder made of the bytes in front of it.
 const Decoded = union(enum) {
-    /// An event, and how many bytes it used.
-    ready: struct { event: Event, len: usize },
+    /// An event, how many bytes it used, and how many times it happened.
+    ///
+    /// `repeat` is one for every sequence but win32 input mode's, which
+    /// carries a count because a console reports auto-repeat as one record
+    /// rather than as many.
+    ready: struct { event: Event, len: usize, repeat: u16 = 1 },
     /// The start of something; more bytes may complete it.
     incomplete,
     /// Not the start of anything. Drop this many bytes and look again.
@@ -552,9 +590,9 @@ fn ready(event: Event, len: usize) Decoded {
 }
 
 /// Reads one event off the front of `bytes`, which is never empty.
-fn decode(bytes: []const u8) Decoded {
+fn decode(bytes: []const u8, report_key_up: bool) Decoded {
     std.debug.assert(bytes.len != 0);
-    if (bytes[0] == seq.esc) return decodeEscape(bytes);
+    if (bytes[0] == seq.esc) return decodeEscape(bytes, report_key_up);
     return decodePlain(bytes, .{}, 0);
 }
 
@@ -565,20 +603,35 @@ fn decode(bytes: []const u8) Decoded {
 /// report the right length.
 fn decodePlain(bytes: []const u8, mods: Modifiers, prefix: usize) Decoded {
     const b = bytes[0];
+    if (b > 0x7f) return decodeUtf8(bytes, mods, prefix);
+
     var m = mods;
-    const key: Key = switch (b) {
+    const which = asciiKey(b, &m);
+    var ev: KeyEvent = .{ .key = which, .mods = m };
+    setText(&ev, bytes[0..1]);
+    return ready(.{ .key = ev }, prefix + 1);
+}
+
+/// The key an ASCII byte stands for, with `mods` gaining the control the
+/// terminal folded into it.
+///
+/// Shared with the Windows console paths, which carry the same control codes
+/// in a field rather than in the stream, so that one byte means one key
+/// however it arrived.
+pub fn asciiKey(b: u8, mods: *Modifiers) Key {
+    return switch (b) {
         // Control and space is the terminal's name for a zero byte.
         0x00 => blk: {
-            m.ctrl = true;
+            mods.ctrl = true;
             break :blk .{ .char = ' ' };
         },
         0x01...0x07, 0x0b, 0x0c, 0x0e...0x1a => blk: {
-            m.ctrl = true;
+            mods.ctrl = true;
             break :blk .{ .char = 'a' + @as(u21, b) - 1 };
         },
         // A terminal sends DEL for backspace, so BS is the modified one.
         0x08 => blk: {
-            m.ctrl = true;
+            mods.ctrl = true;
             break :blk .backspace;
         },
         0x09 => .tab,
@@ -587,29 +640,24 @@ fn decodePlain(bytes: []const u8, mods: Modifiers, prefix: usize) Decoded {
         0x0a, 0x0d => .enter,
         0x1b => .escape,
         0x1c => blk: {
-            m.ctrl = true;
+            mods.ctrl = true;
             break :blk .{ .char = '\\' };
         },
         0x1d => blk: {
-            m.ctrl = true;
+            mods.ctrl = true;
             break :blk .{ .char = ']' };
         },
         0x1e => blk: {
-            m.ctrl = true;
+            mods.ctrl = true;
             break :blk .{ .char = '^' };
         },
         0x1f => blk: {
-            m.ctrl = true;
+            mods.ctrl = true;
             break :blk .{ .char = '_' };
         },
         0x7f => .backspace,
-        0x20...0x7e => .{ .char = b },
-        else => return decodeUtf8(bytes, m, prefix),
+        else => .{ .char = b },
     };
-
-    var ev: KeyEvent = .{ .key = key, .mods = m };
-    setText(&ev, bytes[0..1]);
-    return ready(.{ .key = ev }, prefix + 1);
 }
 
 /// Reads one UTF-8 codepoint as a key.
@@ -627,7 +675,7 @@ fn decodeUtf8(bytes: []const u8, mods: Modifiers, prefix: usize) Decoded {
 ///
 /// A key held with anything but shift produced a control code rather than
 /// text, and a control code is not what the user meant to type.
-fn setText(ev: *KeyEvent, bytes: []const u8) void {
+pub fn setText(ev: *KeyEvent, bytes: []const u8) void {
     switch (ev.key) {
         .char => |cp| if (cp >= 0x20 and cp != 0x7f) {
             const m = ev.mods;
@@ -643,13 +691,13 @@ fn setText(ev: *KeyEvent, bytes: []const u8) void {
 /// Reads a sequence introduced by `ESC`, which is every sequence there is —
 /// and also alt, which terminals spell by putting an `ESC` in front of the
 /// key's own bytes.
-fn decodeEscape(bytes: []const u8) Decoded {
+fn decodeEscape(bytes: []const u8, report_key_up: bool) Decoded {
     // A lone ESC is both the Escape key and the start of everything else.
     // Nothing in the stream resolves that, so it waits; see KeyParser.flush.
     if (bytes.len == 1) return .incomplete;
 
     return switch (bytes[1]) {
-        '[' => decodeCsi(bytes),
+        '[' => decodeCsi(bytes, report_key_up),
         'O' => decodeSs3(bytes),
         // OSC, DCS, SOS, PM and APC: a string with a terminator, framed here
         // and read by whichever parser the caller hands it to.
@@ -758,7 +806,7 @@ fn ss3Key(final: u8) ?Key {
 /// marker, an intermediate byte, or more parameters than this parser holds is
 /// still a sequence whose length is known, so it comes back whole as
 /// `Event.unhandled` rather than being resynchronised byte by byte.
-fn decodeCsi(bytes: []const u8) Decoded {
+fn decodeCsi(bytes: []const u8, report_key_up: bool) Decoded {
     var i: usize = 2;
 
     // A private marker, if there is one: `<` for a mouse report, `?` for a
@@ -797,8 +845,49 @@ fn decodeCsi(bytes: []const u8) Decoded {
 
     const params = scanParams(bytes[param_start..param_end]) orelse
         return ready(.{ .unhandled = whole }, len);
+
+    // Win32 input mode carries its own repeat count and its own key-up half,
+    // neither of which any other sequence has, so it is decoded here rather
+    // than through `csiEvent`.
+    if (final == '_') {
+        const report = win32Event(params) orelse return ready(.{ .unhandled = whole }, len);
+        if (report.event.kind == .release and !report_key_up) return .{ .skip = len };
+        return .{ .ready = .{
+            .event = .{ .key = report.event },
+            .len = len,
+            .repeat = report.repeat,
+        } };
+    }
+
     const event = csiEvent(final, params) orelse return ready(.{ .unhandled = whole }, len);
     return ready(event, len);
+}
+
+/// One key out of a win32 input mode sequence, and how many times it happened.
+const Win32Report = struct { event: KeyEvent, repeat: u16 };
+
+/// Reads `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`, the win32 input mode encoding
+/// of one console key record.
+///
+/// Every field is optional and every one has a documented default: zero for
+/// the virtual key, the scan code, the character and the key-down flag, zero
+/// for the control-key state, and one for the repeat count. A field too large
+/// for the record's own type is not a record this package hands back, so the
+/// sequence comes out whole instead.
+fn win32Event(params: Params) ?Win32Report {
+    if (params.count > 6) return null;
+
+    const vk = std.math.cast(u16, params.get(0, 0) orelse 0) orelse return null;
+    // The scan code names a position rather than a key, so it is read only to
+    // be checked and then discarded.
+    _ = std.math.cast(u16, params.get(1, 0) orelse 0) orelse return null;
+    const uc = std.math.cast(u16, params.get(2, 0) orelse 0) orelse return null;
+    const down = (params.get(3, 0) orelse 0) != 0;
+    const state = params.get(4, 0) orelse 0;
+    const repeat = std.math.cast(u16, params.get(5, 0) orelse 1) orelse return null;
+
+    const ev = win32.keyEvent(vk, uc, state, down) orelse return null;
+    return .{ .event = ev, .repeat = @max(repeat, 1) };
 }
 
 /// The event a parameterised `CSI` with no private marker stands for, or null
@@ -1901,4 +1990,407 @@ test "a resize report arrives among keys without disturbing them" {
     try std.testing.expectEqual(Key{ .char = 'a' }, events[0].key.key);
     try std.testing.expectEqual(@as(u32, 80), events[1].resize.cols);
     try std.testing.expectEqual(Key{ .char = 'b' }, events[2].key.key);
+}
+
+//=========================================================================
+// Win32 input mode, DEC private mode 9001.
+//=========================================================================
+
+/// Every key win32 input mode names by its virtual key, with the sequence a
+/// terminal writes for it and the key it stands for.
+const win32_named = [_]struct { bytes: []const u8, vk: u16, key: Key }{
+    .{ .bytes = "\x1b[8;0;0;1;0;1_", .vk = 8, .key = Key.backspace },
+    .{ .bytes = "\x1b[9;0;0;1;0;1_", .vk = 9, .key = Key.tab },
+    .{ .bytes = "\x1b[12;0;0;1;0;1_", .vk = 12, .key = Key.kp_begin },
+    .{ .bytes = "\x1b[13;0;0;1;0;1_", .vk = 13, .key = Key.enter },
+    .{ .bytes = "\x1b[16;0;0;1;0;1_", .vk = 16, .key = Key.left_shift },
+    .{ .bytes = "\x1b[17;0;0;1;0;1_", .vk = 17, .key = Key.left_ctrl },
+    .{ .bytes = "\x1b[18;0;0;1;0;1_", .vk = 18, .key = Key.left_alt },
+    .{ .bytes = "\x1b[19;0;0;1;0;1_", .vk = 19, .key = Key.pause },
+    .{ .bytes = "\x1b[20;0;0;1;0;1_", .vk = 20, .key = Key.caps_lock },
+    .{ .bytes = "\x1b[27;0;0;1;0;1_", .vk = 27, .key = Key.escape },
+    .{ .bytes = "\x1b[32;0;0;1;0;1_", .vk = 32, .key = Key{ .char = ' ' } },
+    .{ .bytes = "\x1b[33;0;0;1;0;1_", .vk = 33, .key = Key.page_up },
+    .{ .bytes = "\x1b[34;0;0;1;0;1_", .vk = 34, .key = Key.page_down },
+    .{ .bytes = "\x1b[35;0;0;1;0;1_", .vk = 35, .key = Key.end },
+    .{ .bytes = "\x1b[36;0;0;1;0;1_", .vk = 36, .key = Key.home },
+    .{ .bytes = "\x1b[37;0;0;1;0;1_", .vk = 37, .key = Key.left },
+    .{ .bytes = "\x1b[38;0;0;1;0;1_", .vk = 38, .key = Key.up },
+    .{ .bytes = "\x1b[39;0;0;1;0;1_", .vk = 39, .key = Key.right },
+    .{ .bytes = "\x1b[40;0;0;1;0;1_", .vk = 40, .key = Key.down },
+    .{ .bytes = "\x1b[44;0;0;1;0;1_", .vk = 44, .key = Key.print_screen },
+    .{ .bytes = "\x1b[45;0;0;1;0;1_", .vk = 45, .key = Key.insert },
+    .{ .bytes = "\x1b[46;0;0;1;0;1_", .vk = 46, .key = Key.delete },
+    .{ .bytes = "\x1b[91;0;0;1;0;1_", .vk = 91, .key = Key.left_super },
+    .{ .bytes = "\x1b[92;0;0;1;0;1_", .vk = 92, .key = Key.right_super },
+    .{ .bytes = "\x1b[93;0;0;1;0;1_", .vk = 93, .key = Key.menu },
+    .{ .bytes = "\x1b[96;0;0;1;0;1_", .vk = 96, .key = Key.kp_0 },
+    .{ .bytes = "\x1b[97;0;0;1;0;1_", .vk = 97, .key = Key.kp_1 },
+    .{ .bytes = "\x1b[98;0;0;1;0;1_", .vk = 98, .key = Key.kp_2 },
+    .{ .bytes = "\x1b[99;0;0;1;0;1_", .vk = 99, .key = Key.kp_3 },
+    .{ .bytes = "\x1b[100;0;0;1;0;1_", .vk = 100, .key = Key.kp_4 },
+    .{ .bytes = "\x1b[101;0;0;1;0;1_", .vk = 101, .key = Key.kp_5 },
+    .{ .bytes = "\x1b[102;0;0;1;0;1_", .vk = 102, .key = Key.kp_6 },
+    .{ .bytes = "\x1b[103;0;0;1;0;1_", .vk = 103, .key = Key.kp_7 },
+    .{ .bytes = "\x1b[104;0;0;1;0;1_", .vk = 104, .key = Key.kp_8 },
+    .{ .bytes = "\x1b[105;0;0;1;0;1_", .vk = 105, .key = Key.kp_9 },
+    .{ .bytes = "\x1b[106;0;0;1;0;1_", .vk = 106, .key = Key.kp_multiply },
+    .{ .bytes = "\x1b[107;0;0;1;0;1_", .vk = 107, .key = Key.kp_add },
+    .{ .bytes = "\x1b[108;0;0;1;0;1_", .vk = 108, .key = Key.kp_separator },
+    .{ .bytes = "\x1b[109;0;0;1;0;1_", .vk = 109, .key = Key.kp_subtract },
+    .{ .bytes = "\x1b[110;0;0;1;0;1_", .vk = 110, .key = Key.kp_decimal },
+    .{ .bytes = "\x1b[111;0;0;1;0;1_", .vk = 111, .key = Key.kp_divide },
+    .{ .bytes = "\x1b[112;0;0;1;0;1_", .vk = 112, .key = Key{ .f = 1 } },
+    .{ .bytes = "\x1b[113;0;0;1;0;1_", .vk = 113, .key = Key{ .f = 2 } },
+    .{ .bytes = "\x1b[114;0;0;1;0;1_", .vk = 114, .key = Key{ .f = 3 } },
+    .{ .bytes = "\x1b[115;0;0;1;0;1_", .vk = 115, .key = Key{ .f = 4 } },
+    .{ .bytes = "\x1b[116;0;0;1;0;1_", .vk = 116, .key = Key{ .f = 5 } },
+    .{ .bytes = "\x1b[117;0;0;1;0;1_", .vk = 117, .key = Key{ .f = 6 } },
+    .{ .bytes = "\x1b[118;0;0;1;0;1_", .vk = 118, .key = Key{ .f = 7 } },
+    .{ .bytes = "\x1b[119;0;0;1;0;1_", .vk = 119, .key = Key{ .f = 8 } },
+    .{ .bytes = "\x1b[120;0;0;1;0;1_", .vk = 120, .key = Key{ .f = 9 } },
+    .{ .bytes = "\x1b[121;0;0;1;0;1_", .vk = 121, .key = Key{ .f = 10 } },
+    .{ .bytes = "\x1b[122;0;0;1;0;1_", .vk = 122, .key = Key{ .f = 11 } },
+    .{ .bytes = "\x1b[123;0;0;1;0;1_", .vk = 123, .key = Key{ .f = 12 } },
+    .{ .bytes = "\x1b[124;0;0;1;0;1_", .vk = 124, .key = Key{ .f = 13 } },
+    .{ .bytes = "\x1b[125;0;0;1;0;1_", .vk = 125, .key = Key{ .f = 14 } },
+    .{ .bytes = "\x1b[126;0;0;1;0;1_", .vk = 126, .key = Key{ .f = 15 } },
+    .{ .bytes = "\x1b[127;0;0;1;0;1_", .vk = 127, .key = Key{ .f = 16 } },
+    .{ .bytes = "\x1b[128;0;0;1;0;1_", .vk = 128, .key = Key{ .f = 17 } },
+    .{ .bytes = "\x1b[129;0;0;1;0;1_", .vk = 129, .key = Key{ .f = 18 } },
+    .{ .bytes = "\x1b[130;0;0;1;0;1_", .vk = 130, .key = Key{ .f = 19 } },
+    .{ .bytes = "\x1b[131;0;0;1;0;1_", .vk = 131, .key = Key{ .f = 20 } },
+    .{ .bytes = "\x1b[132;0;0;1;0;1_", .vk = 132, .key = Key{ .f = 21 } },
+    .{ .bytes = "\x1b[133;0;0;1;0;1_", .vk = 133, .key = Key{ .f = 22 } },
+    .{ .bytes = "\x1b[134;0;0;1;0;1_", .vk = 134, .key = Key{ .f = 23 } },
+    .{ .bytes = "\x1b[135;0;0;1;0;1_", .vk = 135, .key = Key{ .f = 24 } },
+    .{ .bytes = "\x1b[144;0;0;1;0;1_", .vk = 144, .key = Key.num_lock },
+    .{ .bytes = "\x1b[145;0;0;1;0;1_", .vk = 145, .key = Key.scroll_lock },
+    .{ .bytes = "\x1b[160;0;0;1;0;1_", .vk = 160, .key = Key.left_shift },
+    .{ .bytes = "\x1b[161;0;0;1;0;1_", .vk = 161, .key = Key.right_shift },
+    .{ .bytes = "\x1b[162;0;0;1;0;1_", .vk = 162, .key = Key.left_ctrl },
+    .{ .bytes = "\x1b[163;0;0;1;0;1_", .vk = 163, .key = Key.right_ctrl },
+    .{ .bytes = "\x1b[164;0;0;1;0;1_", .vk = 164, .key = Key.left_alt },
+    .{ .bytes = "\x1b[165;0;0;1;0;1_", .vk = 165, .key = Key.right_alt },
+    .{ .bytes = "\x1b[173;0;0;1;0;1_", .vk = 173, .key = Key.mute_volume },
+    .{ .bytes = "\x1b[174;0;0;1;0;1_", .vk = 174, .key = Key.lower_volume },
+    .{ .bytes = "\x1b[175;0;0;1;0;1_", .vk = 175, .key = Key.raise_volume },
+    .{ .bytes = "\x1b[176;0;0;1;0;1_", .vk = 176, .key = Key.media_track_next },
+    .{ .bytes = "\x1b[177;0;0;1;0;1_", .vk = 177, .key = Key.media_track_previous },
+    .{ .bytes = "\x1b[178;0;0;1;0;1_", .vk = 178, .key = Key.media_stop },
+    .{ .bytes = "\x1b[179;0;0;1;0;1_", .vk = 179, .key = Key.media_play_pause },
+};
+
+test "win32 input mode names every key its virtual keys can name" {
+    for (win32_named) |case| {
+        const ev = oneKey(case.bytes) orelse return error.TestExpectedEqual;
+        try std.testing.expectEqual(case.key, ev.key);
+        try std.testing.expectEqual(Modifiers{}, ev.mods);
+        try std.testing.expectEqual(Kind.press, ev.kind);
+        try std.testing.expectEqualStrings("", ev.text());
+    }
+}
+
+test "win32 input mode carries every modifier combination the encoding has" {
+    // The three modifiers a `dwControlKeyState` can hold, and the eight
+    // combinations of them. There is no bit for super, hyper or meta: the
+    // Windows key reaches a console as a key, never as a state.
+    const shift = 0x0010;
+    const alt = 0x0002;
+    const ctrl = 0x0008;
+
+    var buffer: [64]u8 = undefined;
+    for (win32_named) |case| {
+        for (0..8) |combination| {
+            var state: u32 = 0;
+            if (combination & 1 != 0) state |= shift;
+            if (combination & 2 != 0) state |= alt;
+            if (combination & 4 != 0) state |= ctrl;
+
+            const bytes = try std.fmt.bufPrint(
+                &buffer,
+                "\x1b[{d};0;0;1;{d};1_",
+                .{ case.vk, state },
+            );
+            const ev = oneKey(bytes) orelse return error.TestExpectedEqual;
+            try std.testing.expectEqual(case.key, ev.key);
+            try std.testing.expectEqual(combination & 1 != 0, ev.mods.shift);
+            try std.testing.expectEqual(combination & 2 != 0, ev.mods.alt);
+            try std.testing.expectEqual(combination & 4 != 0, ev.mods.ctrl);
+            try std.testing.expect(!ev.mods.super and !ev.mods.hyper and !ev.mods.meta);
+        }
+    }
+}
+
+test "win32 input mode reads the right alt and right control bits too" {
+    // AltGr is the one that matters: a console reports it as right alt and
+    // left control at once.
+    const altgr = oneKey("\x1b[65;0;0;1;9;1_").?;
+    try std.testing.expect(altgr.mods.alt and altgr.mods.ctrl);
+
+    const right_ctrl = oneKey("\x1b[37;0;0;1;4;1_").?;
+    try std.testing.expect(right_ctrl.mods.ctrl and !right_ctrl.mods.alt);
+
+    const right_alt = oneKey("\x1b[37;0;0;1;1;1_").?;
+    try std.testing.expect(right_alt.mods.alt and !right_alt.mods.ctrl);
+}
+
+test "win32 input mode reports the lock states as lock states" {
+    const caps = oneKey("\x1b[37;0;0;1;128;1_").?;
+    try std.testing.expect(caps.mods.caps_lock and !caps.mods.shift);
+
+    const num = oneKey("\x1b[37;0;0;1;32;1_").?;
+    try std.testing.expect(num.mods.num_lock);
+
+    // Scroll lock has a bit in the state and no field in `Modifiers`, so it
+    // is read and dropped rather than turned into something else.
+    const scroll = oneKey("\x1b[37;0;0;1;64;1_").?;
+    try std.testing.expectEqual(Modifiers{}, scroll.mods);
+}
+
+test "win32 input mode takes the character when the key produced one" {
+    const lower = oneKey("\x1b[65;30;97;1;0;1_").?;
+    try std.testing.expectEqual(Key{ .char = 'a' }, lower.key);
+    try std.testing.expectEqualStrings("a", lower.text());
+
+    // Shift has already been applied to the character, as it has in a byte
+    // stream, so the key is the capital and the text is too.
+    const upper = oneKey("\x1b[65;30;65;1;16;1_").?;
+    try std.testing.expectEqual(Key{ .char = 'A' }, upper.key);
+    try std.testing.expect(upper.mods.shift);
+    try std.testing.expectEqualStrings("A", upper.text());
+
+    // A character outside ASCII arrives as its code unit and comes out as
+    // UTF-8, which is what every other path here produces.
+    const pound = oneKey("\x1b[0;0;163;1;0;1_").?;
+    try std.testing.expectEqual(Key{ .char = 0xa3 }, pound.key);
+    try std.testing.expectEqualStrings("\u{a3}", pound.text());
+}
+
+test "win32 input mode folds a control code back into the key that made it" {
+    // Control and A is the letter with `Modifiers.ctrl`, which is what the
+    // legacy path and the kitty path both report.
+    const ctrl_a = oneKey("\x1b[65;30;1;1;8;1_").?;
+    try std.testing.expectEqual(Key{ .char = 'a' }, ctrl_a.key);
+    try std.testing.expect(ctrl_a.mods.ctrl);
+    try std.testing.expectEqualStrings("", ctrl_a.text());
+
+    // Backspace sends a control code as its character, and is still the key.
+    const back = oneKey("\x1b[8;14;8;1;0;1_").?;
+    try std.testing.expectEqual(Key.backspace, back.key);
+    try std.testing.expect(!back.mods.ctrl);
+
+    // Control and backspace sends DEL, and is still backspace.
+    const ctrl_back = oneKey("\x1b[8;14;127;1;8;1_").?;
+    try std.testing.expectEqual(Key.backspace, ctrl_back.key);
+    try std.testing.expect(ctrl_back.mods.ctrl);
+
+    // Enter, escape and tab agree with themselves whichever field names them.
+    try std.testing.expectEqual(Key.enter, oneKey("\x1b[13;28;13;1;0;1_").?.key);
+    try std.testing.expectEqual(Key.escape, oneKey("\x1b[27;1;27;1;0;1_").?.key);
+    try std.testing.expectEqual(Key.tab, oneKey("\x1b[9;15;9;1;0;1_").?.key);
+
+    // A key with no name whose character is a control code is read as that
+    // control code, exactly as the byte would be.
+    const ctrl_bracket = oneKey("\x1b[219;26;27;1;8;1_").?;
+    try std.testing.expectEqual(Key.escape, ctrl_bracket.key);
+}
+
+test "win32 input mode uses the documented default for every missing field" {
+    // Vk alone: everything else defaults, and `Kd` defaults to a key coming
+    // up, which is dropped unless the caller asked for it.
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var quiet: KeyParser = .init(&storage);
+    var none = quiet.feed("\x1b[37_");
+    try std.testing.expectEqual(@as(?Event, null), none.next());
+
+    var loud: KeyParser = .init(&storage);
+    loud.report_key_up = true;
+    var events = loud.feed("\x1b[37_");
+    const ev = events.next().?.key;
+    try std.testing.expectEqual(Key.left, ev.key);
+    try std.testing.expectEqual(Kind.release, ev.kind);
+    try std.testing.expectEqual(Modifiers{}, ev.mods);
+
+    // Empty fields are the same as absent ones.
+    const typed = oneKey("\x1b[;;97;1_").?;
+    try std.testing.expectEqual(Key{ .char = 'a' }, typed.key);
+    try std.testing.expectEqual(Kind.press, typed.kind);
+}
+
+test "win32 input mode drops the key coming up unless it is asked for" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var quiet: KeyParser = .init(&storage);
+
+    // A whole keystroke: down then up. Only the down is reported, and the key
+    // after it still arrives.
+    var events = quiet.feed("\x1b[65;30;97;1;0;1_\x1b[65;30;97;0;0;1_b");
+    try std.testing.expectEqual(Key{ .char = 'a' }, events.next().?.key.key);
+    try std.testing.expectEqual(Key{ .char = 'b' }, events.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+
+    var loud: KeyParser = .init(&storage);
+    loud.report_key_up = true;
+    var both = loud.feed("\x1b[65;30;97;1;0;1_\x1b[65;30;97;0;0;1_");
+    try std.testing.expectEqual(Kind.press, both.next().?.key.kind);
+    try std.testing.expectEqual(Kind.release, both.next().?.key.kind);
+    try std.testing.expectEqual(@as(?Event, null), both.next());
+}
+
+test "win32 input mode expands a repeat count into that many keys" {
+    var buffer: [8]Event = undefined;
+    const events = collect("\x1b[65;30;97;1;0;3_", &buffer);
+    try std.testing.expectEqual(@as(usize, 3), events.len);
+
+    // The first is the press and the rest are repeats, which is what the
+    // kitty protocol calls the same thing.
+    try std.testing.expectEqual(Kind.press, events[0].key.kind);
+    try std.testing.expectEqual(Kind.repeat, events[1].key.kind);
+    try std.testing.expectEqual(Kind.repeat, events[2].key.kind);
+    for (events) |event| {
+        try std.testing.expectEqual(Key{ .char = 'a' }, event.key.key);
+        try std.testing.expectEqualStrings("a", event.key.text());
+    }
+
+    // A count of one, and an absent count, are one key.
+    try std.testing.expectEqual(@as(usize, 1), collect("\x1b[65;30;97;1;0;1_", &buffer).len);
+    try std.testing.expectEqual(@as(usize, 1), collect("\x1b[65;30;97;1;0_", &buffer).len);
+    try std.testing.expectEqual(@as(usize, 1), collect("\x1b[65;30;97;1;0;0_", &buffer).len);
+}
+
+test "a repeated key and the key after it arrive in the order they were typed" {
+    var buffer: [8]Event = undefined;
+    const events = collect("\x1b[65;30;97;1;0;2_b", &buffer);
+    try std.testing.expectEqual(@as(usize, 3), events.len);
+    try std.testing.expectEqual(Key{ .char = 'a' }, events[0].key.key);
+    try std.testing.expectEqual(Key{ .char = 'a' }, events[1].key.key);
+    try std.testing.expectEqual(Key{ .char = 'b' }, events[2].key.key);
+}
+
+test "reset throws away the repeats a win32 sequence still owed" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    var events = parser.feed("\x1b[65;30;97;1;0;9_");
+    try std.testing.expectEqual(Key{ .char = 'a' }, events.next().?.key.key);
+    parser.reset();
+
+    var after = parser.feed("b");
+    try std.testing.expectEqual(Key{ .char = 'b' }, after.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), after.next());
+}
+
+test "a win32 sequence split across feeds is one key when it is whole" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    const whole = "\x1b[65;30;97;1;0;1_";
+    for (whole[0 .. whole.len - 1]) |byte| {
+        var partial = parser.feed(&[_]u8{byte});
+        try std.testing.expectEqual(@as(?Event, null), partial.next());
+    }
+    var events = parser.feed(whole[whole.len - 1 ..]);
+    try std.testing.expectEqual(Key{ .char = 'a' }, events.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+}
+
+test "a win32 sequence this parser cannot read comes back whole" {
+    const rejected = [_][]const u8{
+        "\x1b[_", // every field defaulted, which names no key
+        "\x1b[0;0;0;1;0;1_", // the same, spelled out
+        "\x1b[65536;0;0;1;0;1_", // a virtual key too large for its field
+        "\x1b[0;65536;0;1;0;1_", // a scan code too large for its field
+        "\x1b[0;0;65536;1;0;1_", // a character too large for its field
+        "\x1b[65;0;97;1;0;65536_", // a repeat count too large for its field
+        "\x1b[65;0;97;1;0;1;1_", // a field too many
+        "\x1b[0;0;55357;1;0;1_", // half a surrogate pair, which is no codepoint
+        "\x1b[0;0;56832;1;0;1_", // the other half
+    };
+    for (rejected) |bytes| try expectUnhandled(bytes);
+}
+
+test "a win32 sequence and a console record decode to the same key" {
+    // The two shapes share one virtual-key table, and this is what says so:
+    // the same fields, read from a sequence and from a record, are one key.
+    var buffer: [64]u8 = undefined;
+    for (win32_named) |case| {
+        for ([_]u32{ 0, 0x10, 0x08, 0x02, 0x1a, 0x80 }) |state| {
+            const bytes = try std.fmt.bufPrint(
+                &buffer,
+                "\x1b[{d};0;0;1;{d};1_",
+                .{ case.vk, state },
+            );
+            const from_bytes = oneKey(bytes) orelse return error.TestExpectedEqual;
+            const from_record = win32.fromInputRecord(.{ .key = .{
+                .key_down = true,
+                .virtual_key_code = case.vk,
+                .control_key_state = state,
+            } }, false) orelse return error.TestExpectedEqual;
+            try std.testing.expectEqual(from_bytes, from_record.key);
+        }
+    }
+
+    // And with a character in the field, where the layout has already been
+    // applied and the text comes with it.
+    const typed = oneKey("\x1b[65;30;97;1;0;1_").?;
+    const recorded = win32.fromInputRecord(.{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 'A',
+        .virtual_scan_code = 30,
+        .unicode_char = 'a',
+    } }, false).?;
+    try std.testing.expectEqual(typed, recorded.key);
+}
+
+test "fuzz the win32 input mode decoder" {
+    // The property: arbitrary bytes shaped like this sequence never panic,
+    // never read past the end, and never produce a key whose text is not
+    // valid UTF-8 -- with the key-up half both dropped and reported, because
+    // that flag is the one thing that changes which events come out.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [128]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            for ([_]bool{ false, true }) |key_up| {
+                var storage: [KeyParser.min_buffer]u8 = undefined;
+                var parser: KeyParser = .init(&storage);
+                parser.report_key_up = key_up;
+
+                var events = parser.feed(bytes);
+                var seen: usize = 0;
+                while (events.next()) |event| {
+                    seen += 1;
+                    // A repeat count is bounded by the field it came from, so
+                    // one sequence cannot spin forever.
+                    if (seen > 1024 * 1024) return error.TestUnexpectedResult;
+                    switch (event) {
+                        .key => |ev| {
+                            try std.testing.expect(std.unicode.utf8ValidateSlice(ev.text()));
+                            if (!key_up) try std.testing.expect(ev.kind != .release);
+                        },
+                        .unhandled => |slice| {
+                            try std.testing.expect(slice.len <= storage.len);
+                        },
+                        else => {},
+                    }
+                }
+                _ = parser.flush();
+                try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
+            }
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b[65;30;97;1;0;1_"),
+        corpus.seed("\x1b[65;30;97;0;0;1_"),
+        corpus.seed("\x1b[65;30;97;1;0;3_"),
+        corpus.seed("\x1b[37;0;0;1;16;1_"),
+        corpus.seed("\x1b[112;0;0;1;8;1_"),
+        corpus.seed("\x1b[;;;;;_"),
+        corpus.seed("\x1b[_"),
+        corpus.seed("\x1b[0;0;55357;1;0;1_"),
+        corpus.seed("\x1b[65536;0;0;1;0;1_"),
+        corpus.seed("\x1b[65;0;97;1;0;65535_"),
+        corpus.seed("\x1b[65;0;97;1;0;1;1_"),
+        corpus.seed("\x1b[65;30;97;1;0;2_b"),
+    } });
 }

@@ -40,6 +40,11 @@ pub fn main() !void {
     try morse.bracketedPaste.set(w, true);
     try morse.inBandResize.set(w, true);
 
+    // On Windows, keys as sequences rather than as bytes: mode 9001 says
+    // which physical key it was and whether it went down or came up, and
+    // `KeyParser` reads it into the same `Key` as everything else.
+    try morse.win32Input.set(w, true);
+
     // A frame: clear, go to the top-left, write a heading in a style. The
     // second style call writes only what changed -- four bytes rather than a
     // reset and a repaint of attributes that were already right.
@@ -127,6 +132,7 @@ pub fn main() !void {
     const cell = morse.toCells(pixel, 8, 16);
 
     // On the way out, in reverse.
+    try morse.win32Input.set(w, false);
     try morse.inBandResize.set(w, false);
     try morse.bracketedPaste.set(w, false);
     try morse.kittyKeyboardPop(w);

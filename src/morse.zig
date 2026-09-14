@@ -33,6 +33,7 @@ const query = @import("query.zig");
 const status = @import("status.zig");
 const style = @import("style.zig");
 const tcap = @import("tcap.zig");
+const win32 = @import("win32.zig");
 
 //=========================================================================
 // Titles and hyperlinks.
@@ -121,6 +122,8 @@ pub const cursorVisible = mode.cursorVisible;
 pub const unicodeCore = mode.unicodeCore;
 /// Resize reports on the input stream rather than by signal (mode 2048).
 pub const inBandResize = mode.inBandResize;
+/// Windows console keys as sequences rather than as bytes (mode 9001).
+pub const win32Input = mode.win32Input;
 /// Auto-wrap at the last column, DECAWM (mode 7).
 pub const autoWrap = mode.autoWrap;
 /// Which mouse reports a program wants.
@@ -283,6 +286,26 @@ pub const KeyParser = key.KeyParser;
 pub const Events = key.Events;
 
 //=========================================================================
+// The Windows console keyboard.
+//=========================================================================
+
+/// A `KEY_EVENT_RECORD`, declared here rather than imported.
+pub const ConsoleKeyRecord = win32.ConsoleKeyRecord;
+/// A `MOUSE_EVENT_RECORD`, declared here rather than imported.
+pub const ConsoleMouseRecord = win32.ConsoleMouseRecord;
+/// A `WINDOW_BUFFER_SIZE_RECORD`, declared here rather than imported.
+pub const ConsoleSizeRecord = win32.ConsoleSizeRecord;
+/// One `INPUT_RECORD`, as the union its event type selects.
+pub const ConsoleRecord = win32.ConsoleRecord;
+/// What a console record turned out to be.
+pub const ConsoleEvent = win32.ConsoleEvent;
+/// Translates one console input record into a key, a mouse report or a
+/// resize.
+pub const fromInputRecord = win32.fromInputRecord;
+/// The bits of a console `dwControlKeyState`.
+pub const ControlKeyState = win32.ControlKeyState;
+
+//=========================================================================
 // Asking the terminal what it is.
 //=========================================================================
 
@@ -373,6 +396,7 @@ test {
     _ = @import("status.zig");
     _ = @import("style.zig");
     _ = @import("tcap.zig");
+    _ = @import("win32.zig");
 }
 
 test "the root module re-exports what the README promises" {
@@ -423,6 +447,7 @@ test "the root module re-exports what the README promises" {
     try titlePop(w);
     try workingDirectory(w, "file://host/tmp");
     try inBandResize.set(w, true);
+    try win32Input.set(w, true);
     try autoWrap.set(w, false);
     try queryWindowSize(w, .text_area_cells);
     try resizeTextArea(w, 24, 80);
@@ -522,12 +547,30 @@ test "the root module re-exports what the README promises" {
 
     var keys: [KeyParser.min_buffer]u8 = undefined;
     var parser: KeyParser = .init(&keys);
+    parser.report_key_up = false;
     var events: Events = parser.feed("\x1b[97;5u");
     const event: Event = events.next().?;
     try std.testing.expectEqual(Key{ .char = 'a' }, event.key.key);
     try std.testing.expectEqual(Kind.press, event.key.kind);
     try std.testing.expect(event.key.mods.ctrl);
     try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
+
+    const record: ConsoleRecord = .{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 0x25,
+        .control_key_state = ControlKeyState.shift,
+    } };
+    const console: ConsoleEvent = fromInputRecord(record, false).?;
+    try std.testing.expectEqual(Key.left, console.key.key);
+    try std.testing.expect(console.key.mods.shift);
+
+    const moved: ConsoleMouseRecord = .{ .x = 3, .y = 4, .button_state = 1 };
+    const sized: ConsoleSizeRecord = .{ .cols = 80, .rows = 24 };
+    const wheel: ConsoleEvent = fromInputRecord(.{ .mouse = moved }, false).?;
+    const grown: ConsoleEvent = fromInputRecord(.{ .window_buffer_size = sized }, false).?;
+    try std.testing.expectEqual(@as(u32, 4), wheel.mouse.x);
+    try std.testing.expectEqual(@as(u32, 24), grown.resize.rows);
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), fromInputRecord(.other, false));
 
     const erase: ClearLine = .all;
     const wipe: ClearScreen = .scrollback;

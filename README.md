@@ -41,6 +41,11 @@ try morse.kittyKeyboardPush(w, .{
 try morse.bracketedPaste.set(w, true);
 try morse.inBandResize.set(w, true);
 
+// On Windows, keys as sequences rather than as bytes: mode 9001 says
+// which physical key it was and whether it went down or came up, and
+// `KeyParser` reads it into the same `Key` as everything else.
+try morse.win32Input.set(w, true);
+
 // A frame: clear, go to the top-left, write a heading in a style. The
 // second style call writes only what changed -- four bytes rather than a
 // reset and a repaint of attributes that were already right.
@@ -128,6 +133,7 @@ pixel.pixels = true;
 const cell = morse.toCells(pixel, 8, 16);
 
 // On the way out, in reverse.
+try morse.win32Input.set(w, false);
 try morse.inBandResize.set(w, false);
 try morse.bracketedPaste.set(w, false);
 try morse.kittyKeyboardPop(w);
@@ -156,6 +162,10 @@ No dependencies: nothing to link, and no C toolchain involved.
 **Keyboard input.** `KeyParser`, `Events`, `Event`, `KeyEvent`, `Key`,
 `Modifiers`, `Kind`, `Resize`.
 
+**The Windows console.** `ConsoleRecord`, `ConsoleKeyRecord`,
+`ConsoleMouseRecord`, `ConsoleSizeRecord`, `ConsoleEvent`, `ControlKeyState`,
+`fromInputRecord`.
+
 **Styles and colour.** `Style`, `Color`, `Ansi`, `Rgb`, `Underline`,
 `setStyle`, `diffStyle`, `resetStyle`.
 
@@ -176,7 +186,8 @@ No dependencies: nothing to link, and no C toolchain involved.
 `commandStart`, `commandEnd` (OSC 133).
 
 **Modes.** `altScreen`, `bracketedPaste`, `syncOutput`, `focusEvents`,
-`cursorVisible`, `unicodeCore`, `inBandResize`, `autoWrap` — each a type with
+`cursorVisible`, `unicodeCore`, `inBandResize`, `autoWrap`, `win32Input` —
+each a type with
 `set(w, on)` and a `number` — plus `setMode` for any mode morse does not name,
 and `Mouse` / `mouse` / `mouseOff`.
 
@@ -222,6 +233,15 @@ back whole as `Event.unhandled` for `parseMouse`, `parseColorReply` or
 whichever parser reads it, so an unrecognised reply never resynchronises the
 stream a byte at a time. You own the buffer: `min_buffer` covers keys, but an
 OSC 52 reply is as long as whatever was copied.
+
+**The Windows console arrives in two shapes, and both come out as `Key`.** A
+terminal in win32 input mode (`win32Input`, mode 9001) sends every key as
+`CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`, which `KeyParser` decodes: the repeat
+count becomes that many events, and the key coming up is dropped unless
+`report_key_up` is set. Reading the console yourself instead, you copy each
+record into a `ConsoleRecord` and hand it to `fromInputRecord`, which reads it
+through the same virtual-key table and gives back a key, a mouse report or a
+resize. Neither path calls an operating system API.
 
 **A lone `ESC` is settled by you.** It is both the Escape key and the first
 byte of every sequence, so `KeyParser` holds it, `pending()` shows it, and
@@ -278,9 +298,6 @@ parser has already established the payload is well-formed base64;
 morse calls no operating system API, so the same source builds everywhere Zig
 does; cross-compilation is checked for `x86_64-linux-gnu`,
 `x86_64-windows-gnu` and `aarch64-windows-gnu`.
-
-Pending: console input records from `ReadConsoleInputW` and the
-win32-input-mode key encoding (mode 9001) are not decoded yet.
 
 ## Testing
 

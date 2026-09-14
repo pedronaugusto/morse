@@ -81,6 +81,21 @@ pub const unicodeCore = PrivateMode(2027);
 /// `queryMode` or keep whatever size the program already had.
 pub const inBandResize = PrivateMode(2048);
 
+/// Win32 input mode (mode 9001). On, a terminal on Windows sends every key as
+/// `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _` -- the fields of a console key record,
+/// in a sequence -- instead of as the byte string the key would otherwise
+/// produce, and `KeyParser` decodes it.
+///
+/// It is what the legacy console cannot say any other way: which physical key
+/// was pressed, whether it was going down or coming up, and the modifier
+/// state at the time. The keys it disambiguates are the ones that otherwise
+/// collide -- control and `[` against Escape, the keypad against the arrows.
+///
+/// A terminal that does not implement it ignores this, so a program asks for
+/// it unconditionally and reads whichever form arrives. `KeyParser` drops the
+/// key-up half unless `report_key_up` is set.
+pub const win32Input = PrivateMode(9001);
+
 /// Auto-wrap, DECAWM (mode 7). On -- which is the default -- a glyph written
 /// in the last column moves the cursor to the start of the next row.
 ///
