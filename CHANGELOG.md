@@ -40,6 +40,16 @@ Everything a program needs below a TUI framework, on both sides of the wire.
   `parseColorReply` reading the `rgb:` form at any channel width, and
   `parseGraphicsResponse` for the kitty graphics `APC G` reply — a parser
   only, since this package writes no graphics commands.
+- **Terminfo capabilities over the wire, XTGETTCAP.** `queryCapability` and
+  `queryCapabilities` ask the terminal itself for a named capability — `Co`
+  for the colour count, `kend` for the bytes the End key sends — writing
+  `DCS + q ST` with the names in hex. `parseCapabilityReply` reads the
+  `DCS 1 + r name=value ST` answer and the `DCS 0 + r name ST` refusal,
+  checks every field is an even run of hex digits, and returns a
+  `CapabilityReply` whose `Capabilities` iterator yields each `Capability`
+  with both halves still encoded; `decodeName` and `decodeValue` write them
+  into a buffer the caller sizes from `nameLen` and `valueLen`. `KeyParser`
+  frames the reply whole, as it does every other reply.
 - **Modes.** `unicodeCore` (2027), the mode that decides whether the terminal
   measures text by grapheme cluster or by codepoint.
 - **`requestCursorPosition`**, which was missing beside `parseCursorPosition`.

@@ -31,6 +31,7 @@ const notifications = @import("notify.zig");
 const osc = @import("osc.zig");
 const query = @import("query.zig");
 const style = @import("style.zig");
+const tcap = @import("tcap.zig");
 
 //=========================================================================
 // Titles and hyperlinks.
@@ -306,6 +307,18 @@ pub const resizeTextArea = device.resizeTextArea;
 pub const WindowSize = device.WindowSize;
 /// Reads a window size report, or null.
 pub const parseWindowSize = device.parseWindowSize;
+/// Asks the terminal for one terminfo capability by name, XTGETTCAP.
+pub const queryCapability = tcap.queryCapability;
+/// Asks for several capabilities in one sequence.
+pub const queryCapabilities = tcap.queryCapabilities;
+/// One capability out of a reply, both halves still in hex.
+pub const Capability = tcap.Capability;
+/// A terminal's answer to `queryCapability`.
+pub const CapabilityReply = tcap.CapabilityReply;
+/// The capabilities one reply carries, one at a time.
+pub const Capabilities = tcap.Capabilities;
+/// Reads an XTGETTCAP reply, or null.
+pub const parseCapabilityReply = tcap.parseCapabilityReply;
 
 test {
     _ = @import("clipboard.zig");
@@ -319,6 +332,7 @@ test {
     _ = @import("query.zig");
     _ = @import("seq.zig");
     _ = @import("style.zig");
+    _ = @import("tcap.zig");
 }
 
 test "the root module re-exports what the README promises" {
@@ -396,6 +410,8 @@ test "the root module re-exports what the README promises" {
     try queryColor(w, .background);
     try setColor(w, .foreground, .{ .r = 0, .g = 0, .b = 0 });
     try resetColor(w, .cursor);
+    try queryCapability(w, "Co");
+    try queryCapabilities(w, &.{ "Co", "TN" });
 
     try std.testing.expectEqual(Clipboard.clipboard, parseClipboardReply("\x1b]52;c;aGk=\x1b\\").?.target);
     try std.testing.expectEqual(ModeState.set, parseModeReply("\x1b[?2026;1$y").?.state);
@@ -431,6 +447,16 @@ test "the root module re-exports what the README promises" {
         parseWindowSize("\x1b[8;24;80t").?.what,
     );
     try std.testing.expectEqual(SizeQuery.cell_pixels, SizeQuery.cell_pixels);
+
+    const caps: CapabilityReply = parseCapabilityReply("\x1bP1+r436f=323536\x1b\\").?;
+    var entries: Capabilities = caps.iterator();
+    const cap: Capability = entries.next().?;
+    var cap_text: [8]u8 = undefined;
+    try std.testing.expect(caps.known);
+    try std.testing.expectEqualStrings("Co", try cap.decodeName(&cap_text));
+    try std.testing.expectEqualStrings("256", try cap.decodeValue(&cap_text));
+    try std.testing.expectEqual(@as(usize, 2), cap.nameLen());
+    try std.testing.expectEqual(@as(usize, 3), cap.valueLen());
 
     const grew: Resize = .{ .rows = 24, .cols = 80 };
     try std.testing.expect(grew.rows == 24 and grew.xpixels == 0);

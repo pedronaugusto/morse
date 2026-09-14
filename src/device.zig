@@ -27,10 +27,6 @@ const KittyFlags = mode.KittyFlags;
 /// the program draws are the same kind of thing.
 const Rgb = style.Rgb;
 
-/// `DCS`, the device control string introducer, spelled `ESC P`. Not in `seq`
-/// because the XTVERSION reply is the only DCS this package reads.
-const dcs = [_]u8{ seq.esc, 'P' };
-
 /// `APC`, the application program command introducer, spelled `ESC _`. Not in
 /// `seq` because the kitty graphics response is the only APC this package
 /// reads.
@@ -211,8 +207,8 @@ pub fn queryVersion(w: *Writer) Writer.Error!void {
 /// null for anything else, a reply cut short of its terminator included.
 /// `bytes` must be exactly the sequence, with nothing before or after it.
 pub fn parseVersion(bytes: []const u8) ?[]const u8 {
-    const prefix = dcs ++ [_]u8{ '>', '|' };
-    if (!std.mem.startsWith(u8, bytes, &prefix)) return null;
+    const prefix = seq.dcs ++ ">|";
+    if (!std.mem.startsWith(u8, bytes, prefix)) return null;
     return seq.stripStringTerminator(bytes[prefix.len..]);
 }
 

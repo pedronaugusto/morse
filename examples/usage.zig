@@ -67,6 +67,7 @@ pub fn main() !void {
     try morse.queryMode(w, morse.syncOutput.number);
     try morse.queryDeviceAttributes(w);
     try morse.queryColor(w, .background);
+    try morse.queryCapability(w, "Co");
 
     // Input is one byte stream carrying keys, mouse reports and replies all
     // at once, so one parser frames it. The buffer is yours, nothing here
@@ -110,6 +111,15 @@ pub fn main() !void {
     const position = morse.parseCursorPosition("\x1b[12;40R").?;
     const background = morse.parseColorReply("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\").?;
 
+    // A capability the terminal answered for. Names and values travel as
+    // hex, because a value is often itself an escape sequence, and they are
+    // decoded into a buffer you size from the reply.
+    const caps = morse.parseCapabilityReply("\x1bP1+r436f=323536\x1b\\").?;
+    var entries = caps.iterator();
+    const colors = entries.next().?;
+    var capability: [8]u8 = undefined;
+    const color_count = try colors.decodeValue(&capability);
+
     // A pixel report (mode 1016) is byte-identical to a cell report, so the
     // program that asked for pixels is the one that says so.
     var pixel = morse.parseMouse("\x1b[<0;321;97M").?;
@@ -130,6 +140,7 @@ pub fn main() !void {
     std.debug.print("mode 2026:  {s}\n", .{@tagName(mode.state)});
     std.debug.print("cursor:     row {d}, col {d}\n", .{ position.row, position.col });
     std.debug.print("background: {any}\n", .{background.color.to8()});
+    std.debug.print("colours:    {s}\n", .{color_count});
     std.debug.print("pixel 321,97 in 8x16 cells: {d},{d}\n", .{ cell.x, cell.y });
     std.debug.print("wrote {d} bytes:\n  ", .{out.end});
     printEscaped(out.buffered());

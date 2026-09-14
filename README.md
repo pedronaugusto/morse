@@ -99,6 +99,7 @@ try morse.clipboardWrite(w, .clipboard, "copied by morse");
 try morse.queryMode(w, morse.syncOutput.number);
 try morse.queryDeviceAttributes(w);
 try morse.queryColor(w, .background);
+try morse.queryCapability(w, "Co");
 
 // Input is one byte stream carrying keys, mouse reports and replies all
 // at once, so one parser frames it. The buffer is yours, nothing here
@@ -141,6 +142,15 @@ const escape = keys.flush().?;
 const mode = morse.parseModeReply("\x1b[?2026;1$y").?;
 const position = morse.parseCursorPosition("\x1b[12;40R").?;
 const background = morse.parseColorReply("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\").?;
+
+// A capability the terminal answered for. Names and values travel as
+// hex, because a value is often itself an escape sequence, and they are
+// decoded into a buffer you size from the reply.
+const caps = morse.parseCapabilityReply("\x1bP1+r436f=323536\x1b\\").?;
+var entries = caps.iterator();
+const colors = entries.next().?;
+var capability: [8]u8 = undefined;
+const color_count = try colors.decodeValue(&capability);
 
 // A pixel report (mode 1016) is byte-identical to a cell report, so the
 // program that asked for pixels is the one that says so.
@@ -205,7 +215,9 @@ and `Mouse` / `mouse` / `mouseOff`.
 `queryVersion` / `parseVersion`, `queryColor` / `setColor` / `resetColor` /
 `ColorTarget` / `Rgb16` / `ColorReport` / `parseColorReply`,
 `GraphicsResponse` / `parseGraphicsResponse`, `SizeQuery` /
-`queryWindowSize` / `resizeTextArea` / `WindowSize` / `parseWindowSize`.
+`queryWindowSize` / `resizeTextArea` / `WindowSize` / `parseWindowSize`,
+`queryCapability` / `queryCapabilities` / `CapabilityReply` /
+`parseCapabilityReply` / `Capabilities` / `Capability` (XTGETTCAP).
 
 **Mouse reports.** `Button`, `MouseEvent`, `encodeMouse`, `parseMouse`,
 `parseMouseX10`, `mouse_x10_max`, `toCells`.

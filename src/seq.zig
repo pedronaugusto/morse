@@ -25,6 +25,11 @@ pub const csi = "\x1b[";
 /// `OSC`, the operating system command introducer, spelled `ESC ]`.
 pub const osc = "\x1b]";
 
+/// `DCS`, the device control string introducer, spelled `ESC P`. This package
+/// writes one DCS -- the XTGETTCAP query -- and reads two, that query's reply
+/// and the XTVERSION one.
+pub const dcs = "\x1bP";
+
 /// A decimal number read off the front of a byte string, and how many bytes
 /// it took.
 pub fn Scan(comptime T: type) type {

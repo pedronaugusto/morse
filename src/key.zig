@@ -1501,11 +1501,42 @@ test "a sequence that is not a key comes back whole" {
         "\x1b]52;c;aGk=\x1b\\", // a clipboard reply
         "\x1b]11;rgb:0000/0000/0000\x1b\\", // a background colour reply
         "\x1bP>|xterm(390)\x1b\\", // XTVERSION
+        "\x1bP1+r436f=323536\x1b\\", // an XTGETTCAP reply
+        "\x1bP0+r436f\x1b\\", // an XTGETTCAP refusal
         "\x1b_Gi=31;OK\x1b\\", // a kitty graphics response
         "\x1b]2;title\x07", // an OSC ended by BEL
         "\x1b(B", // a character set designation
     };
     for (cases) |bytes| try expectUnhandled(bytes);
+}
+
+test "an XTGETTCAP reply is framed whole, and the key behind it survives" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    // The payload is hex precisely so that a capability whose value is an
+    // escape sequence cannot end the reply carrying it. The framing has to
+    // hold for the whole of it, or the bytes after it arrive as keypresses.
+    var events = parser.feed("\x1bP1+r6b656e64=1b4f46\x1b\\a");
+    try std.testing.expectEqualStrings(
+        "\x1bP1+r6b656e64=1b4f46\x1b\\",
+        events.next().?.unhandled,
+    );
+    try std.testing.expectEqual(Key{ .char = 'a' }, events.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+}
+
+test "an XTGETTCAP reply cut in half is held until the rest of it arrives" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    var held = parser.feed("\x1bP1+r436f=32");
+    try std.testing.expectEqual(@as(?Event, null), held.next());
+    try std.testing.expectEqual(@as(usize, 12), parser.pending().len);
+
+    var events = parser.feed("3536\x1b\\");
+    try std.testing.expectEqualStrings("\x1bP1+r436f=323536\x1b\\", events.next().?.unhandled);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
 }
 
 test "an unhandled sequence and the key after it both come out" {
