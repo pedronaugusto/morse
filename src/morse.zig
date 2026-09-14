@@ -293,6 +293,20 @@ pub const resetColor = device.resetColor;
 pub const ColorReport = device.ColorReport;
 /// Reads a reply to `queryColor`, or null.
 pub const parseColorReply = device.parseColorReply;
+/// How many entries the palette OSC 4 addresses has.
+pub const palette_size = device.palette_size;
+/// Asks the terminal for one palette entry (OSC 4).
+pub const queryPaletteColor = device.queryPaletteColor;
+/// Sets one palette entry.
+pub const setPaletteColor = device.setPaletteColor;
+/// Puts one palette entry back to the user's (OSC 104).
+pub const resetPaletteColor = device.resetPaletteColor;
+/// Puts every palette entry back to the user's.
+pub const resetPalette = device.resetPalette;
+/// What a terminal says about one palette entry.
+pub const PaletteReport = device.PaletteReport;
+/// Reads a reply to `queryPaletteColor`, or null.
+pub const parsePaletteReply = device.parsePaletteReply;
 /// What a terminal says about a kitty graphics command.
 pub const GraphicsResponse = device.GraphicsResponse;
 /// Reads a kitty graphics response, or null.
@@ -410,6 +424,10 @@ test "the root module re-exports what the README promises" {
     try queryColor(w, .background);
     try setColor(w, .foreground, .{ .r = 0, .g = 0, .b = 0 });
     try resetColor(w, .cursor);
+    try queryPaletteColor(w, 1);
+    try setPaletteColor(w, 1, .{ .r = 0, .g = 0, .b = 0 });
+    try resetPaletteColor(w, 1);
+    try resetPalette(w);
     try queryCapability(w, "Co");
     try queryCapabilities(w, &.{ "Co", "TN" });
 
@@ -442,6 +460,10 @@ test "the root module re-exports what the README promises" {
         "\x1b]11;rgb:0000/0000/0000\x1b\\",
     ).?.target);
     try std.testing.expect(parseGraphicsResponse("\x1b_Gi=31;OK\x1b\\").?.ok());
+    const entry: PaletteReport = parsePaletteReply("\x1b]4;9;rgb:ffff/0000/0000\x1b\\").?;
+    try std.testing.expectEqual(@as(u8, 9), entry.index);
+    try std.testing.expectEqual(@as(u16, 0xffff), entry.color.r);
+    try std.testing.expectEqual(@as(u16, 256), palette_size);
     try std.testing.expectEqual(
         WindowSize.What.text_area_cells,
         parseWindowSize("\x1b[8;24;80t").?.what,

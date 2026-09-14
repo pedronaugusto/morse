@@ -214,6 +214,9 @@ and `Mouse` / `mouse` / `mouseOff`.
 `SecondaryDeviceAttributes` / `parseSecondaryDeviceAttributes`,
 `queryVersion` / `parseVersion`, `queryColor` / `setColor` / `resetColor` /
 `ColorTarget` / `Rgb16` / `ColorReport` / `parseColorReply`,
+`queryPaletteColor` / `setPaletteColor` / `resetPaletteColor` /
+`resetPalette` / `PaletteReport` / `parsePaletteReply` / `palette_size`
+(OSC 4 and 104),
 `GraphicsResponse` / `parseGraphicsResponse`, `SizeQuery` /
 `queryWindowSize` / `resizeTextArea` / `WindowSize` / `parseWindowSize`,
 `queryCapability` / `queryCapabilities` / `CapabilityReply` /

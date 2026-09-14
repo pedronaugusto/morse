@@ -300,12 +300,8 @@ pub fn queryColor(w: *Writer, target: ColorTarget) Writer.Error!void {
 /// choose.
 pub fn setColor(w: *Writer, target: ColorTarget, color: Rgb16) Writer.Error!void {
     try w.writeAll(seq.osc);
-    try w.print("{d};rgb:{x:0>4}/{x:0>4}/{x:0>4}", .{
-        @intFromEnum(target),
-        color.r,
-        color.g,
-        color.b,
-    });
+    try w.print("{d};", .{@intFromEnum(target)});
+    try writeRgb(w, color);
     try w.writeAll(seq.st);
 }
 
@@ -362,6 +358,21 @@ pub fn parseColorReply(bytes: []const u8) ?ColorReport {
     rest = rest[1..];
 
     const body = seq.stripStringTerminator(rest) orelse return null;
+    const color = scanRgb(body) orelse return null;
+
+    return .{ .target = target, .color = color };
+}
+
+/// Writes a colour in the form every OSC that carries one uses:
+/// `rgb:rrrr/gggg/bbbb`, four lowercase hex digits a channel.
+fn writeRgb(w: *Writer, color: Rgb16) Writer.Error!void {
+    try w.print("rgb:{x:0>4}/{x:0>4}/{x:0>4}", .{ color.r, color.g, color.b });
+}
+
+/// Reads the `rgb:rrrr/gggg/bbbb` body an OSC colour reply carries, at any
+/// channel width. Shared by the dynamic colours and the palette, which spell
+/// a colour the same way and differ only in which entry they name.
+fn scanRgb(body: []const u8) ?Rgb16 {
     const introducer = "rgb:";
     if (!std.mem.startsWith(u8, body, introducer)) return null;
 
@@ -371,7 +382,7 @@ pub fn parseColorReply(bytes: []const u8) ?ColorReport {
     const b = scanChannel(channels.next() orelse return null) orelse return null;
     if (channels.next() != null) return null;
 
-    return .{ .target = target, .color = .{ .r = r, .g = g, .b = b } };
+    return .{ .r = r, .g = g, .b = b };
 }
 
 /// Reads one channel of the X colour syntax: one to four hex digits, scaled
@@ -391,6 +402,109 @@ fn scanChannel(text: []const u8) ?u16 {
     }
     const widest = (@as(u32, 1) << @intCast(4 * text.len)) - 1;
     return @intCast(value * 0xffff / widest);
+}
+
+//=========================================================================
+// The palette, OSC 4 and 104.
+//=========================================================================
+
+/// The number of entries OSC 4 addresses: the sixteen a theme names, the
+/// 6x6x6 cube, and the twenty-four greys.
+///
+/// An index is a `u8`, so every value one can hold is a real entry and the
+/// bound is here to be read rather than to be checked against.
+pub const palette_size: u16 = 256;
+
+/// Asks the terminal for one palette entry: `OSC 4 ; index ; ? ST`.
+///
+/// The answer arrives on the terminal's input as a sequence
+/// `parsePaletteReply` reads. This is how a program learns what the user's
+/// theme actually put at colour 1 -- the sixteen named entries are a theme's
+/// choice, not a fixed set of values, and nothing but the terminal knows
+/// them.
+///
+/// One entry per query. A terminal asked for several in one sequence answers
+/// them in one reply, which is a form `parsePaletteReply` does not read.
+pub fn queryPaletteColor(w: *Writer, index: u8) Writer.Error!void {
+    try w.writeAll(seq.osc);
+    try w.print("4;{d};?", .{index});
+    try w.writeAll(seq.st);
+}
+
+/// Sets one palette entry: `OSC 4 ; index ; rgb:rrrr/gggg/bbbb ST`.
+///
+/// Every cell already on the screen in that entry changes colour with it,
+/// which is what makes this worth having and also what makes it dangerous:
+/// the change outlives the program, this program's exit included, so a
+/// program that sets an entry should call `resetPaletteColor` on the way out.
+pub fn setPaletteColor(w: *Writer, index: u8, color: Rgb16) Writer.Error!void {
+    try w.writeAll(seq.osc);
+    try w.print("4;{d};", .{index});
+    try writeRgb(w, color);
+    try w.writeAll(seq.st);
+}
+
+/// Puts one palette entry back to what the user configured:
+/// `OSC 104 ; index ST`.
+///
+/// Back to the user's configuration, not to whatever this program found on
+/// entry -- the same limit `resetColor` has, and the same way around it: read
+/// the entry with `queryPaletteColor` first and set it again afterwards.
+pub fn resetPaletteColor(w: *Writer, index: u8) Writer.Error!void {
+    try w.writeAll(seq.osc);
+    try w.print("104;{d}", .{index});
+    try w.writeAll(seq.st);
+}
+
+/// Puts the whole palette back: `OSC 104 ST`, with no index at all.
+///
+/// The one sequence that undoes any number of `setPaletteColor` calls without
+/// the program having recorded which entries it touched.
+pub fn resetPalette(w: *Writer) Writer.Error!void {
+    try w.writeAll(seq.osc ++ "104" ++ seq.st);
+}
+
+/// What a terminal says about one palette entry.
+pub const PaletteReport = struct {
+    /// Which entry the terminal answered about -- compare it against the one
+    /// asked, because replies can arrive out of order and a program that asks
+    /// for several has no other way to tell them apart.
+    index: u8,
+    /// The colour, widened to sixteen bits a channel whatever width the
+    /// terminal spelled it in.
+    color: Rgb16,
+};
+
+/// Reads a reply to `queryPaletteColor`:
+/// `OSC 4 ; index ; rgb:rrrr/gggg/bbbb ST`.
+///
+/// The same channel syntax `parseColorReply` reads, at any width and in
+/// either case, scaled to the full sixteen-bit range. The difference is the
+/// entry: this reads the numbered palette, that reads the three colours
+/// outside it, and each returns null for the other's sequence so a program
+/// handed the wrong one is told rather than given a plausible answer.
+///
+/// One entry only. A reply naming several entries -- which a terminal sends
+/// when it was asked for several in one sequence -- is not read, because
+/// nothing in this package writes that query.
+///
+/// Returns null for anything else, an index that does not fit in a byte
+/// included. `bytes` must be exactly the sequence, with nothing before or
+/// after it.
+pub fn parsePaletteReply(bytes: []const u8) ?PaletteReport {
+    const prefix = seq.osc ++ "4;";
+    if (!std.mem.startsWith(u8, bytes, prefix)) return null;
+    var rest = bytes[prefix.len..];
+
+    const index = seq.scanInt(u8, rest) orelse return null;
+    rest = rest[index.len..];
+    if (rest.len == 0 or rest[0] != ';') return null;
+    rest = rest[1..];
+
+    const body = seq.stripStringTerminator(rest) orelse return null;
+    const color = scanRgb(body) orelse return null;
+
+    return .{ .index = index.value, .color = color };
 }
 
 //=========================================================================
@@ -1031,6 +1145,99 @@ test "parseColorReply survives a number long enough to overflow" {
     try std.testing.expect(parseColorReply("\x1b]11;rgb:0/0/99999999999999999999\x1b\\") == null);
 }
 
+test "queryPaletteColor asks for one entry at a time" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try queryPaletteColor(&out.writer, 1);
+    try queryPaletteColor(&out.writer, 255);
+    try std.testing.expectEqualStrings("\x1b]4;1;?\x1b\\\x1b]4;255;?\x1b\\", out.written());
+}
+
+test "setPaletteColor writes four lowercase hex digits a channel" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try setPaletteColor(&out.writer, 12, .{ .r = 0, .g = 0xffff, .b = 0x8000 });
+    try std.testing.expectEqualStrings("\x1b]4;12;rgb:0000/ffff/8000\x1b\\", out.written());
+}
+
+test "resetPaletteColor names one entry and resetPalette names none" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try resetPaletteColor(&out.writer, 12);
+    try resetPalette(&out.writer);
+    try std.testing.expectEqualStrings("\x1b]104;12\x1b\\\x1b]104\x1b\\", out.written());
+}
+
+test "parsePaletteReply reads replies terminals send" {
+    const first = parsePaletteReply("\x1b]4;1;rgb:cdcd/0000/0000\x1b\\").?;
+    try std.testing.expectEqual(@as(u8, 1), first.index);
+    try std.testing.expectEqual(Rgb16{ .r = 0xcdcd, .g = 0, .b = 0 }, first.color);
+
+    const zero = parsePaletteReply("\x1b]4;0;rgb:0000/0000/0000\x07").?;
+    try std.testing.expectEqual(@as(u8, 0), zero.index);
+
+    const last = parsePaletteReply("\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\").?;
+    try std.testing.expectEqual(@as(u8, 255), last.index);
+    try std.testing.expectEqual(Rgb16{ .r = 0xffff, .g = 0xffff, .b = 0xffff }, last.color);
+    try std.testing.expectEqual(@as(u16, 256), palette_size);
+}
+
+test "parsePaletteReply scales a short channel as the dynamic colours do" {
+    const short = parsePaletteReply("\x1b]4;9;rgb:f/0/0\x1b\\").?;
+    const long = parsePaletteReply("\x1b]4;9;rgb:ffff/0000/0000\x1b\\").?;
+    try std.testing.expectEqual(long, short);
+
+    const mixed = parsePaletteReply("\x1b]4;9;rgb:AB/cd/ef00\x1b\\").?;
+    try std.testing.expectEqual(Rgb16{ .r = 0xabab, .g = 0xcdcd, .b = 0xef00 }, mixed.color);
+}
+
+test "a palette entry set and a palette entry parsed agree on the bytes" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    for ([_]u8{ 0, 1, 15, 16, 231, 232, 255 }) |index| {
+        const color: Rgb16 = .{ .r = 0x1234, .g = 0xabcd, .b = 0xffff };
+        out.clearRetainingCapacity();
+        try setPaletteColor(&out.writer, index, color);
+        const parsed = parsePaletteReply(out.written()).?;
+        try std.testing.expectEqual(index, parsed.index);
+        try std.testing.expectEqual(color, parsed.color);
+    }
+}
+
+test "parsePaletteReply returns null on anything it does not recognise" {
+    const rejected = [_][]const u8{
+        "", // nothing at all
+        "\x1b]4;1;rgb:0/0/0", // no terminator
+        "\x1b]4;1;rgb:0/0\x1b\\", // a channel short
+        "\x1b]4;1;rgb:0/0/0/0\x1b\\", // a channel too many
+        "\x1b]4;1;rgb:00000/0/0\x1b\\", // a channel too wide
+        "\x1b]4;256;rgb:0/0/0\x1b\\", // an index past the palette
+        "\x1b]4;;rgb:0/0/0\x1b\\", // no index
+        "\x1b]4;1rgb:0/0/0\x1b\\", // no separator after the index
+        "\x1b]4;1;#ff0000\x1b\\", // the spelling no terminal answers in
+        "\x1b]4;1;?\x1b\\", // the query, not the reply
+        "\x1b]104;1\x1b\\", // the reset, not a reply
+        "\x1b[4;1;rgb:0/0/0\x1b\\", // CSI, not OSC
+        "\x1b]4;1;rgb:0/0/0\x1b\\x", // trailing rubbish
+    };
+    for (rejected) |bytes| {
+        try std.testing.expect(parsePaletteReply(bytes) == null);
+    }
+}
+
+test "parsePaletteReply survives a number long enough to overflow" {
+    try std.testing.expect(parsePaletteReply("\x1b]4;99999999999999999999;rgb:0/0/0\x1b\\") == null);
+}
+
+test "the palette parser and the dynamic colour parser refuse each other" {
+    try std.testing.expect(parsePaletteReply("\x1b]11;rgb:0/0/0\x1b\\") == null);
+    try std.testing.expect(parseColorReply("\x1b]4;1;rgb:0/0/0\x1b\\") == null);
+}
+
 test "parseGraphicsResponse reads an acknowledgement and a refusal" {
     const accepted = parseGraphicsResponse("\x1b_Gi=31;OK\x1b\\").?;
     try std.testing.expectEqual(@as(?u32, 31), accepted.id);
@@ -1268,6 +1475,43 @@ test "fuzz parseColorReply" {
         corpus.seed("\x1b]13;rgb:0/0/0\x1b\\"),
         corpus.seed("\x1b]11;#ff0000\x1b\\"),
         corpus.seed("\x1b]11;?\x1b\\"),
+    } });
+}
+
+test "fuzz parsePaletteReply" {
+    // The property: no input panics or overflows, and every reply that parses
+    // re-renders -- in four digits a channel, whatever width it arrived in --
+    // to a reply that parses to the same entry and the same colour. The
+    // scaling arithmetic is shared with the dynamic colours; the index is not,
+    // and this is what holds it to a byte.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const report = parsePaletteReply(bytes) orelse return;
+
+            var output: [64]u8 = undefined;
+            var w: Writer = .fixed(&output);
+            try setPaletteColor(&w, report.index, report.color);
+            try std.testing.expectEqual(report, parsePaletteReply(w.buffered()).?);
+
+            // And the reply that is not this one, whatever the bytes said.
+            try std.testing.expect(parseColorReply(bytes) == null);
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b]4;0;rgb:0000/0000/0000\x1b\\"),
+        corpus.seed("\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\"),
+        corpus.seed("\x1b]4;1;rgb:cdcd/0000/0000\x07"),
+        corpus.seed("\x1b]4;9;rgb:f/0/0\x1b\\"),
+        corpus.seed("\x1b]4;9;rgb:AB/cd/ef00\x1b\\"),
+        corpus.seed("\x1b]4;256;rgb:0/0/0\x1b\\"),
+        corpus.seed("\x1b]4;;rgb:0/0/0\x1b\\"),
+        corpus.seed("\x1b]4;1;rgb:0/0/0/0\x1b\\"),
+        corpus.seed("\x1b]4;1;#ff0000\x1b\\"),
+        corpus.seed("\x1b]4;1;?\x1b\\"),
+        corpus.seed("\x1b]104;1\x1b\\"),
+        corpus.seed("\x1b]11;rgb:0/0/0\x1b\\"),
     } });
 }
 

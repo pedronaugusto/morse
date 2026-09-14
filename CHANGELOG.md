@@ -50,6 +50,13 @@ Everything a program needs below a TUI framework, on both sides of the wire.
   with both halves still encoded; `decodeName` and `decodeValue` write them
   into a buffer the caller sizes from `nameLen` and `valueLen`. `KeyParser`
   frames the reply whole, as it does every other reply.
+- **The palette, OSC 4 and 104.** `queryPaletteColor` asks what the user's
+  theme actually put at a numbered entry — which nothing but the terminal
+  knows — `setPaletteColor` changes one, and `resetPaletteColor` and
+  `resetPalette` put one or all of them back. `parsePaletteReply` reads the
+  answer into a `PaletteReport`, in the same `rgb:` form at any channel width
+  that `parseColorReply` reads, and each of the two parsers returns null for
+  the other's sequence. `palette_size` is the 256 entries OSC 4 addresses.
 - **Modes.** `unicodeCore` (2027), the mode that decides whether the terminal
   measures text by grapheme cluster or by codepoint.
 - **`requestCursorPosition`**, which was missing beside `parseCursorPosition`.
