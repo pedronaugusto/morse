@@ -2,22 +2,14 @@
 
 [![CI](https://github.com/pedronaugusto/morse/actions/workflows/ci.yml/badge.svg)](https://github.com/pedronaugusto/morse/actions/workflows/ci.yml)
 
-Terminal control sequences as typed writers and parsers, in pure Zig. No
-dependencies, no C, no allocations.
-
-Writers turn intent into bytes: the flags are `packed struct`s, the styles are
-written as a diff, and the numbers are arguments rather than digits in a
-string literal. Parsers turn the terminal's bytes back into values, and return
-`null` instead of garbage. Keys, mouse reports and replies to queries all
-arrive on the same file descriptor, so one parser frames that stream and hands
-each piece to whichever reader wants it. This is the layer below a TUI
-framework: bytes in and bytes out, and nothing above them.
+morse writes terminal control sequences and parses the bytes a terminal sends
+back: keys, mouse reports, and the replies to questions a program asks. It is
+what a full-screen program sits on, under anything that draws widgets.
 
 ## Usage
 
 The block below is a region of [`examples/usage.zig`](examples/usage.zig),
-which `zig build examples` builds and runs. `ci/readme_usage.sh` extracts it
-and CI compares the two, so the snippet cannot drift from code that executes.
+which `zig build examples` builds and runs. CI compares the two.
 
 <!-- BEGIN GENERATED ci/readme_usage.sh -->
 ```zig
@@ -157,6 +149,8 @@ const morse_dep = b.dependency("morse", .{ .target = target, .optimize = optimiz
 exe.root_module.addImport("morse", morse_dep.module("morse"));
 ```
 
+No dependencies: nothing to link, and no C toolchain involved.
+
 ## The API
 
 **Keyboard input.** `KeyParser`, `Events`, `Event`, `KeyEvent`, `Key`,
@@ -177,11 +171,9 @@ exe.root_module.addImport("morse", morse_dep.module("morse"));
 **Clipboard (OSC 52).** `Clipboard`, `clipboardWrite`, `clipboardRequest`,
 `ClipboardReply`, `parseClipboardReply`, `decodeClipboard`.
 
-**Notifications and progress.** `notify` (OSC 777), `notify9` (OSC 9),
-`Progress` / `progress` (OSC 9;4).
-
-**Semantic prompt marks (OSC 133).** `promptStart`, `promptEnd`,
-`commandStart`, `commandEnd`.
+**Notifications, progress and prompt marks.** `notify` (OSC 777), `notify9`
+(OSC 9), `Progress` / `progress` (OSC 9;4), `promptStart`, `promptEnd`,
+`commandStart`, `commandEnd` (OSC 133).
 
 **Modes.** `altScreen`, `bracketedPaste`, `syncOutput`, `focusEvents`,
 `cursorVisible`, `unicodeCore`, `inBandResize`, `autoWrap` — each a type with
@@ -211,180 +203,103 @@ and `Mouse` / `mouse` / `mouseOff`.
 
 ## Design
 
-**Writers take a `*std.Io.Writer` and write one sequence.** They do not flush
-and they do not allocate: a repaint is many sequences and one write, so
-batching is yours. OSC 52's base64 is encoded three input bytes at a time
-straight into the writer, which is why copying a megabyte to the clipboard
-needs no buffer sized to it.
+**Writers take a `*std.Io.Writer` and write one sequence.** Nothing in morse
+allocates and no writer flushes, so you decide when to batch; OSC 52's base64 goes
+into the writer three input bytes at a time, needing no buffer sized to the
+payload. Titles, URIs and notification bodies go through byte for byte:
+percent-encode them and strip the controls first.
 
-**Parsers take `[]const u8` and return `?T`, never an error.** A terminal's
-input is untrusted and often truncated, and there is nothing a caller can do
-with a taxonomy of malformed. Truncated, mistyped and arithmetically
-impossible inputs all return null, and no number in a reply can overflow the
-field it is parsed into. What a parser returns borrows from the bytes it was
-given and is valid for exactly as long as they are.
+**Parsers take `[]const u8` and return `?T`, never an error.** Truncated,
+mistyped and arithmetically impossible inputs all return null, no number in a
+reply can overflow the field it is parsed into, and what comes back borrows
+from the bytes you passed in. `KeyEvent.text` likewise holds only what the
+terminal said the key produced, and is empty for a report like `CSI 97 u`,
+which names a key without saying what it typed.
 
 **One parser frames the input, and holds the only state here.** `KeyParser`
 decides where each sequence ends, decodes the keys, and hands everything else
-back whole as `Event.unhandled` for `parseMouse`, `parseColorReply`,
-`parseCapabilityReply` or whichever parser reads it. Knowing where a sequence
-ends is a much smaller job than knowing what every sequence means, and keeping
-the two apart is what stops an unrecognised reply resynchronising the stream a
-byte at a time. It has to remember half a sequence between reads, and does it
-in a buffer you hand to `KeyParser.init` and can read back with `pending()`.
-`min_buffer` is enough for keys alone; a program that asks for the clipboard
-wants kilobytes, because an OSC 52 reply is as long as whatever was copied.
-Nothing else in the package keeps anything between calls.
+back whole as `Event.unhandled` for `parseMouse`, `parseColorReply` or
+whichever parser reads it, so an unrecognised reply never resynchronises the
+stream a byte at a time. You own the buffer: `min_buffer` covers keys, but an
+OSC 52 reply is as long as whatever was copied.
 
-**No terminfo.** morse carries no capability database and has no compile-time
-knowledge of terminal names; it writes the sequences directly. Every terminal
-in use today implements the same ANSI and DEC sequences for everything in this
-package, so what varies is not which bytes clear the screen but whether a
-feature exists at all — and I ask the terminal that question rather than a
-file about the terminal. `queryMode` (DECRQM) asks whether a mode is really
-implemented; `queryDeviceAttributes`, `queryVersion`, `queryColor`,
-`queryPaletteColor` and `queryCapability` (XTGETTCAP, a named terminfo
-capability over the wire) ask the rest. A terminal that does not implement a
-query answers nothing at all, which is itself an answer if you pair it with
-one that is always answered — `queryDeviceAttributes` is the usual companion.
-What a program does with silence is policy, and policy is yours: morse does
-not decide a timeout, does not cache, and does not fall back. So there is
-nothing to link against, no build step parsing a compiled terminfo entry,
-nothing to install on the target machine, and the same behaviour
-cross-compiled to a machine whose terminfo database the build host has never
-seen.
+**A lone `ESC` is settled by you.** It is both the Escape key and the first
+byte of every sequence, so `KeyParser` holds it, `pending()` shows it, and
+`flush()` settles it once your own timeout expires.
+`KittyFlags.disambiguate_escape_codes` removes the question.
 
-**Styles are written as a diff.** SGR is the one place a sequence's effect
-depends on what came before, and there is no sequence meaning "this style and
-nothing else" short of resetting first. `diffStyle(w, from, to)` writes the
-shortest `CSI ... m` that gets from one to the other, and nothing at all when
-they are equal, which is the common case. Off codes go first, then on codes,
-then colours: SGR 22 turns off bold and dim together, so turning bold off
-while dim stays on has to write `22;2`, and writing the `2` first would lose
-it. `from` is yours to remember, and getting it wrong shows on screen.
+**No terminfo: I ask the terminal.** `queryMode` (DECRQM) asks whether a mode
+is really implemented; `queryDeviceAttributes`, `queryVersion`, `queryColor`,
+`queryPaletteColor` and `queryCapability` (XTGETTCAP) ask the rest. Silence is
+an answer if you pair the question with one always answered, usually
+`queryDeviceAttributes`. What to do with it is yours: no timeout, no cache, no
+fallback.
 
-**A lone `ESC` is yours to resolve.** `0x1b` is both the Escape key and the
-first byte of every sequence here, and nothing in the byte stream
-distinguishes them. `KeyParser` will not guess: a trailing `ESC` is held,
-`pending()` shows it, and `flush()` is what you call when your own timeout has
-expired — returning the Escape key, or alt with `[` or `O` for the two other
-byte strings that are simultaneously a key and the start of a sequence. How
-long that timeout should be is a judgement about the user's link, not about
-the protocol, which is why it is not mine to make. Better still, remove the
-ambiguity: a terminal asked for `KittyFlags.disambiguate_escape_codes` spells
-Escape as `CSI 27 u`, and `flush` is then only for the terminals that say no.
+**Styles are written as a diff.** `diffStyle(w, from, to)` writes the shortest
+`CSI ... m` between two styles, and nothing when they are equal. Off codes go
+first, then on codes, then colours: SGR 22 turns off bold and dim together, so
+turning bold off while dim stays on has to write `22;2`. You keep `from`.
 
-**The mouse modes are one call.** Mouse reporting is six independent DEC
-private modes, and a program that turns on what it wants without turning off
-what it does not gets a report per cell the pointer crosses, because something
-earlier set mode 1003. `mouse` takes the whole set and writes an `h` or an `l`
-for each flag in ascending mode number, so `mouse(w, .{ .press = true, .sgr =
-true })` is press and wheel reports in SGR coordinates and nothing else,
-whatever was on before; `mouseOff` is `mouse(w, .{})`. The cost of that reach
-is that `Mouse.focus` is mode 1004, the same mode as `focusEvents`: a `mouse`
-call leaving it false turns focus reporting off, so a program wanting both
-says so in one call.
+**The mouse modes are one call.** `mouse` writes
+an `h` or an `l` for each of the six DEC private modes, so `mouse(w, .{ .press
+= true, .sgr = true })` is press and wheel reports and nothing else, whatever
+was on before. `Mouse.focus` is mode 1004, the same mode as `focusEvents`, so
+a call leaving it false turns focus reporting off. I ask only for SGR;
+`parseMouseX10` and `parseMouseRxvt` read what a terminal left in mode 1000 or
+1015 still sends. Modes 1006 and 1016 are byte-identical, so `parseMouse`
+always reports cells and leaves `MouseEvent.pixels` false: set it yourself and
+call `toCells` with your cell size. Both count from 1.
 
-**Pixels are your claim, not a wire fact.** Mode 1006 (cells) and mode 1016
-(pixels) produce byte-identical reports, and only the program that asked knows
-which it is getting. `parseMouse` always reports cells and leaves
-`MouseEvent.pixels` false; a program using mode 1016 sets that field on what
-it parsed and calls `toCells` with its cell size. Both coordinate systems
-count from 1, so the first `cell_w` pixels are column 1 and pixel `cell_w + 1`
-opens column 2.
+**A parsed reply borrows, and its decoder takes a buffer.** `decodeClipboard`
+writes into a buffer you size from `reply.decodedLen()`, exact because the
+parser has already established the payload is well-formed base64;
+`Capability.decodeName` and `decodeValue` size from `nameLen` and `valueLen`.
+`error.NoSpaceLeft` is the only error any of them returns.
 
-**A parsed reply borrows, and its decoder takes a buffer.**
-`parseClipboardReply` returns the base64 payload as a sub-slice of the bytes
-it was given, and `decodeClipboard` writes into a buffer you size from
-`reply.decodedLen()` — exact rather than an upper bound, because the parser
-has already established the payload is well-formed base64, padding bits
-included. XTGETTCAP works the same way, with `Capability.decodeName` and
-`decodeValue` sized from `nameLen` and `valueLen`. Content cannot fail to
-decode; the only error is `error.NoSpaceLeft`.
+## Scope
 
-## Limits
-
-These are the things morse does not do.
-
-- **No I/O.** morse never touches a file descriptor, never reads a reply, and
-  never puts a terminal into raw mode. `termios` and `SetConsoleMode` are
-  yours, and so is every timeout.
-- **No screen model.** No cells, no damage tracking, no layout, no diffing of
-  a frame, no width tables, no grapheme segmentation. `diffStyle` diffs two
-  styles; nothing here diffs two screens.
-- **No widgets and no event loop.** No windows, no focus stack, no redraw
-  scheduling. A framework built on this package is a different package.
-- **No terminal capability database.** See the design note above.
-- **No graphics protocol.** `parseGraphicsResponse` reads the terminal's
-  answer to a kitty graphics command, because that answer arrives on the input
-  stream and has to be told apart from a keypress. Writing the command is not
-  here: transmitting an image has its own chunking, formats, compression and
-  placement rules.
-- **Only SGR is asked for.** It is the mouse encoding without a 223-column cap
-  and the only one that says which button came up. The X10 report (mode 1000)
-  and the rxvt report (mode 1015) are read anyway, by `parseMouseX10` and
-  `parseMouseRxvt`, and framed by `KeyParser`, because a terminal left in one
-  of those modes still sends them. The UTF-8 encoding (mode 1005) is not read:
-  its length depends on a mode the input stream does not carry, so it cannot
-  even be framed.
-- **No 8-bit C1 controls.** `0x9b` is not read as `CSI`, nor `0x9d` as `OSC`.
-  On input those bytes are UTF-8 continuation bytes far more often than
-  controls, and no terminal sends 8-bit C1 on input unless asked with `S8C1T`.
-  A terminal emulator reading a program's output needs them; this package
-  reads the other direction.
-- **No Windows console input.** Console input records from `ReadConsoleInputW`
-  and the win32-input-mode key encoding (mode 9001) are both keyboard input in
-  a form morse does not decode yet. Pending.
-- **No guessing at text a terminal did not report.** `KeyEvent.text` is what
-  the terminal said the key produced: the bytes themselves for plain input,
-  and the protocol's associated-text field when you asked for it. A terminal
-  reporting `CSI 97 u` has not said what `a` produced on that layout with
-  those modifiers, and inventing an answer would be wrong exactly where it
-  matters — dead keys, input methods, and shifted keys whose shifted form is
-  not the uppercase of the unshifted one.
-- **No escaping of your strings.** A title, a URI or a notification body
-  containing `ESC`, `BEL` or `;` is written through as given. Which edit would
-  be right depends on what the text is, so morse makes none.
+- **No I/O and no raw mode.** `termios`, `SetConsoleMode` and every timeout
+  are the caller's.
+- **No screen model.** No cells, no damage tracking, no layout, no width
+  tables, no grapheme segmentation.
+- **No widgets and no event loop.**
+- **No graphics protocol writing.** `parseGraphicsResponse` reads the reply,
+  which arrives interleaved with keys; sending an image does not.
+- **No capability database.** morse asks the terminal instead; see Design.
 
 ## Platforms
 
-morse calls no operating system API and has no platform-specific code, so the
-same source builds everywhere Zig does. The suite is what differs by host.
+| Platform | Tested |
+| --- | --- |
+| Linux | `ubuntu-latest` in CI, four optimize modes; also in Docker with [`ci/linux.sh`](ci/linux.sh) |
+| macOS | `macos-latest` in CI, four optimize modes |
+| Windows | `windows-latest` in CI, four optimize modes |
 
-| Platform | What morse uses | Tested |
-| --- | --- | --- |
-| Linux | nothing platform-specific | `ubuntu-latest` in CI, four optimize modes; also in Docker with [`ci/linux.sh`](ci/linux.sh) |
-| macOS | nothing platform-specific | `macos-latest` in CI, four optimize modes |
-| Windows | nothing platform-specific | `windows-latest` in CI, four optimize modes |
-
-Cross-compilation is checked by building the module for `x86_64-linux-gnu`,
+morse calls no operating system API, so the same source builds everywhere Zig
+does; cross-compilation is checked for `x86_64-linux-gnu`,
 `x86_64-windows-gnu` and `aarch64-windows-gnu`.
+
+Pending: console input records from `ReadConsoleInputW` and the
+win32-input-mode key encoding (mode 9001) are not decoded yet.
 
 ## Testing
 
-`zig build test` runs the suite and the examples, under
-`std.testing.allocator`, so a leak or an invalid free fails the test rather
-than the process. Every writer is pinned to its exact bytes rather than to a
-shape, and the exhaustive cases are there too: base64 at every tail length, a
-clipboard round trip at every length from 0 to 193, every mouse event this
-package can represent encoded and parsed back, and every key sequence in every
-spelling a terminal uses for it, including one delivered a byte per read.
-
-Every parser has a table of malformed inputs — truncated, wrong terminator,
-wrong introducer, trailing rubbish, a field too many, numbers too large for
-the field — and a `std.testing.fuzz` test asserting it never panics, never
-overflows, and that whatever it accepts survives a round trip back through the
-writer. `KeyParser` is fuzzed fed in two pieces, so the split lands anywhere a
-real read could have landed, against the properties a stream parser needs:
-text is valid UTF-8, every `unhandled` slice lies inside the caller's buffer,
-the parser always makes progress, and `flush` always empties it. `zig build
-test --fuzz` turns those properties into a search, and
+`zig build test` runs the suite and the examples under `std.testing.allocator`,
+so a leak or an invalid free fails the test rather than the process. Writers
+are pinned to their exact bytes, and the round trips are exhaustive: every
+base64 tail length, every clipboard length to 193, every mouse event this
+package can represent, every key sequence in every spelling. Each parser has a
+table of malformed inputs — truncated, wrong terminator, trailing rubbish, a
+number too large for its field — and a `std.testing.fuzz` test asserting it
+never panics, never overflows, and that whatever it accepts survives a round
+trip back through the writer. `KeyParser` is fuzzed fed in two pieces, so the
+split lands anywhere a real read could have. `zig build test --fuzz` keeps searching;
 [`ci/linux.sh`](ci/linux.sh) runs the Linux half in Docker from a machine that
 is not Linux.
 
 ## Requirements
 
-Zig 0.16.0. No other dependencies.
+Zig 0.16.0.
 
 ## Licence
 
