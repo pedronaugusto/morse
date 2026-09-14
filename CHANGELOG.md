@@ -57,6 +57,13 @@ Everything a program needs below a TUI framework, on both sides of the wire.
   answer into a `PaletteReport`, in the same `rgb:` form at any channel width
   that `parseColorReply` reads, and each of the two parsers returns null for
   the other's sequence. `palette_size` is the 256 entries OSC 4 addresses.
+- **Semantic prompt marks, OSC 133.** `promptStart`, `promptEnd`,
+  `commandStart` and `commandEnd` say where a prompt ended and a command's
+  output began, and what the command exited on. Nothing in a stream of
+  characters says which of them the user typed, so a terminal cannot scroll
+  by command, fold one, or mark a failure in the margin unless the program
+  tells it. `commandEnd` takes an optional exit code, because a program that
+  does not have one should not claim a zero.
 - **Modes.** `unicodeCore` (2027), the mode that decides whether the terminal
   measures text by grapheme cluster or by codepoint.
 - **`requestCursorPosition`**, which was missing beside `parseCursorPosition`.

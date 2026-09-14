@@ -198,6 +198,9 @@ exe.root_module.addImport("morse", morse_dep.module("morse"));
 
 **Notifications.** `notify` (OSC 777), `notify9` (OSC 9).
 
+**Semantic prompt marks (OSC 133).** `promptStart`, `promptEnd`,
+`commandStart`, `commandEnd`.
+
 **Modes.** `altScreen`, `bracketedPaste`, `syncOutput`, `focusEvents`,
 `cursorVisible`, `unicodeCore`, `inBandResize`, `autoWrap` — each a type with
 `set(w, on)` and a `number` — plus `setMode` for any mode morse does not name,

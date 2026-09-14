@@ -30,6 +30,7 @@ const mouse_events = @import("mouse.zig");
 const notifications = @import("notify.zig");
 const osc = @import("osc.zig");
 const query = @import("query.zig");
+const status = @import("status.zig");
 const style = @import("style.zig");
 const tcap = @import("tcap.zig");
 
@@ -51,6 +52,19 @@ pub const hyperlinkStart = osc.hyperlinkStart;
 pub const hyperlinkEnd = osc.hyperlinkEnd;
 /// Writes one piece of text as a hyperlink.
 pub const hyperlink = osc.hyperlink;
+
+//=========================================================================
+// Semantic prompt marks, OSC 133.
+//=========================================================================
+
+/// Marks the start of a prompt.
+pub const promptStart = status.promptStart;
+/// Marks the end of the prompt and the start of what the user typed.
+pub const promptEnd = status.promptEnd;
+/// Marks the start of a command's output.
+pub const commandStart = status.commandStart;
+/// Marks the end of a command's output, with the status it exited on.
+pub const commandEnd = status.commandEnd;
 
 //=========================================================================
 // Clipboard, OSC 52.
@@ -345,6 +359,7 @@ test {
     _ = @import("osc.zig");
     _ = @import("query.zig");
     _ = @import("seq.zig");
+    _ = @import("status.zig");
     _ = @import("style.zig");
     _ = @import("tcap.zig");
 }
@@ -365,6 +380,11 @@ test "the root module re-exports what the README promises" {
     try clipboardWrite(w, .clipboard, "x");
     try clipboardRequest(w, .primary);
     try notify(w, "t", "b");
+    try promptStart(w);
+    try promptEnd(w);
+    try commandStart(w);
+    try commandEnd(w, 0);
+    try commandEnd(w, null);
     try notify9(w, "b");
     try setMode(w, 1, true);
     try altScreen.set(w, true);
