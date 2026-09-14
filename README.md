@@ -263,12 +263,14 @@ first, then on codes, then colours: SGR 22 turns off bold and dim together, so
 turning bold off while dim stays on has to write `22;2`. You keep `from`.
 
 **The mouse modes are one call.** `mouse` writes
-an `h` or an `l` for each of the six DEC private modes, so `mouse(w, .{ .press
+an `h` or an `l` for each of the seven DEC private modes, so `mouse(w, .{ .press
 = true, .sgr = true })` is press and wheel reports and nothing else, whatever
 was on before. `Mouse.focus` is mode 1004, the same mode as `focusEvents`, so
-a call leaving it false turns focus reporting off. I ask only for SGR;
-`parseMouseX10` and `parseMouseRxvt` read what a terminal left in mode 1000 or
-1015 still sends. Modes 1006 and 1016 are byte-identical, so `parseMouse`
+a call leaving it false turns focus reporting off. `Mouse.rxvt` is mode 1015
+and goes off the same way, because a terminal left in it keeps sending rxvt
+reports until something says otherwise. SGR is the one to ask for;
+`parseMouseX10` and `parseMouseRxvt` read what a terminal in mode 1000 or 1015
+sends meanwhile. Modes 1006 and 1016 are byte-identical, so `parseMouse`
 always reports cells and leaves `MouseEvent.pixels` false: set it yourself and
 call `toCells` with your cell size. Both count from 1.
 

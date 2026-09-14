@@ -121,6 +121,12 @@ pub const Mouse = packed struct {
     /// SGR coordinates in pixels rather than cells (mode 1016). Same report
     /// shape as `sgr`; `toCells` converts what comes back.
     sgr_pixels: bool = false,
+    /// The rxvt encoding (mode 1015), which `parseMouseRxvt` reads. The X10
+    /// report with its three fields spelled in decimal, so it carries a
+    /// column past the 223 the biased byte caps at — but a release in it
+    /// still names no button, which is why `sgr` is the one to ask for. A
+    /// terminal offered both sends SGR.
+    rxvt: bool = false,
     /// Focus in and out reports (mode 1004), the same mode as `focusEvents`.
     focus: bool = false,
 };
@@ -137,12 +143,18 @@ pub const Mouse = packed struct {
 /// The same reach is why `Mouse.focus` is here: mode 1004 is also
 /// `focusEvents`, and a call that leaves `focus` false turns it off. A program
 /// that wants focus reports must say so here, not only through `focusEvents`.
+///
+/// It is why `Mouse.rxvt` is here too. A program has little reason to ask for
+/// mode 1015, but a terminal left in it by something earlier keeps sending
+/// rxvt reports until it is told to stop, and a call that could not say `l`
+/// for 1015 could not stop it.
 pub fn mouse(w: *Writer, modes: Mouse) Writer.Error!void {
     try setMode(w, 1000, modes.press);
     try setMode(w, 1002, modes.drag);
     try setMode(w, 1003, modes.any_motion);
     try setMode(w, 1004, modes.focus);
     try setMode(w, 1006, modes.sgr);
+    try setMode(w, 1015, modes.rxvt);
     try setMode(w, 1016, modes.sgr_pixels);
 }
 
@@ -283,7 +295,7 @@ test "mouse gives each flag its own h or l" {
 
     try mouse(&out.writer, .{ .press = true, .sgr = true });
     try std.testing.expectEqualStrings(
-        "\x1b[?1000h\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006h\x1b[?1016l",
+        "\x1b[?1000h\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006h\x1b[?1015l\x1b[?1016l",
         out.written(),
     );
 }
@@ -294,7 +306,7 @@ test "mouseOff turns every mouse mode off" {
 
     try mouseOff(&out.writer);
     try std.testing.expectEqualStrings(
-        "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006l\x1b[?1016l",
+        "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006l\x1b[?1015l\x1b[?1016l",
         out.written(),
     );
 }
@@ -309,10 +321,24 @@ test "every mouse flag on turns on every mode" {
         .any_motion = true,
         .sgr = true,
         .sgr_pixels = true,
+        .rxvt = true,
         .focus = true,
     });
     try std.testing.expectEqualStrings(
-        "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1006h\x1b[?1016h",
+        "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1006h\x1b[?1015h\x1b[?1016h",
+        out.written(),
+    );
+}
+
+test "mouse can ask for the rxvt encoding, and turns it off otherwise" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    // Mode 1015 on its own: what a program reading `parseMouseRxvt` asks for,
+    // and the state a terminal has to be put back out of.
+    try mouse(&out.writer, .{ .press = true, .rxvt = true });
+    try std.testing.expectEqualStrings(
+        "\x1b[?1000h\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006l\x1b[?1015h\x1b[?1016l",
         out.written(),
     );
 }

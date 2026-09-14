@@ -18,6 +18,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   has one page and answers 1; the field is reported rather than dropped,
   because a parser that discarded it could not claim to have read the whole
   report.
+- **`Mouse.rxvt`**, mode 1015, beside the other six mouse modes `mouse`
+  switches. `parseMouseRxvt` has read that encoding since 0.2.0, and nothing
+  here could ask for it or, more to the point, say `l` for it: a terminal left
+  in mode 1015 by something earlier kept sending rxvt reports through every
+  `mouse` and `mouseOff` call a program made. Both now write one more
+  sequence, `CSI ? 1015 h` or `CSI ? 1015 l`, in mode-number order with the
+  rest.
+
+### Changed
+
+- `Mouse` gained a field, so it is one bit wider. It is a `packed struct`,
+  and code that bit-casts one rather than naming its fields has to be told.
 
 ## [0.2.0] - 2026-09-14
 
