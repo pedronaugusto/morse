@@ -1,5 +1,6 @@
 //! The switches a full-screen program throws: DEC private modes, the mouse
-//! reporting modes, the kitty keyboard protocol stack, and the cursor shape.
+//! reporting modes, the kitty keyboard protocol stack, and the shape of the
+//! cursor and of the pointer.
 
 const std = @import("std");
 const seq = @import("seq.zig");
@@ -247,6 +248,86 @@ pub fn cursorShape(w: *Writer, shape: CursorShape) Writer.Error!void {
     try w.writeAll(" q");
 }
 
+/// The shape the mouse pointer takes over the terminal's window, spelled as
+/// CSS spells its pointer shapes.
+///
+/// That vocabulary is the one kitty introduced for OSC 22 and the terminals
+/// after it adopted; xterm's OSC 22 names a cursor out of the X cursor font
+/// instead, so a name written to xterm matches nothing there and the pointer
+/// stays as it was. Nothing is acknowledged and there is no reply to read, so
+/// a program cannot find out which of the two happened: write the shape that
+/// is right for what is under the pointer and expect some terminals to ignore
+/// it.
+pub const PointerShape = enum {
+    /// The ordinary arrow.
+    default,
+    /// The I-beam, over text the user can select.
+    text,
+    /// The hand, over something that acts when clicked — a hyperlink.
+    pointer,
+    /// The arrow with a question mark.
+    help,
+    /// The busy pointer, over a program that is not taking input.
+    wait,
+    /// The arrow with the busy pointer beside it: working, still taking
+    /// input.
+    progress,
+    /// The crosshair, over something positioned rather than pointed at.
+    crosshair,
+    /// The cell pointer, over a grid a rectangle can be dragged out of.
+    cell,
+    /// The four-way arrow, over something the drag moves.
+    move,
+    /// The open hand, over something that can be picked up.
+    grab,
+    /// The closed hand, while it is being dragged.
+    grabbing,
+    /// The barred circle, over a target that will refuse the drop.
+    not_allowed,
+    /// The horizontal resize arrows, over a vertical split bar.
+    col_resize,
+    /// The vertical resize arrows, over a horizontal split bar.
+    row_resize,
+
+    /// The name this shape travels under.
+    ///
+    /// The tag for every shape whose name is one word, and the hyphenated
+    /// spelling for the three that Zig cannot spell as an identifier.
+    pub fn name(shape: PointerShape) []const u8 {
+        return switch (shape) {
+            .not_allowed => "not-allowed",
+            .col_resize => "col-resize",
+            .row_resize => "row-resize",
+            else => @tagName(shape),
+        };
+    }
+};
+
+/// Sets the pointer's shape: `OSC 22 ; name ST`.
+///
+/// The terminal owns the pointer and knows nothing about what the program
+/// drew under it, so a program that draws a hyperlink and wants the hand over
+/// it, or a split bar and wants the resize arrows, has no other way to say
+/// so.
+///
+/// Like the cursor's shape, this is terminal state and outlives the program
+/// that set it: `pointerShapeReset` belongs on the way out.
+pub fn pointerShape(w: *Writer, shape: PointerShape) Writer.Error!void {
+    try w.writeAll(seq.osc ++ "22;");
+    try w.writeAll(shape.name());
+    try w.writeAll(seq.st);
+}
+
+/// Puts the pointer back to whatever the terminal draws by default:
+/// `OSC 22 ; ST`, the same sequence with an empty name.
+///
+/// Back to the terminal's default, not to whatever this program found on
+/// entry — there is no sequence that reads a pointer shape back, so there is
+/// nothing to restore it to.
+pub fn pointerShapeReset(w: *Writer) Writer.Error!void {
+    try w.writeAll(seq.osc ++ "22;" ++ seq.st);
+}
+
 test "a named mode writes h and l" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
@@ -394,6 +475,55 @@ test "every cursor shape writes its DECSCUSR number" {
         try cursorShape(&out.writer, case.shape);
         try std.testing.expectEqualStrings(case.bytes, out.written());
     }
+}
+
+test "every pointer shape writes its CSS name" {
+    const cases = [_]struct { shape: PointerShape, bytes: []const u8 }{
+        .{ .shape = .default, .bytes = "\x1b]22;default\x1b\\" },
+        .{ .shape = .text, .bytes = "\x1b]22;text\x1b\\" },
+        .{ .shape = .pointer, .bytes = "\x1b]22;pointer\x1b\\" },
+        .{ .shape = .help, .bytes = "\x1b]22;help\x1b\\" },
+        .{ .shape = .wait, .bytes = "\x1b]22;wait\x1b\\" },
+        .{ .shape = .progress, .bytes = "\x1b]22;progress\x1b\\" },
+        .{ .shape = .crosshair, .bytes = "\x1b]22;crosshair\x1b\\" },
+        .{ .shape = .cell, .bytes = "\x1b]22;cell\x1b\\" },
+        .{ .shape = .move, .bytes = "\x1b]22;move\x1b\\" },
+        .{ .shape = .grab, .bytes = "\x1b]22;grab\x1b\\" },
+        .{ .shape = .grabbing, .bytes = "\x1b]22;grabbing\x1b\\" },
+        .{ .shape = .not_allowed, .bytes = "\x1b]22;not-allowed\x1b\\" },
+        .{ .shape = .col_resize, .bytes = "\x1b]22;col-resize\x1b\\" },
+        .{ .shape = .row_resize, .bytes = "\x1b]22;row-resize\x1b\\" },
+    };
+    for (cases) |case| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+
+        try pointerShape(&out.writer, case.shape);
+        try std.testing.expectEqualStrings(case.bytes, out.written());
+    }
+}
+
+test "every pointer shape has a name, and only the hyphenated ones differ" {
+    // The table above is written out by hand, so the count here is what says
+    // it is the whole enum: a shape added and not pinned fails this.
+    var seen: usize = 0;
+    for (std.enums.values(PointerShape)) |shape| {
+        seen += 1;
+        try std.testing.expect(shape.name().len != 0);
+        // A hyphenated name is not the tag, and a one-word name is.
+        const hyphenated = std.mem.indexOfScalar(u8, shape.name(), '-') != null;
+        try std.testing.expectEqual(hyphenated, !std.mem.eql(u8, shape.name(), @tagName(shape)));
+    }
+    try std.testing.expectEqual(@as(usize, 14), seen);
+}
+
+test "pointerShapeReset writes the same sequence with an empty name" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try pointerShape(&out.writer, .pointer);
+    try pointerShapeReset(&out.writer);
+    try std.testing.expectEqualStrings("\x1b]22;pointer\x1b\\\x1b]22;\x1b\\", out.written());
 }
 
 test "in-band resize and auto-wrap write their mode numbers" {

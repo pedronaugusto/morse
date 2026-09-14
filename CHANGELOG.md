@@ -25,6 +25,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `mouse` and `mouseOff` call a program made. Both now write one more
   sequence, `CSI ? 1015 h` or `CSI ? 1015 l`, in mode-number order with the
   rest.
+- **The pointer's shape, OSC 22.** `pointerShape` tells the terminal what to
+  draw under the mouse — the hand over a hyperlink, the resize arrows over a
+  split bar — and `pointerShapeReset` puts it back. The terminal owns the
+  pointer and knows nothing about what the program drew beneath it, so there
+  is no other way to say. `PointerShape` names the shapes as CSS names them,
+  which is the vocabulary kitty introduced for this sequence and the
+  terminals after it took up; xterm's OSC 22 names the X cursor font instead,
+  and nothing is acknowledged either way, so a program writes the right shape
+  and accepts that some terminals leave the pointer alone.
 
 ### Changed
 

@@ -191,9 +191,10 @@ each a type with
 `set(w, on)` and a `number` — plus `setMode` for any mode morse does not name,
 and `Mouse` / `mouse` / `mouseOff`.
 
-**Keyboard protocol and cursor shape.** `KittyFlags`, `kittyKeyboardPush`,
+**Keyboard protocol, cursor and pointer.** `KittyFlags`, `kittyKeyboardPush`,
 `kittyKeyboardPop`, `kittyKeyboardQuery`, `parseKittyKeyboardReply`,
-`CursorShape`, `cursorShape`.
+`CursorShape`, `cursorShape`, `PointerShape` / `pointerShape` /
+`pointerShapeReset` (OSC 22).
 
 **Asking the terminal what it is.** `queryMode` / `ModeState` / `ModeReport` /
 `parseModeReply`, `requestCursorPosition` / `CursorPosition` /

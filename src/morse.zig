@@ -149,6 +149,12 @@ pub const kittyKeyboardQuery = mode.kittyKeyboardQuery;
 pub const CursorShape = mode.CursorShape;
 /// Sets the cursor shape, DECSCUSR.
 pub const cursorShape = mode.cursorShape;
+/// The shape the mouse pointer takes, named as CSS names it.
+pub const PointerShape = mode.PointerShape;
+/// Sets the pointer's shape (OSC 22).
+pub const pointerShape = mode.pointerShape;
+/// Puts the pointer back to the terminal's default shape.
+pub const pointerShapeReset = mode.pointerShapeReset;
 
 //=========================================================================
 // Queries and replies.
@@ -444,6 +450,8 @@ test "the root module re-exports what the README promises" {
     try kittyKeyboardPop(w);
     try kittyKeyboardQuery(w);
     try cursorShape(w, .bar);
+    try pointerShape(w, .pointer);
+    try pointerShapeReset(w);
     try unicodeCore.set(w, true);
     try queryMode(w, 2026);
     try requestCursorPosition(w);
@@ -612,6 +620,7 @@ test "the root module re-exports what the README promises" {
     try std.testing.expect(pressed.key == .escape and !mods.any());
 
     const shape: CursorShape = .block;
+    const hand: PointerShape = .not_allowed;
     const flags: KittyFlags = .{};
     const modes: Mouse = .{};
     const report: ModeReport = .{ .mode = 1, .state = .set };
@@ -619,6 +628,7 @@ test "the root module re-exports what the README promises" {
     const paged: ExtendedCursorPosition = .{ .row = 1, .col = 1, .page = 1 };
     const ev: MouseEvent = .{ .button = .left, .x = 1, .y = 1, .press = true };
     try std.testing.expect(shape == .block and flags.bits() == 0 and !modes.press);
+    try std.testing.expectEqualStrings("not-allowed", hand.name());
     try std.testing.expect(report.mode == 1 and position.row == 1 and ev.x == 1);
     try std.testing.expect(paged.page == 1);
 }
