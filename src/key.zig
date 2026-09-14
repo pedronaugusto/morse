@@ -1585,6 +1585,7 @@ test "a sequence that is not a key comes back whole" {
         "\x1b[32;72;44M", // an rxvt mouse report
         "\x1b[?2026;1$y", // a mode report
         "\x1b[12;40R", // a cursor position report
+        "\x1b[?12;40;1R", // the DEC extended one, which carries a page
         "\x1b[?1u", // a kitty keyboard flags reply
         "\x1b[?62;1;6c", // primary device attributes
         "\x1b[>0;276;0c", // secondary device attributes

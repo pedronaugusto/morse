@@ -168,6 +168,12 @@ pub const parseModeReply = query.parseModeReply;
 pub const CursorPosition = query.CursorPosition;
 /// Reads a cursor position report, or null.
 pub const parseCursorPosition = query.parseCursorPosition;
+/// Asks where the cursor is and which page it is on, DECXCPR.
+pub const requestExtendedCursorPosition = query.requestExtendedCursorPosition;
+/// A cursor position with the page it is on, counting from one.
+pub const ExtendedCursorPosition = query.ExtendedCursorPosition;
+/// Reads a DEC extended cursor position report, or null.
+pub const parseExtendedCursorPosition = query.parseExtendedCursorPosition;
 
 //=========================================================================
 // Mouse reports.
@@ -441,6 +447,7 @@ test "the root module re-exports what the README promises" {
     try unicodeCore.set(w, true);
     try queryMode(w, 2026);
     try requestCursorPosition(w);
+    try requestExtendedCursorPosition(w);
     try encodeMouse(w, .{ .button = .left, .x = 1, .y = 1, .press = true });
 
     try titlePush(w);
@@ -495,6 +502,10 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(Clipboard.clipboard, parseClipboardReply("\x1b]52;c;aGk=\x1b\\").?.target);
     try std.testing.expectEqual(ModeState.set, parseModeReply("\x1b[?2026;1$y").?.state);
     try std.testing.expectEqual(@as(u32, 12), parseCursorPosition("\x1b[12;40R").?.row);
+    try std.testing.expectEqual(
+        @as(u32, 1),
+        parseExtendedCursorPosition("\x1b[?12;40;1R").?.page,
+    );
     try std.testing.expectEqual(Button.left, parseMouse("\x1b[<0;1;1M").?.button);
     try std.testing.expectEqual(Button.left, parseMouseX10("\x1b[M\x20\x21\x21").?.button);
     try std.testing.expectEqual(Button.left, parseMouseRxvt("\x1b[32;33;33M").?.button);
@@ -605,7 +616,9 @@ test "the root module re-exports what the README promises" {
     const modes: Mouse = .{};
     const report: ModeReport = .{ .mode = 1, .state = .set };
     const position: CursorPosition = .{ .row = 1, .col = 1 };
+    const paged: ExtendedCursorPosition = .{ .row = 1, .col = 1, .page = 1 };
     const ev: MouseEvent = .{ .button = .left, .x = 1, .y = 1, .press = true };
     try std.testing.expect(shape == .block and flags.bits() == 0 and !modes.press);
     try std.testing.expect(report.mode == 1 and position.row == 1 and ev.x == 1);
+    try std.testing.expect(paged.page == 1);
 }

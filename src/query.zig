@@ -92,8 +92,9 @@ pub const CursorPosition = struct {
 /// Reads a cursor position report, CPR: `CSI row ; col R`.
 ///
 /// This is the plain report, the answer to `CSI 6 n`. The DEC extended form
-/// `CSI ? row ; col R`, which carries a page number as well, is a different
-/// sequence and is not recognised here. Returns null for anything else.
+/// carries a page number as well and is marked private; it is a different
+/// sequence, read by `parseExtendedCursorPosition`, and is not recognised
+/// here. Returns null for anything else.
 pub fn parseCursorPosition(bytes: []const u8) ?CursorPosition {
     if (!std.mem.startsWith(u8, bytes, seq.csi)) return null;
     var rest = bytes[seq.csi.len..];
@@ -108,6 +109,65 @@ pub fn parseCursorPosition(bytes: []const u8) ?CursorPosition {
     if (!std.mem.eql(u8, rest, "R")) return null;
 
     return .{ .row = row.value, .col = col.value };
+}
+
+/// Asks where the cursor is and which page it is on, DECXCPR: `CSI ? 6 n`.
+///
+/// `requestCursorPosition` with the private marker, and the marker is carried
+/// through into the answer: the report comes back as `CSI ? row ; col ; page R`
+/// and is read by `parseExtendedCursorPosition`, which is what tells it from
+/// the plain one. Terminals that do not implement DECXCPR variously answer
+/// the plain report or nothing at all, so a program asking this must be
+/// prepared for either and must not block on the extended form.
+pub fn requestExtendedCursorPosition(w: *Writer) Writer.Error!void {
+    try w.writeAll(seq.csi ++ "?6n");
+}
+
+/// A cursor position with the page it is on, as DECXCPR reports it.
+pub const ExtendedCursorPosition = struct {
+    /// The row, where the topmost row is 1.
+    row: u32,
+    /// The column, where the leftmost column is 1.
+    col: u32,
+    /// The page, counting from 1. Pages are a VT feature that terminal
+    /// emulators do not have, so the answer is 1 on every terminal a program
+    /// is likely to meet; it is reported rather than dropped because the
+    /// sequence carries it and a parser that discarded a field could not say
+    /// it had read the whole report.
+    page: u32,
+};
+
+/// Reads a DEC extended cursor position report, DECXCPR:
+/// `CSI ? row ; col ; page R`.
+///
+/// The answer to `requestExtendedCursorPosition`, and all three fields are
+/// required: a report with two is the plain CPR with a private marker, which
+/// is not a sequence any terminal sends. The plain report is
+/// `parseCursorPosition`'s, and each of the two returns null for the other's
+/// form, so a program that asked both questions can tell the answers apart.
+///
+/// Returns null for anything else. `bytes` must be exactly the sequence, with
+/// nothing before or after it.
+pub fn parseExtendedCursorPosition(bytes: []const u8) ?ExtendedCursorPosition {
+    const prefix = seq.csi ++ "?";
+    if (!std.mem.startsWith(u8, bytes, prefix)) return null;
+    var rest = bytes[prefix.len..];
+
+    const row = seq.scanInt(u32, rest) orelse return null;
+    rest = rest[row.len..];
+    if (rest.len == 0 or rest[0] != ';') return null;
+    rest = rest[1..];
+
+    const col = seq.scanInt(u32, rest) orelse return null;
+    rest = rest[col.len..];
+    if (rest.len == 0 or rest[0] != ';') return null;
+    rest = rest[1..];
+
+    const page = seq.scanInt(u32, rest) orelse return null;
+    rest = rest[page.len..];
+    if (!std.mem.eql(u8, rest, "R")) return null;
+
+    return .{ .row = row.value, .col = col.value, .page = page.value };
 }
 
 test "queryMode asks with DECRQM" {
@@ -204,6 +264,68 @@ test "parseCursorPosition returns null on anything it does not recognise" {
     }
 }
 
+test "requestExtendedCursorPosition asks with DECXCPR" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try requestExtendedCursorPosition(&out.writer);
+    try std.testing.expectEqualStrings("\x1b[?6n", out.written());
+}
+
+test "the two cursor position queries differ only by the private marker" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try requestCursorPosition(&out.writer);
+    try requestExtendedCursorPosition(&out.writer);
+    try std.testing.expectEqualStrings("\x1b[6n\x1b[?6n", out.written());
+}
+
+test "parseExtendedCursorPosition reads a report and its page" {
+    const position = parseExtendedCursorPosition("\x1b[?12;40;1R").?;
+    try std.testing.expectEqual(@as(u32, 12), position.row);
+    try std.testing.expectEqual(@as(u32, 40), position.col);
+    try std.testing.expectEqual(@as(u32, 1), position.page);
+}
+
+test "parseExtendedCursorPosition reads the top-left cell and a very large one" {
+    try std.testing.expectEqual(
+        ExtendedCursorPosition{ .row = 1, .col = 1, .page = 1 },
+        parseExtendedCursorPosition("\x1b[?1;1;1R").?,
+    );
+    try std.testing.expectEqual(
+        ExtendedCursorPosition{ .row = 4294967295, .col = 4294967295, .page = 4294967295 },
+        parseExtendedCursorPosition("\x1b[?4294967295;4294967295;4294967295R").?,
+    );
+}
+
+test "parseExtendedCursorPosition returns null on anything it does not recognise" {
+    const rejected = [_][]const u8{
+        "", // nothing at all
+        "\x1b[?12;40;1", // no final byte
+        "\x1b[?12;40;", // no page
+        "\x1b[?12;40R", // the plain report, wearing a private marker
+        "\x1b[?12;;1R", // no column
+        "\x1b[?;40;1R", // no row
+        "\x1b[?12;40;1n", // the request's final byte
+        "\x1b]?12;40;1R", // OSC, not CSI
+        "\x1b[?12;40;1RR", // trailing rubbish
+        " \x1b[?12;40;1R", // leading rubbish
+        "\x1b[?12;40;1;1R", // a field too many
+        "\x1b[?4294967296;1;1R", // a row too large for its field
+        "\x1b[?1;4294967296;1R", // a column too large for its field
+        "\x1b[?1;1;4294967296R", // a page too large for its field
+    };
+    for (rejected) |bytes| {
+        try std.testing.expect(parseExtendedCursorPosition(bytes) == null);
+    }
+}
+
+test "each cursor position parser refuses the other's report" {
+    try std.testing.expect(parseCursorPosition("\x1b[?12;40;1R") == null);
+    try std.testing.expect(parseExtendedCursorPosition("\x1b[12;40R") == null);
+}
+
 test "fuzz parseModeReply" {
     // The property: no input panics or overflows, and every reply that parses
     // renders back to a reply that parses to the same report. A terminal
@@ -256,5 +378,37 @@ test "fuzz parseCursorPosition" {
         corpus.seed("\x1b[?12;40R"),
         corpus.seed("\x1b[12;40;1R"),
         corpus.seed("\x1b[12;40"),
+    } });
+}
+
+test "fuzz parseExtendedCursorPosition" {
+    // The property: no input panics or overflows, and every report that
+    // parses renders back to a report that parses to the same position --
+    // the page included, which is the field that tells this report from the
+    // plain one.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const position = parseExtendedCursorPosition(bytes) orelse return;
+            // Whatever this reads, the plain parser must not also read.
+            try std.testing.expect(parseCursorPosition(bytes) == null);
+
+            var output: [64]u8 = undefined;
+            var w: Writer = .fixed(&output);
+            try w.print("\x1b[?{d};{d};{d}R", .{ position.row, position.col, position.page });
+            try std.testing.expectEqual(position, parseExtendedCursorPosition(w.buffered()).?);
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b[?12;40;1R"),
+        corpus.seed("\x1b[?1;1;1R"),
+        corpus.seed("\x1b[?4294967295;4294967295;4294967295R"),
+        corpus.seed("\x1b[?4294967296;1;1R"),
+        corpus.seed("\x1b[?0000000012;0000000040;0000000001R"),
+        corpus.seed("\x1b[12;40R"),
+        corpus.seed("\x1b[?12;40R"),
+        corpus.seed("\x1b[?12;40;1;1R"),
+        corpus.seed("\x1b[?12;40;1"),
     } });
 }

@@ -197,7 +197,9 @@ and `Mouse` / `mouse` / `mouseOff`.
 
 **Asking the terminal what it is.** `queryMode` / `ModeState` / `ModeReport` /
 `parseModeReply`, `requestCursorPosition` / `CursorPosition` /
-`parseCursorPosition`, `queryDeviceAttributes` / `DeviceAttributes` /
+`parseCursorPosition`, `requestExtendedCursorPosition` /
+`ExtendedCursorPosition` / `parseExtendedCursorPosition` (DECXCPR),
+`queryDeviceAttributes` / `DeviceAttributes` /
 `parseDeviceAttributes`, `querySecondaryDeviceAttributes` /
 `SecondaryDeviceAttributes` / `parseSecondaryDeviceAttributes`,
 `queryVersion` / `parseVersion`, `queryColor` / `setColor` / `resetColor` /

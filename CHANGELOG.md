@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The extended cursor position report, DECXCPR.**
+  `requestExtendedCursorPosition` writes `CSI ? 6 n`, and
+  `parseExtendedCursorPosition` reads the `CSI ? row ; col ; page R` answer
+  into an `ExtendedCursorPosition`. It is the plain CPR with a private
+  marker, and the marker is carried through into the report, so a program
+  that asked both questions can tell the two answers apart — which is why
+  this is a second parser rather than a wider first one. A terminal emulator
+  has one page and answers 1; the field is reported rather than dropped,
+  because a parser that discarded it could not claim to have read the whole
+  report.
+
 ## [0.2.0] - 2026-09-14
 
 Everything a program needs below a TUI framework, on both sides of the wire.
