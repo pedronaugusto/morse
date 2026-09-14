@@ -6,9 +6,13 @@
 //! the bytes, because nothing in a stream of characters says which of them
 //! the user typed.
 //!
+//! The same goes for progress: a long build knows what fraction of the work
+//! is done, and only it knows, so a terminal that draws progress in the tab
+//! or on the taskbar has to be told.
+//!
 //! None of it is acknowledged and none of it is standardised: a terminal that
 //! does not implement a mark ignores it, and there is no reply to read. Write
-//! the marks if the program has the information, and expect nothing back.
+//! these if the program has the information, and expect nothing back.
 
 const std = @import("std");
 const seq = @import("seq.zig");
@@ -54,6 +58,57 @@ pub fn commandStart(w: *Writer) Writer.Error!void {
 pub fn commandEnd(w: *Writer, exit_code: ?u8) Writer.Error!void {
     try w.writeAll(seq.osc ++ "133;D");
     if (exit_code) |code| try w.print(";{d}", .{code});
+    try w.writeAll(seq.st);
+}
+
+//=========================================================================
+// Progress, OSC 9 ; 4.
+//=========================================================================
+
+/// What a program is telling the terminal about how far along it is.
+///
+/// The percentage-carrying states take 0 to 100; anything larger is written
+/// as 100, because the protocol defines no value above it and a taskbar given
+/// one draws something arbitrary.
+pub const Progress = union(enum) {
+    /// No indicator at all. What a program writes when it is done, and what
+    /// it must write on every exit path -- an indicator left behind outlives
+    /// the program that set it.
+    none,
+    /// A fraction of the work finished, 0 to 100.
+    percent: u8,
+    /// Stopped on an error, at the fraction it had reached. The terminal
+    /// draws the same bar in a colour that says so.
+    failed: u8,
+    /// Working, with no way to say how much is left. A terminal draws this as
+    /// motion rather than as a fraction, so it carries no number.
+    indeterminate,
+    /// Working, with something worth warning about, at the fraction reached.
+    warning: u8,
+};
+
+/// Tells the terminal how far along the program is:
+/// `OSC 9 ; 4 ; state ; percentage ST`.
+///
+/// The state and the percentage are always both written, because that is the
+/// form terminals implementing this accept; the percentage is zero for the
+/// two states that carry none.
+///
+/// This shares OSC 9 with `notify9`, which a terminal tells apart by the `4`
+/// and the second `;`. A notification whose body begins `4;` is therefore
+/// ambiguous on the wire -- the one case where the two collide, and a reason
+/// to prefer `notify` for text a program did not write itself.
+pub fn progress(w: *Writer, state: Progress) Writer.Error!void {
+    const code: u8, const value: u8 = switch (state) {
+        .none => .{ 0, 0 },
+        .percent => |v| .{ 1, @min(v, 100) },
+        .failed => |v| .{ 2, @min(v, 100) },
+        .indeterminate => .{ 3, 0 },
+        .warning => |v| .{ 4, @min(v, 100) },
+    };
+
+    try w.writeAll(seq.osc ++ "9;4;");
+    try w.print("{d};{d}", .{ code, value });
     try w.writeAll(seq.st);
 }
 
@@ -110,4 +165,47 @@ test "a writer with no room left reports the failure" {
     var buffer: [4]u8 = undefined;
     var w: Writer = .fixed(&buffer);
     try std.testing.expectError(error.WriteFailed, promptStart(&w));
+}
+
+test "progress writes a state and a percentage for every form it has" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try progress(&out.writer, .{ .percent = 40 });
+    try progress(&out.writer, .{ .failed = 40 });
+    try progress(&out.writer, .indeterminate);
+    try progress(&out.writer, .{ .warning = 40 });
+    try progress(&out.writer, .none);
+    try std.testing.expectEqualStrings(
+        "\x1b]9;4;1;40\x1b\\" ++
+            "\x1b]9;4;2;40\x1b\\" ++
+            "\x1b]9;4;3;0\x1b\\" ++
+            "\x1b]9;4;4;40\x1b\\" ++
+            "\x1b]9;4;0;0\x1b\\",
+        out.written(),
+    );
+}
+
+test "progress writes both ends of the range it accepts" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try progress(&out.writer, .{ .percent = 0 });
+    try progress(&out.writer, .{ .percent = 100 });
+    try std.testing.expectEqualStrings("\x1b]9;4;1;0\x1b\\\x1b]9;4;1;100\x1b\\", out.written());
+}
+
+test "progress writes a percentage above a hundred as a hundred" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    // The protocol defines no value above 100, and a bar handed 255 draws
+    // whatever the terminal happens to do with it.
+    try progress(&out.writer, .{ .percent = 101 });
+    try progress(&out.writer, .{ .failed = 255 });
+    try progress(&out.writer, .{ .warning = 255 });
+    try std.testing.expectEqualStrings(
+        "\x1b]9;4;1;100\x1b\\\x1b]9;4;2;100\x1b\\\x1b]9;4;4;100\x1b\\",
+        out.written(),
+    );
 }

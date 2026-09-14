@@ -67,6 +67,15 @@ pub const commandStart = status.commandStart;
 pub const commandEnd = status.commandEnd;
 
 //=========================================================================
+// Progress, OSC 9 ; 4.
+//=========================================================================
+
+/// What a program is telling the terminal about how far along it is.
+pub const Progress = status.Progress;
+/// Tells the terminal how far along the program is.
+pub const progress = status.progress;
+
+//=========================================================================
 // Clipboard, OSC 52.
 //=========================================================================
 
@@ -385,6 +394,11 @@ test "the root module re-exports what the README promises" {
     try commandStart(w);
     try commandEnd(w, 0);
     try commandEnd(w, null);
+    try progress(w, .{ .percent = 40 });
+    try progress(w, .{ .failed = 40 });
+    try progress(w, .indeterminate);
+    try progress(w, .{ .warning = 40 });
+    try progress(w, .none);
     try notify9(w, "b");
     try setMode(w, 1, true);
     try altScreen.set(w, true);
@@ -532,6 +546,9 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(@as(u8, 255), wide.to8().r);
     try std.testing.expect(da.class == 1 and da2.version == 0);
     try std.testing.expect(colours.target == .cursor and graphics.ok());
+
+    const done: Progress = .{ .percent = 100 };
+    try std.testing.expect(done == .percent and done.percent == 100);
 
     const pressed: KeyEvent = .{ .key = .escape };
     const mods: Modifiers = .{};

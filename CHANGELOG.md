@@ -64,6 +64,11 @@ Everything a program needs below a TUI framework, on both sides of the wire.
   by command, fold one, or mark a failure in the margin unless the program
   tells it. `commandEnd` takes an optional exit code, because a program that
   does not have one should not claim a zero.
+- **Progress, OSC 9;4.** `progress` tells the terminal what fraction of the
+  work is done, so it can draw it in the tab or on the taskbar: `Progress` is
+  `percent`, `failed`, `warning`, `indeterminate` and `none`, with a value
+  above 100 written as 100 because the protocol defines none. Only the
+  program knows how far along it is, and there is no other way for it to say.
 - **Modes.** `unicodeCore` (2027), the mode that decides whether the terminal
   measures text by grapheme cluster or by codepoint.
 - **`requestCursorPosition`**, which was missing beside `parseCursorPosition`.
