@@ -228,7 +228,7 @@ and `Mouse` / `mouse` / `mouseOff`.
 `parseCapabilityReply` / `Capabilities` / `Capability` (XTGETTCAP).
 
 **Mouse reports.** `Button`, `MouseEvent`, `encodeMouse`, `parseMouse`,
-`parseMouseX10`, `mouse_x10_max`, `toCells`.
+`parseMouseX10`, `parseMouseRxvt`, `mouse_x10_max`, `toCells`.
 
 ## Design
 

@@ -180,6 +180,8 @@ pub const encodeMouse = mouse_events.encodeMouse;
 pub const parseMouse = mouse_events.parseMouse;
 /// Reads the original X10 mouse report, or null.
 pub const parseMouseX10 = mouse_events.parseMouseX10;
+/// Reads the rxvt mouse report (mode 1015), or null.
+pub const parseMouseRxvt = mouse_events.parseMouseRxvt;
 /// The largest coordinate an X10 mouse report can carry.
 pub const mouse_x10_max = mouse_events.x10_max;
 /// Converts a pixel report into cells.
@@ -470,6 +472,7 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(@as(u32, 12), parseCursorPosition("\x1b[12;40R").?.row);
     try std.testing.expectEqual(Button.left, parseMouse("\x1b[<0;1;1M").?.button);
     try std.testing.expectEqual(Button.left, parseMouseX10("\x1b[M\x20\x21\x21").?.button);
+    try std.testing.expectEqual(Button.left, parseMouseRxvt("\x1b[32;33;33M").?.button);
     try std.testing.expectEqual(@as(u32, 223), @as(u32, mouse_x10_max));
     try std.testing.expectEqual(@as(u32, 1), toCells(.{
         .button = .left,

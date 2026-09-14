@@ -13,6 +13,12 @@
 //! package declines to interpret. Its own limits are why SGR exists -- it
 //! caps coordinates at 223 and does not say which button was released.
 //!
+//! The rxvt encoding (mode 1015) is read too, by `parseMouseRxvt`, and for
+//! the same reason: it is the X10 report with its three fields spelled as
+//! decimal numbers instead of biased bytes, which lifts the 223 cap without
+//! answering the other objection -- a release still names no button. It is
+//! never asked for either.
+//!
 //! The UTF-8 encoding (mode 1005) is not read. It is the same report with the
 //! coordinates spelled as codepoints rather than bytes, which makes its length
 //! depend on a mode the input stream does not carry -- so it cannot even be
@@ -104,6 +110,30 @@ pub fn encodeMouse(w: *Writer, ev: MouseEvent) Writer.Error!void {
     try w.writeByte(if (ev.press) 'M' else 'm');
 }
 
+/// The button a report's code names, or null when it names none.
+///
+/// Bits 0 and 1 name the button; bit 6 shifts the numbering to the wheel and
+/// bit 7 to the extra buttons. Both at once names nothing. The three
+/// encodings this package reads differ in how the code travels and not in
+/// what it means, so they share this.
+fn buttonFromCode(code: u8) ?Button {
+    return switch (code & 0b1100_0011) {
+        0 => .left,
+        1 => .middle,
+        2 => .right,
+        3 => .none,
+        64 => .wheel_up,
+        65 => .wheel_down,
+        66 => .wheel_left,
+        67 => .wheel_right,
+        128 => .button_8,
+        129 => .button_9,
+        130 => .button_10,
+        131 => .button_11,
+        else => null,
+    };
+}
+
 /// Reads an SGR mouse report: `CSI < b ; x ; y M` or `... m`.
 ///
 /// Returns null for anything else — the older X10 encoding included — and
@@ -133,23 +163,7 @@ pub fn parseMouse(bytes: []const u8) ?MouseEvent {
         else => return null,
     };
 
-    // Bits 0-1 name the button; bit 6 shifts the numbering to the wheel and
-    // bit 7 to the extra buttons. Both at once names nothing.
-    const button = switch (code.value & 0b1100_0011) {
-        0 => Button.left,
-        1 => Button.middle,
-        2 => Button.right,
-        3 => Button.none,
-        64 => Button.wheel_up,
-        65 => Button.wheel_down,
-        66 => Button.wheel_left,
-        67 => Button.wheel_right,
-        128 => Button.button_8,
-        129 => Button.button_9,
-        130 => Button.button_10,
-        131 => Button.button_11,
-        else => return null,
-    };
+    const button = buttonFromCode(code.value) orelse return null;
 
     return .{
         .button = button,
@@ -203,23 +217,7 @@ pub fn parseMouseX10(bytes: []const u8) ?MouseEvent {
 
     const code = fields[0] - x10_bias;
 
-    // The same button bits as the SGR form, and the same "both at once names
-    // nothing" rule -- only the transport differs.
-    const button = switch (code & 0b1100_0011) {
-        0 => Button.left,
-        1 => Button.middle,
-        2 => Button.right,
-        3 => Button.none,
-        64 => Button.wheel_up,
-        65 => Button.wheel_down,
-        66 => Button.wheel_left,
-        67 => Button.wheel_right,
-        128 => Button.button_8,
-        129 => Button.button_9,
-        130 => Button.button_10,
-        131 => Button.button_11,
-        else => return null,
-    };
+    const button = buttonFromCode(code) orelse return null;
 
     return .{
         .button = button,
@@ -232,6 +230,61 @@ pub fn parseMouseX10(bytes: []const u8) ?MouseEvent {
         .shift = code & 4 != 0,
         .alt = code & 8 != 0,
         .ctrl = code & 16 != 0,
+    };
+}
+
+/// Reads the rxvt mouse report (mode 1015): `CSI b ; x ; y M`, where each of
+/// the three fields is a decimal number carrying its value plus 32.
+///
+/// The X10 report with the fields widened: the same button code, the same
+/// bias, the same "a release names no button", but spelled in decimal, so a
+/// coordinate is not capped at `x10_max` and a terminal wider than 223
+/// columns can report the whole of it. `mouse` never asks for it -- SGR says
+/// which button came up and this does not -- and it is read for the same
+/// reason the X10 form is: a terminal left in mode 1015 by something earlier
+/// still sends them, and `KeyParser` frames them either way.
+///
+/// Returns null for a field below the bias, for a button code that does not
+/// fit in the byte it came from, and for the SGR and X10 forms -- each of the
+/// three parsers here refuses the other two. `bytes` must be exactly the
+/// sequence, and the returned event always has `pixels` false: this encoding
+/// has no pixel form.
+pub fn parseMouseRxvt(bytes: []const u8) ?MouseEvent {
+    if (!std.mem.startsWith(u8, bytes, seq.csi)) return null;
+    var rest = bytes[seq.csi.len..];
+
+    const code = seq.scanInt(u32, rest) orelse return null;
+    rest = rest[code.len..];
+    if (rest.len == 0 or rest[0] != ';') return null;
+    rest = rest[1..];
+
+    const x = seq.scanInt(u32, rest) orelse return null;
+    rest = rest[x.len..];
+    if (rest.len == 0 or rest[0] != ';') return null;
+    rest = rest[1..];
+
+    const y = seq.scanInt(u32, rest) orelse return null;
+    rest = rest[y.len..];
+    // `M` only: this encoding has no separate release final, which is the
+    // second thing SGR added and the reason a release here names no button.
+    if (rest.len != 1 or rest[0] != 'M') return null;
+
+    if (code.value < x10_bias or x.value < x10_bias or y.value < x10_bias) return null;
+    // The code is one byte's worth of flags however wide the field it arrived
+    // in, so a larger number is not a report this package hands back.
+    const flags = std.math.cast(u8, code.value - x10_bias) orelse return null;
+    const button = buttonFromCode(flags) orelse return null;
+
+    return .{
+        .button = button,
+        .x = x.value - x10_bias,
+        .y = y.value - x10_bias,
+        // Button 3 is the release, exactly as in the X10 form.
+        .press = button != .none,
+        .motion = flags & 32 != 0,
+        .shift = flags & 4 != 0,
+        .alt = flags & 8 != 0,
+        .ctrl = flags & 16 != 0,
     };
 }
 
@@ -665,5 +718,170 @@ test "fuzz parseMouseX10" {
         corpus.seed("\x1b[M\x1f\x21\x21"),
         corpus.seed("\x1b[M\x20\x21"),
         corpus.seed("\x1b[<0;1;1M"),
+    } });
+}
+
+test "parseMouseRxvt reads a press, its coordinates and its modifiers" {
+    const ev = parseMouseRxvt("\x1b[32;33;34M").?;
+    try std.testing.expectEqual(Button.left, ev.button);
+    try std.testing.expectEqual(@as(u32, 1), ev.x);
+    try std.testing.expectEqual(@as(u32, 2), ev.y);
+    try std.testing.expect(ev.press);
+    try std.testing.expect(!ev.motion and !ev.shift and !ev.alt and !ev.ctrl);
+    try std.testing.expect(!ev.pixels);
+}
+
+test "parseMouseRxvt reads every button the encoding can name" {
+    const cases = [_]struct { code: u8, button: Button, press: bool }{
+        .{ .code = 0, .button = .left, .press = true },
+        .{ .code = 1, .button = .middle, .press = true },
+        .{ .code = 2, .button = .right, .press = true },
+        // Button 3 is the release, and it names no button -- the limit this
+        // encoding kept from the X10 form it widened.
+        .{ .code = 3, .button = .none, .press = false },
+        .{ .code = 64, .button = .wheel_up, .press = true },
+        .{ .code = 65, .button = .wheel_down, .press = true },
+        .{ .code = 66, .button = .wheel_left, .press = true },
+        .{ .code = 67, .button = .wheel_right, .press = true },
+        .{ .code = 128, .button = .button_8, .press = true },
+        .{ .code = 131, .button = .button_11, .press = true },
+    };
+    var buffer: [32]u8 = undefined;
+    for (cases) |case| {
+        const bytes = try std.fmt.bufPrint(&buffer, "\x1b[{d};33;33M", .{
+            @as(u32, case.code) + x10_bias,
+        });
+        const ev = parseMouseRxvt(bytes).?;
+        try std.testing.expectEqual(case.button, ev.button);
+        try std.testing.expectEqual(case.press, ev.press);
+    }
+}
+
+test "parseMouseRxvt reads the modifier and motion bits" {
+    const shift = parseMouseRxvt("\x1b[36;33;33M").?;
+    try std.testing.expect(shift.shift and !shift.alt and !shift.ctrl);
+
+    const alt = parseMouseRxvt("\x1b[40;33;33M").?;
+    try std.testing.expect(alt.alt and !alt.shift and !alt.ctrl);
+
+    const ctrl = parseMouseRxvt("\x1b[48;33;33M").?;
+    try std.testing.expect(ctrl.ctrl and !ctrl.shift and !ctrl.alt);
+
+    const drag = parseMouseRxvt("\x1b[64;33;33M").?;
+    try std.testing.expect(drag.motion and drag.button == .left);
+}
+
+test "parseMouseRxvt reads a column the X10 form cannot spell" {
+    // The whole point of the encoding: 223 is where the biased byte runs out.
+    const wide = parseMouseRxvt("\x1b[32;1032;32M").?;
+    try std.testing.expectEqual(@as(u32, 1000), wide.x);
+    try std.testing.expectEqual(@as(u32, 0), wide.y);
+    try std.testing.expect(wide.x > x10_max);
+
+    const first = parseMouseRxvt("\x1b[32;33;33M").?;
+    try std.testing.expectEqual(@as(u32, 1), first.x);
+    try std.testing.expectEqual(@as(u32, 1), first.y);
+}
+
+test "parseMouseRxvt returns null on anything it does not recognise" {
+    const rejected = [_][]const u8{
+        "", // nothing at all
+        "\x1b[32;33;33", // no final byte
+        "\x1b[32;33;", // no row
+        "\x1b[32;33", // a field short
+        "\x1b[32", // two fields short
+        "\x1b[", // no fields at all
+        "\x1b[;33;33M", // no button code
+        "\x1b[32;33;33m", // the SGR release final, which this form has not
+        "\x1b[32;33;33X", // not a final byte this report ends with
+        "\x1b[32;33;33MM", // trailing rubbish
+        "\x1b[32;33;33;1M", // a field too many
+        "\x1b[31;33;33M", // a button code below the bias
+        "\x1b[32;31;33M", // a column below the bias
+        "\x1b[32;33;31M", // a row below the bias
+        "\x1b[288;33;33M", // a button code too large for the byte it came from
+        "\x1b[224;33;33M", // wheel and extra-button bits at once
+        "\x1b[32;4294967296;33M", // a column too large for its field
+        "\x1b[4294967296;33;33M", // a code too large for its field
+        "\x1b]32;33;33M", // OSC, not CSI
+    };
+    for (rejected) |bytes| {
+        try std.testing.expect(parseMouseRxvt(bytes) == null);
+    }
+}
+
+test "each of the three mouse parsers refuses the other two forms" {
+    const sgr = "\x1b[<0;1;1M";
+    const x10 = "\x1b[M\x20\x21\x21";
+    const rxvt = "\x1b[32;33;33M";
+
+    try std.testing.expect(parseMouse(sgr) != null);
+    try std.testing.expect(parseMouseX10(sgr) == null);
+    try std.testing.expect(parseMouseRxvt(sgr) == null);
+
+    try std.testing.expect(parseMouse(x10) == null);
+    try std.testing.expect(parseMouseX10(x10) != null);
+    try std.testing.expect(parseMouseRxvt(x10) == null);
+
+    try std.testing.expect(parseMouse(rxvt) == null);
+    try std.testing.expect(parseMouseX10(rxvt) == null);
+    try std.testing.expect(parseMouseRxvt(rxvt) != null);
+}
+
+test "an X10 report and the rxvt report of the same event agree" {
+    // Byte 0x21 is 33, so the two spellings carry the same three fields.
+    const biased = parseMouseX10("\x1b[M\x24\x21\x22").?;
+    const decimal = parseMouseRxvt("\x1b[36;33;34M").?;
+    try std.testing.expectEqual(biased, decimal);
+}
+
+test "fuzz parseMouseRxvt" {
+    // The property: no input panics or overflows, every coordinate is inside
+    // the range the bias leaves, and every report that parses re-encodes to
+    // the same three decimal fields and parses back to an identical event.
+    // The encoder is inline because this package writes no rxvt reports -- it
+    // only reads them.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const ev = parseMouseRxvt(bytes) orelse return;
+            try std.testing.expect(!ev.pixels);
+            try std.testing.expect(ev.x <= std.math.maxInt(u32) - x10_bias);
+            try std.testing.expect(ev.y <= std.math.maxInt(u32) - x10_bias);
+
+            var code: u8 = @intFromEnum(ev.button);
+            if (ev.shift) code |= 4;
+            if (ev.alt) code |= 8;
+            if (ev.ctrl) code |= 16;
+            if (ev.motion) code |= 32;
+
+            var output: [64]u8 = undefined;
+            var w: Writer = .fixed(&output);
+            try w.print("\x1b[{d};{d};{d}M", .{
+                @as(u32, code) + x10_bias,
+                ev.x + x10_bias,
+                ev.y + x10_bias,
+            });
+            try std.testing.expectEqual(ev, parseMouseRxvt(w.buffered()).?);
+
+            // And the two forms it has to be told apart from.
+            try std.testing.expect(parseMouse(bytes) == null);
+            try std.testing.expect(parseMouseX10(bytes) == null);
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b[32;33;34M"),
+        corpus.seed("\x1b[35;33;33M"),
+        corpus.seed("\x1b[96;33;33M"),
+        corpus.seed("\x1b[160;1032;1032M"),
+        corpus.seed("\x1b[32;32;32M"),
+        corpus.seed("\x1b[31;33;33M"),
+        corpus.seed("\x1b[288;33;33M"),
+        corpus.seed("\x1b[224;33;33M"),
+        corpus.seed("\x1b[32;33;33m"),
+        corpus.seed("\x1b[32;33;33"),
+        corpus.seed("\x1b[<0;1;1M"),
+        corpus.seed("\x1b[M\x20\x21\x21"),
     } });
 }

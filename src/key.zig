@@ -1492,7 +1492,8 @@ test "a paste is a start, the text as ordinary keys, and an end" {
 
 test "a sequence that is not a key comes back whole" {
     const cases = [_][]const u8{
-        "\x1b[<0;40;12M", // a mouse report
+        "\x1b[<0;40;12M", // an SGR mouse report
+        "\x1b[32;72;44M", // an rxvt mouse report
         "\x1b[?2026;1$y", // a mode report
         "\x1b[12;40R", // a cursor position report
         "\x1b[?1u", // a kitty keyboard flags reply
@@ -1508,6 +1509,19 @@ test "a sequence that is not a key comes back whole" {
         "\x1b(B", // a character set designation
     };
     for (cases) |bytes| try expectUnhandled(bytes);
+}
+
+test "an rxvt mouse report is framed whole, and the key behind it survives" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    // Every byte of it is a parameter or a final, so the framing needs
+    // nothing the sequence does not already say -- unlike the X10 form, whose
+    // three fields are counted rather than read.
+    var events = parser.feed("\x1b[32;72;44Ma");
+    try std.testing.expectEqualStrings("\x1b[32;72;44M", events.next().?.unhandled);
+    try std.testing.expectEqual(Key{ .char = 'a' }, events.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
 }
 
 test "an XTGETTCAP reply is framed whole, and the key behind it survives" {

@@ -69,6 +69,11 @@ Everything a program needs below a TUI framework, on both sides of the wire.
   `percent`, `failed`, `warning`, `indeterminate` and `none`, with a value
   above 100 written as 100 because the protocol defines none. Only the
   program knows how far along it is, and there is no other way for it to say.
+- **The rxvt mouse report** (mode 1015), read by `parseMouseRxvt` and framed
+  by `KeyParser`. It is the X10 report with its three fields spelled in
+  decimal, so it carries a column past the 223 the biased byte caps at; a
+  terminal left in mode 1015 by something earlier sends it, and the three
+  mouse parsers each return null for the other two forms.
 - **Modes.** `unicodeCore` (2027), the mode that decides whether the terminal
   measures text by grapheme cluster or by codepoint.
 - **`requestCursorPosition`**, which was missing beside `parseCursorPosition`.
