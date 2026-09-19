@@ -265,9 +265,11 @@ No dependencies: nothing to link, and no C toolchain involved.
 and `Mouse` / `mouse` / `mouseOff`.
 
 **Keyboard protocol, cursor and pointer.** `KittyFlags`, `kittyKeyboardPush`,
-`kittyKeyboardPop`, `kittyKeyboardQuery`, `parseKittyKeyboardReply`,
-`CursorShape`, `cursorShape`, `PointerShape` / `pointerShape` /
-`pointerShapeReset` (OSC 22).
+`kittyKeyboardPop`, `kittyKeyboardSet` / `KittyFlagChange`,
+`kittyKeyboardQuery`, `parseKittyKeyboardReply`, `ModifyKeys` / `modifyKeys`
+/ `modifyKeysReset` / `queryModifyKeys` / `ModifyKeysReport` /
+`parseModifyKeysReply` (XTMODKEYS), `CursorShape`, `cursorShape`,
+`PointerShape` / `pointerShape` / `pointerShapeReset` (OSC 22).
 
 **Asking the terminal what it is.** `queryMode` / `ModeState` / `ModeReport` /
 `parseModeReply`, `requestCursorPosition` / `CursorPosition` /

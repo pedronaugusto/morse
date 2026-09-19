@@ -167,6 +167,23 @@ pub const kittyKeyboardPush = mode.kittyKeyboardPush;
 pub const kittyKeyboardPop = mode.kittyKeyboardPop;
 /// Asks which keyboard flags are in effect.
 pub const kittyKeyboardQuery = mode.kittyKeyboardQuery;
+/// What `kittyKeyboardSet` does with the flags it is given.
+pub const KittyFlagChange = mode.KittyFlagChange;
+/// Changes the keyboard flags without touching the terminal's stack.
+pub const kittyKeyboardSet = mode.kittyKeyboardSet;
+/// One of the resources that decide whether a modified key is spelled as a
+/// sequence, XTMODKEYS.
+pub const ModifyKeys = mode.ModifyKeys;
+/// Sets one of those resources, or puts it back as the terminal had it.
+pub const modifyKeys = mode.modifyKeys;
+/// Puts every one of those resources back as the terminal had it.
+pub const modifyKeysReset = mode.modifyKeysReset;
+/// Asks what one of those resources is set to.
+pub const queryModifyKeys = mode.queryModifyKeys;
+/// What a terminal says about one of those resources.
+pub const ModifyKeysReport = device.ModifyKeysReport;
+/// Reads a reply to `queryModifyKeys`, or null.
+pub const parseModifyKeysReply = device.parseModifyKeysReply;
 /// A cursor shape, in the numbering DECSCUSR uses.
 pub const CursorShape = mode.CursorShape;
 /// Sets the cursor shape, DECSCUSR.
@@ -580,6 +597,11 @@ test "the root module re-exports what the README promises" {
     try kittyKeyboardPush(w, .{ .disambiguate_escape_codes = true });
     try kittyKeyboardPop(w);
     try kittyKeyboardQuery(w);
+    try kittyKeyboardSet(w, .{ .report_all_keys_as_escape_codes = true }, .add);
+    try modifyKeys(w, .other_keys, 2);
+    try modifyKeys(w, .other_keys, null);
+    try modifyKeysReset(w);
+    try queryModifyKeys(w, .other_keys);
     try cursorShape(w, .bar);
     try pointerShape(w, .pointer);
     try pointerShapeReset(w);
@@ -688,6 +710,10 @@ test "the root module re-exports what the README promises" {
     );
     try std.testing.expectEqualStrings("xterm(390)", parseVersion("\x1bP>|xterm(390)\x1b\\").?);
     try std.testing.expect(parseKittyKeyboardReply("\x1b[?1u").?.disambiguate_escape_codes);
+    const modifiers_report: ModifyKeysReport = parseModifyKeysReply("\x1b[>4;2m").?;
+    try std.testing.expectEqual(ModifyKeys.other_keys, modifiers_report.resource);
+    try std.testing.expectEqual(@as(u8, 2), modifiers_report.value);
+    try std.testing.expectEqual(KittyFlagChange.add, KittyFlagChange.add);
     try std.testing.expectEqual(ColorTarget.background, parseColorReply(
         "\x1b]11;rgb:0000/0000/0000\x1b\\",
     ).?.target);

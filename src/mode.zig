@@ -238,6 +238,15 @@ pub const KittyFlags = packed struct(u5) {
 /// The stack is what makes this safe to use in a program that shells out:
 /// push on entry, `kittyKeyboardPop` on exit, and whatever the outer program
 /// had set comes back. Terminals without the protocol ignore the sequence.
+///
+/// The stack belongs to the screen, not to the terminal: the main screen and
+/// the alternate screen have one each, so a program that pushes before
+/// `altScreen` and pops after it has pushed and popped on different stacks.
+/// Push inside the screen the flags are for. It is also finite, and a push
+/// onto a full stack throws the oldest entry away rather than failing, so a
+/// program that pushes in a loop silently loses the entry it meant to come
+/// back to — `kittyKeyboardSet` is the way to change flags without growing
+/// the stack at all.
 pub fn kittyKeyboardPush(w: *Writer, flags: KittyFlags) Writer.Error!void {
     try w.writeAll(seq.csi ++ ">");
     try seq.writeInt(w, flags.bits());
@@ -246,8 +255,41 @@ pub fn kittyKeyboardPush(w: *Writer, flags: KittyFlags) Writer.Error!void {
 
 /// Pops one entry off the terminal's keyboard mode stack: `CSI < u`. Undoes
 /// exactly one `kittyKeyboardPush`.
+///
+/// Popping an empty stack is not an error and not a no-op: it clears every
+/// flag. A program that pops more than it pushed leaves the terminal with no
+/// flags rather than with what it found.
 pub fn kittyKeyboardPop(w: *Writer) Writer.Error!void {
     try w.writeAll(seq.csi ++ "<u");
+}
+
+/// What `kittyKeyboardSet` does with the flags it is given.
+pub const KittyFlagChange = enum(u8) {
+    /// The flags in effect become exactly these.
+    replace = 1,
+    /// The flags named here go on; the rest stay as they are.
+    add = 2,
+    /// The flags named here go off; the rest stay as they are.
+    remove = 3,
+};
+
+/// Changes the keyboard flags in effect without touching the stack:
+/// `CSI = flags ; how u`.
+///
+/// The only way to change flags that does not grow a stack, which is why a
+/// program that adjusts them more than once wants this and not
+/// `kittyKeyboardPush`: the stack is per screen, finite, and unwound only by
+/// `kittyKeyboardPop`. Push once on entry and pop once on exit, and use this
+/// for everything in between.
+///
+/// Terminals without the protocol ignore the sequence, and nothing is
+/// acknowledged; `kittyKeyboardQuery` asks what is in effect afterwards.
+pub fn kittyKeyboardSet(w: *Writer, flags: KittyFlags, how: KittyFlagChange) Writer.Error!void {
+    try w.writeAll(seq.csi ++ "=");
+    try seq.writeInt(w, flags.bits());
+    try w.writeByte(';');
+    try seq.writeInt(w, @intFromEnum(how));
+    try w.writeByte('u');
 }
 
 /// Asks which keyboard flags are currently in effect: `CSI ? u`.
@@ -257,6 +299,77 @@ pub fn kittyKeyboardPop(w: *Writer) Writer.Error!void {
 /// pair it with a query that every terminal answers and see which comes back.
 pub fn kittyKeyboardQuery(w: *Writer) Writer.Error!void {
     try w.writeAll(seq.csi ++ "?u");
+}
+
+/// One of the resources a terminal keeps for deciding whether to spell a
+/// modified key as an escape sequence, numbered as XTMODKEYS numbers them.
+///
+/// `other_keys` is the one that matters: it is what makes a terminal report
+/// control and `i` as something other than a tab, by sending
+/// `CSI 27 ; modifiers ; codepoint ~` — which `KeyParser` decodes. The
+/// resource is 0 by default, so a program that wants those reports has to
+/// ask for them.
+pub const ModifyKeys = enum(u8) {
+    /// The keyboard as a whole.
+    keyboard = 0,
+    /// The arrow keys and Home and End.
+    cursor_keys = 1,
+    /// The function keys.
+    function_keys = 2,
+    /// The keypad.
+    keypad_keys = 3,
+    /// Every other key, including the letters and digits: the resource that
+    /// turns on `CSI 27 ; modifiers ; codepoint ~`.
+    other_keys = 4,
+    /// The modifier keys themselves.
+    modifier_keys = 6,
+    /// The keys with a meaning of their own -- Backspace, Delete, Escape.
+    special_keys = 7,
+};
+
+/// Sets one of the key-modifying resources: `CSI > resource ; value m`.
+///
+/// A null `value` writes `CSI > resource m`, which puts that resource back
+/// to whatever the terminal started with rather than to zero: there is no
+/// other way to say "as I found it", because nothing reports what that was
+/// until `queryModifyKeys` is asked.
+///
+/// For `other_keys` the values are 0, off; 1, report a modified key as a
+/// sequence unless it already has a control code; and 2, report every
+/// modified key that way. Level 2 is the one a program wanting every chord
+/// asks for, and it makes the terminal report control and `c` as a sequence
+/// too -- which is a keypress a shell expects to arrive as a byte, so a
+/// program that sets it must put it back.
+///
+/// A terminal that does not implement XTMODKEYS ignores this and answers
+/// nothing, which is indistinguishable from one that took it; pair
+/// `queryModifyKeys` with a question every terminal answers.
+pub fn modifyKeys(w: *Writer, resource: ModifyKeys, value: ?u8) Writer.Error!void {
+    try w.writeAll(seq.csi ++ ">");
+    try seq.writeInt(w, @intFromEnum(resource));
+    if (value) |level| {
+        try w.writeByte(';');
+        try seq.writeInt(w, level);
+    }
+    try w.writeByte('m');
+}
+
+/// Puts every key-modifying resource back to what the terminal started with:
+/// `CSI > m`, with no parameters at all.
+pub fn modifyKeysReset(w: *Writer) Writer.Error!void {
+    try w.writeAll(seq.csi ++ ">m");
+}
+
+/// Asks what one of the key-modifying resources is set to: `CSI ? resource m`.
+///
+/// The answer arrives on the terminal's input as `CSI > resource ; value m`,
+/// which `parseModifyKeysReply` reads -- the same shape `modifyKeys` writes,
+/// so a program can keep the reply and send it back to restore the state it
+/// found.
+pub fn queryModifyKeys(w: *Writer, resource: ModifyKeys) Writer.Error!void {
+    try w.writeAll(seq.csi ++ "?");
+    try seq.writeInt(w, @intFromEnum(resource));
+    try w.writeByte('m');
 }
 
 /// A cursor shape, in the numbering DECSCUSR uses.
@@ -501,6 +614,85 @@ test "kittyKeyboardPush with no flags still writes a zero" {
 
     try kittyKeyboardPush(&out.writer, .{});
     try std.testing.expectEqualStrings("\x1b[>0u", out.written());
+}
+
+test "kittyKeyboardSet writes the flags and the way of applying them" {
+    const cases = [_]struct { how: KittyFlagChange, bytes: []const u8 }{
+        .{ .how = .replace, .bytes = "\x1b[=5;1u" },
+        .{ .how = .add, .bytes = "\x1b[=5;2u" },
+        .{ .how = .remove, .bytes = "\x1b[=5;3u" },
+    };
+    for (cases) |case| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+
+        try kittyKeyboardSet(&out.writer, .{
+            .disambiguate_escape_codes = true,
+            .report_alternate_keys = true,
+        }, case.how);
+        try std.testing.expectEqualStrings(case.bytes, out.written());
+    }
+}
+
+test "kittyKeyboardSet with no flags still writes a zero" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try kittyKeyboardSet(&out.writer, .{}, .replace);
+    try std.testing.expectEqualStrings("\x1b[=0;1u", out.written());
+}
+
+test "kittyKeyboardSet writes every flag combination the five bits can spell" {
+    for (0..32) |value| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+
+        const flags: KittyFlags = .fromBits(@intCast(value));
+        try kittyKeyboardSet(&out.writer, flags, .add);
+
+        var expected: [16]u8 = undefined;
+        const bytes = try std.fmt.bufPrint(&expected, "\x1b[={d};2u", .{value});
+        try std.testing.expectEqualStrings(bytes, out.written());
+    }
+}
+
+test "modifyKeys writes the resource and the value it is given" {
+    const cases = [_]struct { resource: ModifyKeys, value: ?u8, bytes: []const u8 }{
+        .{ .resource = .keyboard, .value = 0, .bytes = "\x1b[>0;0m" },
+        .{ .resource = .cursor_keys, .value = 1, .bytes = "\x1b[>1;1m" },
+        .{ .resource = .function_keys, .value = 2, .bytes = "\x1b[>2;2m" },
+        .{ .resource = .keypad_keys, .value = 1, .bytes = "\x1b[>3;1m" },
+        .{ .resource = .other_keys, .value = 2, .bytes = "\x1b[>4;2m" },
+        .{ .resource = .modifier_keys, .value = 1, .bytes = "\x1b[>6;1m" },
+        .{ .resource = .special_keys, .value = 1, .bytes = "\x1b[>7;1m" },
+        // No value at all is the resource back to what the terminal started
+        // with, which is a different thing from zero.
+        .{ .resource = .other_keys, .value = null, .bytes = "\x1b[>4m" },
+    };
+    for (cases) |case| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+
+        try modifyKeys(&out.writer, case.resource, case.value);
+        try std.testing.expectEqualStrings(case.bytes, out.written());
+    }
+}
+
+test "modifyKeysReset names no resource at all" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try modifyKeysReset(&out.writer);
+    try std.testing.expectEqualStrings("\x1b[>m", out.written());
+}
+
+test "queryModifyKeys asks with the private marker" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try queryModifyKeys(&out.writer, .other_keys);
+    try queryModifyKeys(&out.writer, .keyboard);
+    try std.testing.expectEqualStrings("\x1b[?4m\x1b[?0m", out.written());
 }
 
 test "every cursor shape writes its DECSCUSR number" {

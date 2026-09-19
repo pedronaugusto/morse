@@ -23,6 +23,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a byte comparison to read. 0.4.0's entry claimed this; it landed one
   commit after that release, and the entry there now says so.
 
+- **`kittyKeyboardSet`**, `CSI = flags ; mode u`: the flags in effect
+  changed without the stack. It is the only way to change them that does not
+  push, and the stack is per screen, finite — a push onto a full one throws
+  the oldest entry away — and unwound only by `kittyKeyboardPop`, which
+  clears every flag when it is popped past empty. Push once on entry, pop
+  once on exit, and use this in between. `KittyFlagChange` is the three
+  modes: `.replace`, `.add`, `.remove`. The doc comments on push and pop now
+  say the three things about the stack that decide how to use it.
+
+- **The XTMODKEYS writers and their reply.** `modifyKeys` sets one of the
+  seven key-modifying resources, `modifyKeysReset` puts them all back as the
+  terminal had them, `queryModifyKeys` asks what one is set to, and
+  `parseModifyKeysReply` reads the answer. `KeyParser` has decoded
+  `modifyOtherKeys` — `CSI 27 ; modifiers ; codepoint ~` — since 0.2.0 and
+  nothing here could ask a terminal for it; the resource is zero by default,
+  so asking is the whole of how those reports are turned on. A null value
+  writes the resource back to what the terminal started with, which is not
+  the same as writing zero.
+
 - **A run of printable text is one event.** `Event.text` hands the run back
   as a slice of the parser's buffer, the way `Event.unhandled` hands back a
   sequence, so a paste costs one event and no copying rather than a

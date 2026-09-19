@@ -31,6 +31,10 @@ const Writer = std.Io.Writer;
 /// Aliased so `parseKittyKeyboardReply` reads as one line.
 const KittyFlags = mode.KittyFlags;
 
+/// The key-modifying resources, for the same reason: the writers are in
+/// `mode.zig` and this is where their answer is read.
+const ModifyKeys = mode.ModifyKeys;
+
 /// The eight-bit colour `Rgb16.to8` produces. The same type an SGR colour is
 /// written from, because a background the terminal reported and a background
 /// the program draws are the same kind of thing.
@@ -248,6 +252,59 @@ pub fn parseKittyKeyboardReply(bytes: []const u8) ?KittyFlags {
     if (flags.value > 31) return null;
 
     return KittyFlags.fromBits(@intCast(flags.value));
+}
+
+//=========================================================================
+// The key modifier resources, XTQMODKEYS.
+//=========================================================================
+
+/// What a terminal says about one of its key-modifying resources.
+pub const ModifyKeysReport = struct {
+    /// Which resource the terminal answered about — compare it against the
+    /// one asked, because replies can arrive out of order.
+    resource: ModifyKeys,
+    /// What that resource is set to. Zero is off for every one of them.
+    value: u8,
+};
+
+/// Reads the reply to `mode.queryModifyKeys`: `CSI > resource ; value m`.
+///
+/// The reply is shaped as the control that sets it, so a program can hold on
+/// to the bytes and send them back to restore the state it found; this reads
+/// them for a program that wants the number. An omitted value is its
+/// default, zero.
+///
+/// Returns null for anything else, a resource number the standard does not
+/// name included. `bytes` must be exactly the sequence, with nothing before
+/// or after it.
+pub fn parseModifyKeysReply(bytes: []const u8) ?ModifyKeysReport {
+    const prefix = seq.csi ++ ">";
+    if (!std.mem.startsWith(u8, bytes, prefix)) return null;
+    var rest = bytes[prefix.len..];
+
+    const which = seq.scanParam(u8, rest, 0) orelse return null;
+    rest = rest[which.len..];
+    const resource: ModifyKeys = switch (which.value) {
+        0 => .keyboard,
+        1 => .cursor_keys,
+        2 => .function_keys,
+        3 => .keypad_keys,
+        4 => .other_keys,
+        6 => .modifier_keys,
+        7 => .special_keys,
+        else => return null,
+    };
+
+    var value: u8 = 0;
+    if (rest.len != 0 and rest[0] == ';') {
+        rest = rest[1..];
+        const scan = seq.scanParam(u8, rest, 0) orelse return null;
+        rest = rest[scan.len..];
+        value = scan.value;
+    }
+    if (!std.mem.eql(u8, rest, "m")) return null;
+
+    return .{ .resource = resource, .value = value };
 }
 
 //=========================================================================
@@ -1038,6 +1095,87 @@ test "parseKittyKeyboardReply reads an omitted parameter as no flags" {
 
 test "parseKittyKeyboardReply survives a number long enough to overflow" {
     try std.testing.expect(parseKittyKeyboardReply("\x1b[?99999999999999999999u") == null);
+}
+
+test "parseModifyKeysReply reads what a terminal says a resource is set to" {
+    const cases = [_]struct { bytes: []const u8, resource: ModifyKeys, value: u8 }{
+        .{ .bytes = "\x1b[>0;0m", .resource = .keyboard, .value = 0 },
+        .{ .bytes = "\x1b[>1;1m", .resource = .cursor_keys, .value = 1 },
+        .{ .bytes = "\x1b[>2;2m", .resource = .function_keys, .value = 2 },
+        .{ .bytes = "\x1b[>3;1m", .resource = .keypad_keys, .value = 1 },
+        .{ .bytes = "\x1b[>4;2m", .resource = .other_keys, .value = 2 },
+        .{ .bytes = "\x1b[>6;1m", .resource = .modifier_keys, .value = 1 },
+        .{ .bytes = "\x1b[>7;1m", .resource = .special_keys, .value = 1 },
+        // A value left out is its default, and so is a value not sent at all.
+        .{ .bytes = "\x1b[>4;m", .resource = .other_keys, .value = 0 },
+        .{ .bytes = "\x1b[>4m", .resource = .other_keys, .value = 0 },
+    };
+    for (cases) |case| {
+        const report = parseModifyKeysReply(case.bytes).?;
+        try std.testing.expectEqual(case.resource, report.resource);
+        try std.testing.expectEqual(case.value, report.value);
+    }
+}
+
+test "a resource set and a resource parsed agree on the same bytes" {
+    for ([_]ModifyKeys{ .keyboard, .cursor_keys, .function_keys, .keypad_keys, .other_keys, .modifier_keys, .special_keys }) |resource| {
+        for (0..4) |value| {
+            var out: Writer.Allocating = .init(std.testing.allocator);
+            defer out.deinit();
+
+            try mode.modifyKeys(&out.writer, resource, @intCast(value));
+            const report = parseModifyKeysReply(out.written()).?;
+            try std.testing.expectEqual(resource, report.resource);
+            try std.testing.expectEqual(@as(u8, @intCast(value)), report.value);
+        }
+    }
+}
+
+test "parseModifyKeysReply returns null on anything it does not recognise" {
+    const rejected = [_][]const u8{
+        "", // nothing at all
+        "\x1b[>4;2", // no final byte
+        "\x1b[>5;2m", // a resource the standard reserves
+        "\x1b[>8;2m", // a resource the standard does not name
+        "\x1b[?4;2m", // the query, not the reply
+        "\x1b[4;2m", // an SGR sequence, which this is not
+        "\x1b]>4;2m", // OSC, not CSI
+        "\x1b[>4;2mm", // trailing rubbish
+        " \x1b[>4;2m", // leading rubbish
+        "\x1b[>4;2;1m", // a field too many
+        "\x1b[>4;256m", // a value too large for its field
+        "\x1b[>256;2m", // a resource too large for its field
+    };
+    for (rejected) |bytes| {
+        try std.testing.expect(parseModifyKeysReply(bytes) == null);
+    }
+}
+
+test "fuzz parseModifyKeysReply" {
+    // The property: no input panics or overflows, and whatever is accepted
+    // writes back the bytes it was read from.
+    try std.testing.fuzz({}, struct {
+        fn one_(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [32]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const report = parseModifyKeysReply(bytes) orelse return;
+            var buffer: [32]u8 = undefined;
+            var w: Writer = .fixed(&buffer);
+            try mode.modifyKeys(&w, report.resource, report.value);
+
+            const again = parseModifyKeysReply(w.buffered()).?;
+            try std.testing.expectEqual(report.resource, again.resource);
+            try std.testing.expectEqual(report.value, again.value);
+        }
+    }.one_, .{ .corpus = &.{
+        corpus.seed("\x1b[>4;2m"),
+        corpus.seed("\x1b[>0;0m"),
+        corpus.seed("\x1b[>4m"),
+        corpus.seed("\x1b[>4;m"),
+        corpus.seed("\x1b[>5;2m"),
+        corpus.seed("\x1b[?4m"),
+    } });
 }
 
 test "Rgb16 narrows to eight bits a channel by taking the top byte" {
