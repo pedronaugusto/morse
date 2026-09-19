@@ -4,194 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Breaking
-
-- **`fromInputRecord` is gone; `ConsoleDecoder` replaces it.** Pairing the
-  halves of a character needs memory, and a function has none. A caller
-  keeps one decoder and calls `next` with each record:
-  `var records: morse.ConsoleDecoder = .{ .report_key_up = false };` then
-  `records.next(record)`. It returns the same three events on the same
-  terms, plus null while a character is still half-arrived.
-
-- **`Event` gained two variants**, `text` and `overflow`. A switch over it
-  that listed every case has to be told.
-
-- **A run of printable text no longer arrives as one `KeyEvent` per
-  character.** Two or more printable codepoints in a row are one
-  `Event.text` holding the run; one on its own is still `Event.key`.
-
-### Added
-
-- **A `comptime` block pins `Style`'s layout** — no padding, an alignment of
-  one, and `Color` four bytes aligned to one — so a field of a wider type
-  added anywhere but the front fails the build instead of opening a hole for
-  a byte comparison to read. 0.4.0's entry claimed this; it landed one
-  commit after that release, and the entry there now says so.
-
-- **The Windows console keyboard reaches what it could not.** A character
-  outside the basic plane arrives as two records carrying the halves of a
-  UTF-16 surrogate pair, and both halves used to come back as nothing; they
-  are now paired, in both shapes — `ConsoleState` is the one `?u16` it takes,
-  and `KeyParser` keeps one for mode 9001. A character composed by holding
-  Alt and typing digits on the keypad rides the Alt key **coming up**, which
-  the key-up filter dropped and mode 9001 skipped; the digits are now held
-  and the character is reported as a press, which is what it is. And AltGr
-  sets the right-Alt bit and a control bit together, which is
-  indistinguishable from control and alt except that it also produced a
-  character — so a record with right Alt, a control bit and a character of
-  its own is reported as the character, with neither modifier.
-
-- **A second framer, and a differential test against it.** The parser is
-  recursive descent; the framer beside it in the suite is the same grammar
-  as a state machine, written from the specifications rather than from the
-  code, and the two must frame any stream into the same sequences — the
-  same starts, the same lengths, the same order. A fixed-seed sweep of
-  20,000 generated streams runs on every build, and a fuzz target searches
-  past it; the generator builds streams out of real sequence shapes, whole
-  and truncated, and raw bytes, because two framers differ on the shapes
-  somebody designed rather than on noise. 200,000 streams and 2.7 million
-  framed sequences agree.
-
-- **`Probe`: the startup questions in one write and one round trip.** Every
-  question here already had a writer and every answer a parser; what was
-  missing was the order, and the order is the whole of what makes one
-  timeout safe instead of seventeen. `Probe.write` asks seventeen questions
-  in 129 bytes — the cursor position first, because a terminal that does not
-  consume a sequence it did not recognise bleeds the rest of it onto its own
-  output and a report that comes back first drags that out in front; the OSC
-  colour queries next, because a multiplexer forwards those and the answer
-  takes the long way round; DA2 late, because it identifies nothing alone;
-  DA1 last, because every terminal answers it. The DA1 reply is the
-  sentinel: arm one timeout, disarm it there, and every question that
-  answered nothing before it has answered no. `probeMatches(reply,
-  question)` routes the answers — a reply answers at most one of them, which
-  the suite checks over every question and every real reply. Each field
-  turns one question off; DA1 is written whatever they say.
-
-- **`kittyKeyboardSet`**, `CSI = flags ; mode u`: the flags in effect
-  changed without the stack. It is the only way to change them that does not
-  push, and the stack is per screen, finite — a push onto a full one throws
-  the oldest entry away — and unwound only by `kittyKeyboardPop`, which
-  clears every flag when it is popped past empty. Push once on entry, pop
-  once on exit, and use this in between. `KittyFlagChange` is the three
-  modes: `.replace`, `.add`, `.remove`. The doc comments on push and pop now
-  say the three things about the stack that decide how to use it.
-
-- **The XTMODKEYS writers and their reply.** `modifyKeys` sets one of the
-  seven key-modifying resources, `modifyKeysReset` puts them all back as the
-  terminal had them, `queryModifyKeys` asks what one is set to, and
-  `parseModifyKeysReply` reads the answer. `KeyParser` has decoded
-  `modifyOtherKeys` — `CSI 27 ; modifiers ; codepoint ~` — since 0.2.0 and
-  nothing here could ask a terminal for it; the resource is zero by default,
-  so asking is the whole of how those reports are turned on. A null value
-  writes the resource back to what the terminal started with, which is not
-  the same as writing zero.
-
-- **A run of printable text is one event.** `Event.text` hands the run back
-  as a slice of the parser's buffer, the way `Event.unhandled` hands back a
-  sequence, so a paste costs one event and no copying rather than a
-  forty-four-byte `KeyEvent` built per character. A single printable
-  codepoint is still a keypress and still arrives as `Event.key`, because
-  that is what it is. A megabyte of pasted text through a 16 KB buffer read
-  in one go measures 1,830 MB/s against 118.6 for a `KeyEvent` per
-  codepoint, and 0.4 before the top-up change below.
-
-- **A sequence longer than the buffer is reported rather than let through.**
-  `Event.overflow` carries how many bytes went, and the parser skips to the
-  end of that sequence before reading anything else — so what comes next is
-  the next sequence, not the middle of the one that did not fit. Before
-  this, a 412-byte OSC 52 reply against a 64-byte buffer became 347
-  keypresses: the parser cleared its buffer and started reading base64 as
-  input. `KeyParser.flush` reports an over-long sequence whose end never
-  arrived, and `KeyParser.min_buffer` now says plainly that it covers keys
-  and that the replies a program asks for are its own to size for.
-
-### Changed
-
-- **`diffStyle` writes the shorter of the difference and a reset.** The
-  difference is short when little changed and long when much did: coming
-  back from an everything-on style costs
-  `CSI 22;23;24;25;27;28;29;55;75;39;49;59m`, thirty-eight bytes, where
-  `CSI 0 m` costs four and leaves the terminal in exactly the same style. A
-  leading `0` costs two bytes and buys every off code at once, so the two
-  spellings are priced with `Writer.Discarding` — the same code that writes
-  the bytes, so there is no second encoder to keep in step — and the shorter
-  one goes out. Over a nine-style matrix, all eighty-one pairs, 1,703 bytes
-  become 1,312, a fifth off, with the reset shorter on 51 pairs and by up to
-  34 bytes; over a 200x60 frame of eight runs a row it is 10,978 against
-  8,515. Pricing costs a pass: a call that turns nothing off skips it, since
-  a reset would then have to restate everything the difference left alone,
-  and the rest measure 35 ns against 14 in ReleaseFast. `src/bench.zig`
-  budgets the matrix and the frame rather than the old worst case.
-
-- **`Color.eql` is the byte comparison.** Every constructor already zeroes
-  the channels its kind does not use, so a colour has one spelling and the
-  two relations cannot disagree — which is what the `extern` layout is for:
-  a renderer comparing rows of cells with `memcmp` and a renderer comparing
-  styles field by field must find the same cells changed. Before this, `eql`
-  ignored the unused channels and a test asserted that the two answers
-  differed; that test is replaced by one asserting they agree, over every
-  colour the constructors can make. A colour written out field by field with
-  a stray byte in a channel its kind does not use is now unequal to the
-  colour it means, and the doc says so.
-
-- **Every reply parser reads an omitted parameter as its default.** ECMA-48
-  says a parameter left out takes its default value, and terminals use that:
-  a real DA1 reply is `CSI ? 62 ; 52 ; c`, three parameters with the last
-  omitted, and refusing it refused the one reply that ends every startup
-  probe. `parseDeviceAttributes`, `parseSecondaryDeviceAttributes`,
-  `parseModeReply`, `parseKittyKeyboardReply`, `parseWindowSize`,
-  `parseColorSchemeReply` and `parseExtraCursorSupport` default to zero;
-  `parseCursorPosition` and `parseExtendedCursorPosition` default to one,
-  which is what a cursor report counts from. The separators stay
-  compulsory — an empty parameter is a parameter, and a missing `;` is a
-  reply of a different shape — and digits that do not fit in the field are
-  still a reject rather than a default. The suite carries the DA1, DA2 and
-  XTVERSION replies real terminals send, collected off the wire.
-
-- **`KeyParser` tops up its buffer when the buffer empties, not once per
-  event.** A top-up moves whatever is unread to the front of the buffer, so
-  one per event cost the whole buffer per keypress — and the bigger the
-  buffer a caller sized, the slower the parser ran, which is backwards and
-  is exactly where the README's advice to size for an OSC 52 reply leads. A
-  megabyte of text through a 16 KB buffer read in one go measured 0.4 MB/s
-  before and 118.6 MB/s after; the grid of buffer and read sizes reads flat
-  now, where it ran from 0.4 MB/s to 140. `src/bench.zig` measures that
-  whole grid rather than the one corner of it where the cost could not
-  show.
-
-### Fixed
-
-- **`zig build test --fuzz` compiles and runs.** The fuzz targets have
-  carried seed corpora and real invariants since 0.2.0 and had never run as
-  fuzzers: under `-ffuzz` the shipped test runner hands `@errorReturnTrace()`
-  to a function taking the other `StackTrace`, which is a type error at every
-  fuzz call site. The test module turns error tracing off, which costs
-  nothing a fuzz run wants — the input is the report — and the thirty-one
-  targets now search, one corpus each.
-
-- **Three doc comments said things the field does not do.** `unicodeCore`
-  said a terminal answering `not_recognized` to mode 2027 measures by
-  codepoint; at least one answers that deliberately and clusters by grapheme
-  regardless, so the answer is not a capability test and there is none.
-  `inBandResize` did not say that the report arrives on being enabled, nor
-  that `permanently_reset` is a no as much as `not_recognized` is.
-  `queryMode` now gives the only rule that survives contact with real
-  terminals: three of the five states mean the mode is there, the other two
-  and silence mean it is not, and anything finer is a coin toss.
-
-- **A sequence lying across the end of the buffer is no longer dropped.**
-  The drop that exists for a sequence longer than the buffer fired whenever
-  the buffer was merely full and the sequence at its head unfinished, which
-  the per-event top-up arranged constantly. Ordinary input lost about a
-  quarter of its events, and lost them silently.
-
 ## [0.4.0] - 2026-09-19
 
-Four protocols on the writing side, the numbers to show what they cost, and
-a layout a renderer can put in a cell.
+Four protocols on the writing side, a layout a renderer can put in a cell, one
+write that asks a terminal everything at once, and the numbers to show what
+all of it costs. On the input side a run of text is one event rather than one
+event per character, and a reply too long for the buffer is reported rather
+than let through as keys nobody typed. A new build step feeds every writer to
+a terminal emulator and checks what it did.
 
 ### Breaking
 
@@ -225,8 +45,8 @@ package yet, so they are fixed now rather than carried.
 
 - **`Style` is an `extern struct`**, 22 bytes, aligned to one, with no
   padding. A cell holding one is `extern`; a row of those compares in one
-  call. (The `comptime` block that pins those three numbers is not in this
-  release; it landed after it, and is in Unreleased above.)
+  call, and the `comptime` block under Added is what keeps those three
+  numbers true.
 
 - **`CursorColor` has the same shape**, for the same reason and with the same
   spelling: `.unset`, `.special`, `.rgb(255, 0, 0)`, `.indexed(9)`, read by
@@ -251,6 +71,20 @@ package yet, so they are fixed now rather than carried.
 
 - **`win32.keyFromFields` is no longer public.** Nothing outside its own file
   ever called it.
+
+- **`fromInputRecord` is gone; `ConsoleDecoder` replaces it.** Pairing the
+  halves of a character needs memory, and a function has none. A caller
+  keeps one decoder and calls `next` with each record:
+  `var records: morse.ConsoleDecoder = .{ .report_key_up = false };` then
+  `records.next(record)`. It returns the same three events on the same
+  terms, plus null while a character is still half-arrived.
+
+- **`Event` gained two variants**, `text` and `overflow`. A switch over it
+  that listed every case has to be told.
+
+- **A run of printable text no longer arrives as one `KeyEvent` per
+  character.** Two or more printable codepoints in a row are one
+  `Event.text` holding the run; one on its own is still `Event.key`.
 
 ### Added
 
@@ -336,6 +170,109 @@ package yet, so they are fixed now rather than carried.
   bytes of framing, 0.22% of the payload, and the number is checked against
   the formula rather than against a recorded figure.
 
+- **A `comptime` block pins `Style`'s layout** — no padding, an alignment of
+  one, and `Color` four bytes aligned to one — so a field of a wider type
+  added anywhere but the front fails the build instead of opening a hole for
+  a byte comparison to read.
+
+- **The Windows console keyboard reaches what it could not.** A character
+  outside the basic plane arrives as two records carrying the halves of a
+  UTF-16 surrogate pair, and both halves used to come back as nothing; they
+  are now paired, in both shapes — `ConsoleState` is the one `?u16` it takes,
+  and `KeyParser` keeps one for mode 9001. A character composed by holding
+  Alt and typing digits on the keypad rides the Alt key **coming up**, which
+  the key-up filter dropped and mode 9001 skipped; the digits are now held
+  and the character is reported as a press, which is what it is. And AltGr
+  sets the right-Alt bit and a control bit together, which is
+  indistinguishable from control and alt except that it also produced a
+  character — so a record with right Alt, a control bit and a character of
+  its own is reported as the character, with neither modifier.
+
+- **A second framer, and a differential test against it.** The parser is
+  recursive descent; the framer beside it in the suite is the same grammar
+  as a state machine, written from the specifications rather than from the
+  code, and the two must frame any stream into the same sequences — the
+  same starts, the same lengths, the same order. A fixed-seed sweep of
+  20,000 generated streams runs on every build, and a fuzz target searches
+  past it; the generator builds streams out of real sequence shapes, whole
+  and truncated, and raw bytes, because two framers differ on the shapes
+  somebody designed rather than on noise. 200,000 streams and 2.7 million
+  framed sequences agree.
+
+- **`Probe`: the startup questions in one write and one round trip.** Every
+  question here already had a writer and every answer a parser; what was
+  missing was the order, and the order is the whole of what makes one
+  timeout safe instead of seventeen. `Probe.write` asks seventeen questions
+  in 129 bytes — the cursor position first, because a terminal that does not
+  consume a sequence it did not recognise bleeds the rest of it onto its own
+  output and a report that comes back first drags that out in front; the OSC
+  colour queries next, because a multiplexer forwards those and the answer
+  takes the long way round; DA2 late, because it identifies nothing alone;
+  DA1 last, because every terminal answers it. The DA1 reply is the
+  sentinel: arm one timeout, disarm it there, and every question that
+  answered nothing before it has answered no. `probeMatches(reply,
+  question)` routes the answers — a reply answers at most one of them, which
+  the suite checks over every question and every real reply. Each field
+  turns one question off; DA1 is written whatever they say.
+
+- **`kittyKeyboardSet`**, `CSI = flags ; mode u`: the flags in effect
+  changed without the stack. It is the only way to change them that does not
+  push, and the stack is per screen, finite — a push onto a full one throws
+  the oldest entry away — and unwound only by `kittyKeyboardPop`, which
+  clears every flag when it is popped past empty. Push once on entry, pop
+  once on exit, and use this in between. `KittyFlagChange` is the three
+  modes: `.replace`, `.add`, `.remove`. The doc comments on push and pop now
+  say the three things about the stack that decide how to use it.
+
+- **The XTMODKEYS writers and their reply.** `modifyKeys` sets one of the
+  seven key-modifying resources, `modifyKeysReset` puts them all back as the
+  terminal had them, `queryModifyKeys` asks what one is set to, and
+  `parseModifyKeysReply` reads the answer. `KeyParser` has decoded
+  `modifyOtherKeys` — `CSI 27 ; modifiers ; codepoint ~` — since 0.2.0 and
+  nothing here could ask a terminal for it; the resource is zero by default,
+  so asking is the whole of how those reports are turned on. A null value
+  writes the resource back to what the terminal started with, which is not
+  the same as writing zero.
+
+- **A run of printable text is one event.** `Event.text` hands the run back
+  as a slice of the parser's buffer, the way `Event.unhandled` hands back a
+  sequence, so a paste costs one event and no copying rather than a
+  forty-four-byte `KeyEvent` built per character. A single printable
+  codepoint is still a keypress and still arrives as `Event.key`, because
+  that is what it is. A megabyte of pasted text through a 16 KB buffer read
+  in one go measures 1,830 MB/s against 118.6 for a `KeyEvent` per
+  codepoint, and 0.4 before the top-up change below.
+
+- **A sequence longer than the buffer is reported rather than let through.**
+  `Event.overflow` carries how many bytes went, and the parser skips to the
+  end of that sequence before reading anything else — so what comes next is
+  the next sequence, not the middle of the one that did not fit. Before
+  this, a 412-byte OSC 52 reply against a 64-byte buffer became 347
+  keypresses: the parser cleared its buffer and started reading base64 as
+  input. `KeyParser.flush` reports an over-long sequence whose end never
+  arrived, and `KeyParser.min_buffer` now says plainly that it covers keys
+  and that the replies a program asks for are its own to size for.
+
+- **`zig build conformance`: the writers, fed to a terminal.** Byte-exact
+  tests say morse writes what the specifications say; they cannot say a
+  terminal accepts them. The new step builds a terminal emulator from source,
+  feeds it what the writers produce, and asserts on the state the emulator
+  ends up in — the cursor where each movement said, every named mode set and
+  reset as DECRQM reports it, the current style after every attribute and
+  every colour form and after all 729 style diffs, the screen after each
+  erase, insert, delete and scroll, the title, the cell under a hyperlink,
+  the keyboard flags pushed, set and popped, the image and its placement in
+  the emulator's own storage. Then the other direction: DA1, DA2, DECRQM,
+  CPR, XTVERSION, the keyboard query, the colour and palette queries, the
+  size reports and XTGETTCAP all come back through the parsers here, and the
+  probe's seventeen questions go out in one call and are routed by
+  `probeMatches`. 1,031 assertions, and two named skips — this emulator has
+  no superscript or subscript on its style and no multiple cursors protocol.
+  The emulator is a lazy dependency pinned to a commit and asked for only
+  when morse is the root package, so a program that depends on morse fetches
+  nothing and links nothing new. CI runs the step as its own job on Linux and
+  macOS.
+
 ### Changed
 
 - **Every number is written by hand rather than through the formatter.**
@@ -364,6 +301,84 @@ package yet, so they are fixed now rather than carried.
 
 - Every module's doc comment now says what the file will never hold, beside
   what it does.
+
+- **`diffStyle` writes the shorter of the difference and a reset.** The
+  difference is short when little changed and long when much did: coming
+  back from an everything-on style costs
+  `CSI 22;23;24;25;27;28;29;55;75;39;49;59m`, thirty-eight bytes, where
+  `CSI 0 m` costs four and leaves the terminal in exactly the same style. A
+  leading `0` costs two bytes and buys every off code at once, so the two
+  spellings are priced with `Writer.Discarding` — the same code that writes
+  the bytes, so there is no second encoder to keep in step — and the shorter
+  one goes out. Over a nine-style matrix, all eighty-one pairs, 1,703 bytes
+  become 1,312, a fifth off, with the reset shorter on 51 pairs and by up to
+  34 bytes; over a 200x60 frame of eight runs a row it is 10,978 against
+  8,515. Pricing costs a pass: a call that turns nothing off skips it, since
+  a reset would then have to restate everything the difference left alone,
+  and the rest measure 35 ns against 14 in ReleaseFast. `src/bench.zig`
+  budgets the matrix and the frame rather than the old worst case.
+
+- **`Color.eql` is the byte comparison.** Every constructor already zeroes
+  the channels its kind does not use, so a colour has one spelling and the
+  two relations cannot disagree — which is what the `extern` layout is for:
+  a renderer comparing rows of cells with `memcmp` and a renderer comparing
+  styles field by field must find the same cells changed. Before this, `eql`
+  ignored the unused channels and a test asserted that the two answers
+  differed; that test is replaced by one asserting they agree, over every
+  colour the constructors can make. A colour written out field by field with
+  a stray byte in a channel its kind does not use is now unequal to the
+  colour it means, and the doc says so.
+
+- **Every reply parser reads an omitted parameter as its default.** ECMA-48
+  says a parameter left out takes its default value, and terminals use that:
+  a real DA1 reply is `CSI ? 62 ; 52 ; c`, three parameters with the last
+  omitted, and refusing it refused the one reply that ends every startup
+  probe. `parseDeviceAttributes`, `parseSecondaryDeviceAttributes`,
+  `parseModeReply`, `parseKittyKeyboardReply`, `parseWindowSize`,
+  `parseColorSchemeReply` and `parseExtraCursorSupport` default to zero;
+  `parseCursorPosition` and `parseExtendedCursorPosition` default to one,
+  which is what a cursor report counts from. The separators stay
+  compulsory — an empty parameter is a parameter, and a missing `;` is a
+  reply of a different shape — and digits that do not fit in the field are
+  still a reject rather than a default. The suite carries the DA1, DA2 and
+  XTVERSION replies real terminals send, collected off the wire.
+
+- **`KeyParser` tops up its buffer when the buffer empties, not once per
+  event.** A top-up moves whatever is unread to the front of the buffer, so
+  one per event cost the whole buffer per keypress — and the bigger the
+  buffer a caller sized, the slower the parser ran, which is backwards and
+  is exactly where the README's advice to size for an OSC 52 reply leads. A
+  megabyte of text through a 16 KB buffer read in one go measured 0.4 MB/s
+  before and 118.6 MB/s after; the grid of buffer and read sizes reads flat
+  now, where it ran from 0.4 MB/s to 140. `src/bench.zig` measures that
+  whole grid rather than the one corner of it where the cost could not
+  show.
+
+### Fixed
+
+- **`zig build test --fuzz` compiles and runs.** The fuzz targets have
+  carried seed corpora and real invariants since 0.2.0 and had never run as
+  fuzzers: under `-ffuzz` the shipped test runner hands `@errorReturnTrace()`
+  to a function taking the other `StackTrace`, which is a type error at every
+  fuzz call site. The test module turns error tracing off, which costs
+  nothing a fuzz run wants — the input is the report — and the thirty-one
+  targets now search, one corpus each.
+
+- **Three doc comments said things the field does not do.** `unicodeCore`
+  said a terminal answering `not_recognized` to mode 2027 measures by
+  codepoint; at least one answers that deliberately and clusters by grapheme
+  regardless, so the answer is not a capability test and there is none.
+  `inBandResize` did not say that the report arrives on being enabled, nor
+  that `permanently_reset` is a no as much as `not_recognized` is.
+  `queryMode` now gives the only rule that survives contact with real
+  terminals: three of the five states mean the mode is there, the other two
+  and silence mean it is not, and anything finer is a coin toss.
+
+- **A sequence lying across the end of the buffer is no longer dropped.**
+  The drop that exists for a sequence longer than the buffer fired whenever
+  the buffer was merely full and the sequence at its head unfinished, which
+  the per-event top-up arranged constantly. Ordinary input lost about a
+  quarter of its events, and lost them silently.
 
 ## [0.3.0] - 2026-09-14
 
@@ -569,7 +584,6 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
-[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.4.0
 [0.3.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.2.0
