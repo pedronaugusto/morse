@@ -305,6 +305,9 @@ with `ExtraCursorShape`, `CursorCell`, `CursorRect`, `CursorSpan`,
 `ExtraCursors` / `ExtraCursorAt` / `parseExtraCursors`, `ExtraCursorColors` /
 `parseExtraCursorColors`.
 
+**The startup probe.** `Probe` — the questions to ask, `Probe.write` to ask
+them all in one call, `Probe.Question`, `probeMatches` to route the answers.
+
 **Mouse reports.** `Button`, `MouseEvent`, `encodeMouse`, `parseMouse`,
 `parseMouseX10`, `parseMouseRxvt`, `mouse_x10_max`, `toCells`.
 
@@ -368,6 +371,17 @@ is really implemented; `queryDeviceAttributes`, `queryVersion`, `queryColor`,
 an answer if you pair the question with one always answered, usually
 `queryDeviceAttributes`. What to do with it is yours: no timeout, no cache, no
 fallback.
+
+**A startup probe is one write and one round trip.** `Probe.write` asks
+seventeen questions in 129 bytes, in the order that makes a single timeout
+safe: the cursor position first, so a terminal that bleeds an unrecognised
+sequence bleeds it in front of everything; the OSC colour queries next,
+because a multiplexer forwards those and they take the long way round; DA2
+late, because it identifies nothing alone; DA1 **last**, because every
+terminal answers it. The DA1 reply is the sentinel — arm one timeout, disarm
+it there, and read silence as a no. `probeMatches(reply, question)` says
+which question a reply answers, so the routing is a lookup rather than a
+table of sequence shapes in your program.
 
 **`Style` is an `extern struct`, and so is every record in this package.**
 A renderer keeps a style in every cell, and a cell that is `extern` is a row

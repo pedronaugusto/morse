@@ -43,6 +43,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   character — so a record with right Alt, a control bit and a character of
   its own is reported as the character, with neither modifier.
 
+- **`Probe`: the startup questions in one write and one round trip.** Every
+  question here already had a writer and every answer a parser; what was
+  missing was the order, and the order is the whole of what makes one
+  timeout safe instead of seventeen. `Probe.write` asks seventeen questions
+  in 129 bytes — the cursor position first, because a terminal that does not
+  consume a sequence it did not recognise bleeds the rest of it onto its own
+  output and a report that comes back first drags that out in front; the OSC
+  colour queries next, because a multiplexer forwards those and the answer
+  takes the long way round; DA2 late, because it identifies nothing alone;
+  DA1 last, because every terminal answers it. The DA1 reply is the
+  sentinel: arm one timeout, disarm it there, and every question that
+  answered nothing before it has answered no. `probeMatches(reply,
+  question)` routes the answers — a reply answers at most one of them, which
+  the suite checks over every question and every real reply. Each field
+  turns one question off; DA1 is written whatever they say.
+
 - **`kittyKeyboardSet`**, `CSI = flags ; mode u`: the flags in effect
   changed without the stack. It is the only way to change them that does not
   push, and the stack is per screen, finite — a push onto a full one throws

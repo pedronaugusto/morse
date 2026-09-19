@@ -31,6 +31,7 @@ const mouse_events = @import("mouse.zig");
 const multicursor = @import("multicursor.zig");
 const notifications = @import("notify.zig");
 const osc = @import("osc.zig");
+const probing = @import("probe.zig");
 const query = @import("query.zig");
 const status = @import("status.zig");
 const style = @import("style.zig");
@@ -225,6 +226,16 @@ pub const ColorScheme = query.ColorScheme;
 pub const queryColorScheme = query.queryColorScheme;
 /// Reads a colour scheme report, or null.
 pub const parseColorSchemeReply = query.parseColorSchemeReply;
+
+//=========================================================================
+// The startup probe.
+//=========================================================================
+
+/// The questions a program asks a terminal on startup, written in one call
+/// with DA1 last.
+pub const Probe = probing.Probe;
+/// Whether a reply answers a particular question.
+pub const probeMatches = probing.matches;
 
 //=========================================================================
 // Mouse reports.
@@ -554,6 +565,7 @@ test {
     _ = @import("multicursor.zig");
     _ = @import("notify.zig");
     _ = @import("osc.zig");
+    _ = @import("probe.zig");
     _ = @import("query.zig");
     _ = @import("seq.zig");
     _ = @import("status.zig");
@@ -668,6 +680,11 @@ test "the root module re-exports what the README promises" {
     try repeatChar(w, 3);
     try colorScheme.set(w, true);
     try queryColorScheme(w);
+
+    try (Probe{}).write(w);
+    try std.testing.expect(probeMatches("\x1b[?62;52;c", .device_attributes));
+    try std.testing.expect(!probeMatches("\x1b[?62;52;c", .cursor_position));
+    try std.testing.expect(Probe.Question.device_attributes == .device_attributes);
 
     try transmitImage(w, .{ .image = .{ .id = 1 }, .width = 1, .height = 1 }, "abc");
     try placeImage(w, .{ .image = .{ .id = 1 }, .placement = .{ .z = -1 } });
