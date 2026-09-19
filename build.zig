@@ -25,6 +25,14 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/morse.zig"),
             .target = target,
             .optimize = optimize,
+            // Off so that `zig build test --fuzz` compiles. Zig 0.16.0's
+            // test runner hands `@errorReturnTrace()` to a function that
+            // takes the other `StackTrace`, which is a type error at every
+            // fuzz call site and only under `-ffuzz`. Error return traces
+            // are worth little in a fuzz run -- the input is the report --
+            // and the ordinary `zig build test` prints the same failures
+            // with the same messages.
+            .error_tracing = false,
         }),
     });
 

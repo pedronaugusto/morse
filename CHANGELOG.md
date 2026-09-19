@@ -137,6 +137,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`zig build test --fuzz` compiles and runs.** The fuzz targets have
+  carried seed corpora and real invariants since 0.2.0 and had never run as
+  fuzzers: under `-ffuzz` the shipped test runner hands `@errorReturnTrace()`
+  to a function taking the other `StackTrace`, which is a type error at every
+  fuzz call site. The test module turns error tracing off, which costs
+  nothing a fuzz run wants — the input is the report — and the twenty-nine
+  targets now search, one corpus each.
+
 - **Three doc comments said things the field does not do.** `unicodeCore`
   said a terminal answering `not_recognized` to mode 2027 measures by
   codepoint; at least one answers that deliberately and clusters by grapheme

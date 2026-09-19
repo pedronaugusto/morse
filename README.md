@@ -466,7 +466,8 @@ the round trip is against the bytes rather than against the writer twice.
 `src/bench.zig` measures what a renderer pays for a style diff, a cursor move,
 a megabyte of pixels and a megabyte of input, and fails the build if any of
 them grows past its budget. `KeyParser` is fuzzed fed in two pieces, so the
-split lands anywhere a real read could have. `zig build test --fuzz` keeps searching;
+split lands anywhere a real read could have. `zig build test --fuzz`
+keeps searching from those seeds, a corpus per property;
 [`ci/linux.sh`](ci/linux.sh) runs the Linux half in Docker from a machine that
 is not Linux.
 
