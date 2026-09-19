@@ -142,6 +142,9 @@ pub fn main() !void {
             key.key,
             key.text(),
         }),
+        // A run of printable text -- pasted, or typed faster than a read.
+        // One event and a borrowed slice, not one `KeyEvent` per character.
+        .text => |text| std.debug.print("text:       {s}\n", .{text}),
         // Anything framed but not a key: a mouse report, a reply, an OSC.
         .unhandled => |bytes| if (morse.parseMouse(bytes)) |click| std.debug.print(
             "click:      {s} at {d},{d}\n",

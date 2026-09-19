@@ -384,6 +384,23 @@ pub const Event = union(enum) {
     /// to `Events.next`, `KeyParser.feed` or `KeyParser.flush`. Copy it if it
     /// has to outlive that.
     unhandled: []const u8,
+    /// A run of printable text: what was pasted, or what a fast typist or an
+    /// input method produced between one sequence and the next.
+    ///
+    /// Valid UTF-8, never empty, and never one codepoint — a single
+    /// printable codepoint is a keypress and arrives as `key`, because that
+    /// is what it is. Two or more in a row are text, and handing back the
+    /// slice is the difference between a megabyte of pasted text costing one
+    /// event and costing a million: a `KeyEvent` is forty-odd bytes built
+    /// per character, against a slice that copies nothing.
+    ///
+    /// A run is cut wherever the bytes run out, so the same paste may arrive
+    /// as several runs and a program that cares about the whole of it must
+    /// join them. It carries no modifiers: text that arrived with a modifier
+    /// held is a keypress, not text.
+    ///
+    /// Borrowed from the parser's buffer on the same terms as `unhandled`.
+    text: []const u8,
     /// A sequence longer than the caller's buffer arrived, and this many
     /// bytes of it were dropped.
     ///
@@ -747,7 +764,38 @@ fn ready(event: Event, len: usize) Decoded {
 fn decode(bytes: []const u8, report_key_up: bool) Decoded {
     std.debug.assert(bytes.len != 0);
     if (bytes[0] == seq.esc) return decodeEscape(bytes, report_key_up);
-    return decodePlain(bytes, .{}, 0);
+    return decodeRun(bytes);
+}
+
+/// Reads a run of printable text off the front of `bytes`, or one key when
+/// what is there is a single codepoint, a control code, or neither.
+///
+/// The run stops at the first byte that is not printable text -- a control
+/// code, `DEL`, an `ESC`, a byte that is not valid UTF-8 -- and at a
+/// codepoint the bytes do not hold the whole of, which is left for the read
+/// that completes it.
+fn decodeRun(bytes: []const u8) Decoded {
+    var len: usize = 0;
+    var codepoints: usize = 0;
+    while (len < bytes.len) {
+        const b = bytes[len];
+        if (b < 0x20 or b == 0x7f) break;
+        if (b < 0x80) {
+            len += 1;
+            codepoints += 1;
+            continue;
+        }
+        const n = std.unicode.utf8ByteSequenceLength(b) catch break;
+        if (len + n > bytes.len) break;
+        _ = std.unicode.utf8Decode(bytes[len..][0..n]) catch break;
+        len += n;
+        codepoints += 1;
+    }
+    // One codepoint is a keypress, and so is anything that is not text at
+    // all: `decodePlain` reads the control codes and reports the bytes a
+    // key produced, which a run does not do.
+    if (codepoints < 2) return decodePlain(bytes, .{}, 0);
+    return ready(.{ .text = bytes[0..len] }, len);
 }
 
 /// Reads a key that is not introduced by `ESC`: a C0 control, or UTF-8 text.
@@ -1411,6 +1459,10 @@ fn scanParams(bytes: []const u8) ?Params {
 
 /// Everything `bytes` decodes to in one feed, for a test that does not care
 /// about how the reads were split.
+///
+/// The parser dies with the call, so an event that borrows its buffer --
+/// `unhandled`, `text` -- is dangling by the time this returns. Tests for
+/// those use `expectUnhandled` and `expectRun` instead.
 fn collect(bytes: []const u8, out: []Event) []Event {
     var storage: [KeyParser.min_buffer]u8 = undefined;
     var parser: KeyParser = .init(&storage);
@@ -1460,13 +1512,75 @@ test "a printable byte is a character, and carries itself as text" {
     try std.testing.expectEqualStrings("a", ev.text());
 }
 
-test "a run of text is one event per codepoint" {
+/// Asserts that `bytes` decodes to one text run holding exactly `run`.
+///
+/// Checked while the parser still holds it, for the reason `expectUnhandled`
+/// is written the same way: a run borrows the parser's buffer, and only
+/// until the next call.
+fn expectRun(bytes: []const u8, run: []const u8) !void {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+    var events = parser.feed(bytes);
+    const first = events.next() orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings(run, first.text);
+}
+
+test "a run of text is one event, and one codepoint is a key" {
+    try expectRun("hi!", "hi!");
+
     var buffer: [8]Event = undefined;
-    const events = collect("hi!", &buffer);
-    try std.testing.expectEqual(@as(usize, 3), events.len);
-    try std.testing.expectEqual(Key{ .char = 'h' }, events[0].key.key);
-    try std.testing.expectEqual(Key{ .char = 'i' }, events[1].key.key);
-    try std.testing.expectEqual(Key{ .char = '!' }, events[2].key.key);
+    const alone = collect("h", &buffer);
+    try std.testing.expectEqual(@as(usize, 1), alone.len);
+    try std.testing.expectEqual(Key{ .char = 'h' }, alone[0].key.key);
+}
+
+test "a run stops at the first thing that is not text" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+
+    var controlled: KeyParser = .init(&storage);
+    var control_events = controlled.feed("hi\x01");
+    try std.testing.expectEqualStrings("hi", control_events.next().?.text);
+    const ctrl_a = control_events.next().?.key;
+    try std.testing.expectEqual(Key{ .char = 'a' }, ctrl_a.key);
+    try std.testing.expect(ctrl_a.mods.ctrl);
+
+    var introduced: KeyParser = .init(&storage);
+    var sequence_events = introduced.feed("hi\x1b[A");
+    try std.testing.expectEqualStrings("hi", sequence_events.next().?.text);
+    try std.testing.expectEqual(Key.up, sequence_events.next().?.key.key);
+
+    var deleted: KeyParser = .init(&storage);
+    var delete_events = deleted.feed("hi\x7f");
+    try std.testing.expectEqualStrings("hi", delete_events.next().?.text);
+    try std.testing.expectEqual(Key.backspace, delete_events.next().?.key.key);
+}
+
+test "a run is UTF-8, and never cuts a codepoint in half" {
+    try expectRun("a\u{e9}\u{4e2d}\u{1f642}", "a\u{e9}\u{4e2d}\u{1f642}");
+
+    // A codepoint split across two reads is held, and the run that follows
+    // is the whole of it.
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+    var first = parser.feed("ab\xf0\x9f");
+    try std.testing.expectEqualStrings("ab", first.next().?.text);
+    try std.testing.expectEqual(@as(?Event, null), first.next());
+
+    var second = parser.feed("\x99\x82cd");
+    try std.testing.expectEqualStrings("\u{1f642}cd", second.next().?.text);
+    try std.testing.expectEqual(@as(?Event, null), second.next());
+}
+
+test "a run borrows from the parser's buffer, not from the caller's bytes" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    var events = parser.feed("hello");
+    const run = events.next().?.text;
+    try std.testing.expect(@intFromPtr(run.ptr) >= @intFromPtr(&storage));
+    try std.testing.expect(
+        @intFromPtr(run.ptr) + run.len <= @intFromPtr(&storage) + storage.len,
+    );
 }
 
 test "text outside ASCII decodes as one codepoint and keeps its bytes" {
@@ -1750,14 +1864,15 @@ test "bracketed paste and focus arrive as their own events" {
     try std.testing.expectEqual(Event.focus_out, one("\x1b[O").?);
 }
 
-test "a paste is a start, the text as ordinary keys, and an end" {
-    var buffer: [16]Event = undefined;
-    const events = collect("\x1b[200~hi\x1b[201~", &buffer);
-    try std.testing.expectEqual(@as(usize, 4), events.len);
-    try std.testing.expectEqual(Event.paste_start, events[0]);
-    try std.testing.expectEqualStrings("h", events[1].key.text());
-    try std.testing.expectEqualStrings("i", events[2].key.text());
-    try std.testing.expectEqual(Event.paste_end, events[3]);
+test "a paste is a start, the text as one run, and an end" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+    var events = parser.feed("\x1b[200~hi there\x1b[201~");
+
+    try std.testing.expectEqual(Event.paste_start, events.next().?);
+    try std.testing.expectEqualStrings("hi there", events.next().?.text);
+    try std.testing.expectEqual(Event.paste_end, events.next().?);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
 }
 
 test "a sequence that is not a key comes back whole" {
@@ -1911,13 +2026,16 @@ test "a feed longer than the buffer drains through it" {
     var storage: [KeyParser.min_buffer]u8 = undefined;
     var parser: KeyParser = .init(&storage);
 
+    // Cut into runs wherever the buffer ends, and every byte accounted for.
     var input: [1000]u8 = @splat('x');
     var events = parser.feed(&input);
-    var n: usize = 0;
-    while (events.next()) |event| : (n += 1) {
-        try std.testing.expectEqual(Key{ .char = 'x' }, event.key.key);
+    var seen: usize = 0;
+    while (events.next()) |event| {
+        for (event.text) |b| try std.testing.expectEqual(@as(u8, 'x'), b);
+        seen += event.text.len;
     }
-    try std.testing.expectEqual(@as(usize, input.len), n);
+    try std.testing.expectEqual(@as(usize, input.len), seen);
+    try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
 }
 
 test "a lone escape is held, never guessed at" {
@@ -2171,6 +2289,17 @@ test "fuzz KeyParser" {
                                 @intFromPtr(whole.ptr) + whole.len <= @intFromPtr(&storage) + storage.len,
                             );
                         },
+                        .text => |run| {
+                            // The same, and valid UTF-8 of more than one
+                            // codepoint -- one is a key, not a run.
+                            try std.testing.expect(run.len >= 2);
+                            try std.testing.expect(run.len <= storage.len);
+                            try std.testing.expect(std.unicode.utf8ValidateSlice(run));
+                            try std.testing.expect(@intFromPtr(run.ptr) >= @intFromPtr(&storage));
+                            try std.testing.expect(
+                                @intFromPtr(run.ptr) + run.len <= @intFromPtr(&storage) + storage.len,
+                            );
+                        },
                         else => {},
                     }
                 }
@@ -2200,6 +2329,9 @@ test "fuzz KeyParser" {
         corpus.seed("\x1b[1;2;3;4;5;6;7;8;9A"),
         corpus.seed("\x1b[99999999999u"),
         corpus.seed("hello world"),
+        corpus.seed("\x1b[200~a much longer pasted run\x1b[201~"),
+        corpus.seed("text\x01text\x7ftext"),
+        corpus.seed("\u{4e2d}\u{6587}\u{1f642}ab"),
     } });
 }
 
@@ -2243,8 +2375,7 @@ test "an X10 mouse report does not swallow what follows it" {
     var events = parser.feed("\x1b[M\x20\x41\x41hi");
 
     try std.testing.expectEqualStrings("\x1b[M\x20\x41\x41", events.next().?.unhandled);
-    try std.testing.expectEqual(Key{ .char = 'h' }, events.next().?.key.key);
-    try std.testing.expectEqual(Key{ .char = 'i' }, events.next().?.key.key);
+    try std.testing.expectEqualStrings("hi", events.next().?.text);
     try std.testing.expectEqual(@as(?Event, null), events.next());
 }
 

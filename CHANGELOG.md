@@ -8,10 +8,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
-- **`Event` gained a variant**, `overflow`. A switch over it that listed
-  every case has to be told.
+- **`Event` gained two variants**, `text` and `overflow`. A switch over it
+  that listed every case has to be told.
+
+- **A run of printable text no longer arrives as one `KeyEvent` per
+  character.** Two or more printable codepoints in a row are one
+  `Event.text` holding the run; one on its own is still `Event.key`.
 
 ### Added
+
+- **A run of printable text is one event.** `Event.text` hands the run back
+  as a slice of the parser's buffer, the way `Event.unhandled` hands back a
+  sequence, so a paste costs one event and no copying rather than a
+  forty-four-byte `KeyEvent` built per character. A single printable
+  codepoint is still a keypress and still arrives as `Event.key`, because
+  that is what it is. A megabyte of pasted text through a 16 KB buffer read
+  in one go measures 1,830 MB/s against 118.6 for a `KeyEvent` per
+  codepoint, and 0.4 before the top-up change below.
 
 - **A sequence longer than the buffer is reported rather than let through.**
   `Event.overflow` carries how many bytes went, and the parser skips to the
@@ -42,8 +55,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The drop that exists for a sequence longer than the buffer fired whenever
   the buffer was merely full and the sequence at its head unfinished, which
   the per-event top-up arranged constantly. Ordinary input lost about a
-  quarter of its events: the megabyte of mixed input in `src/bench.zig`
-  decodes to 203,217 events where it decoded to 149,306.
+  quarter of its events, and lost them silently.
 
 ## [0.4.0] - 2026-09-19
 

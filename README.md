@@ -143,6 +143,9 @@ while (events.next()) |event| switch (event) {
         key.key,
         key.text(),
     }),
+    // A run of printable text -- pasted, or typed faster than a read.
+    // One event and a borrowed slice, not one `KeyEvent` per character.
+    .text => |text| std.debug.print("text:       {s}\n", .{text}),
     // Anything framed but not a key: a mouse report, a reply, an OSC.
     .unhandled => |bytes| if (morse.parseMouse(bytes)) |click| std.debug.print(
         "click:      {s} at {d},{d}\n",
@@ -322,7 +325,10 @@ which names a key without saying what it typed.
 decides where each sequence ends, decodes the keys, and hands everything else
 back whole as `Event.unhandled` for `parseMouse`, `parseColorReply` or
 whichever parser reads it, so an unrecognised reply never resynchronises the
-stream a byte at a time. You own the buffer: `min_buffer` covers keys, but an
+stream a byte at a time. A run of printable text — a paste, or typing faster
+than a read — comes back as one `Event.text` borrowing the same buffer; a
+single printable codepoint is a keypress and comes back as `Event.key`. You
+own the buffer: `min_buffer` covers keys, but an
 OSC 52 reply is as long as whatever was copied. A sequence longer than the
 buffer is the one thing the parser cannot hand back, and it says so —
 `Event.overflow` with the count of bytes it dropped, and the stream picked up
