@@ -2392,6 +2392,351 @@ test "fuzz the parameter scanner" {
     } });
 }
 
+//=========================================================================
+// A second framer, for the differential fuzz target.
+//
+// The parser above is recursive descent: it looks at a byte, calls the
+// function that reads what that byte introduces, and that function decides
+// where the sequence ends. What follows is the same grammar as a state
+// machine -- a state per byte class, one pass, no calls -- written from the
+// specifications rather than from the code above. Two implementations that
+// do not share a line are two chances to be right, and a disagreement about
+// where a sequence ends is a bug in one of them.
+//
+// It frames only what `ESC` introduces. Everything else in the stream is a
+// codepoint or a control code, neither of which can contain an `ESC`, so the
+// two framers cannot disagree about where the next sequence begins without
+// disagreeing about one of these.
+//=========================================================================
+
+/// One escape-introduced sequence: where it began and how long it was.
+const Frame = struct { start: usize, len: usize };
+
+/// Every sequence `decode` frames out of `bytes`, in order.
+fn frameWithParser(bytes: []const u8, out: []Frame) []Frame {
+    var console: win32.ConsoleState = .{};
+    var frames: usize = 0;
+    var i: usize = 0;
+    while (i < bytes.len and frames < out.len) {
+        const introduced = bytes[i] == seq.esc;
+        const used = switch (decode(bytes[i..], false, &console)) {
+            .ready => |done| done.len,
+            .skip => |n| n,
+            .incomplete => break,
+        };
+        if (introduced) {
+            out[frames] = .{ .start = i, .len = used };
+            frames += 1;
+        }
+        i += used;
+    }
+    return out[0..frames];
+}
+
+/// The same, by the state machine below.
+fn frameWithGrammar(bytes: []const u8, out: []Frame) []Frame {
+    var frames: usize = 0;
+    var i: usize = 0;
+    while (i < bytes.len and frames < out.len) {
+        if (bytes[i] != seq.esc) {
+            // Neither framer can look past a codepoint the bytes do not
+            // hold the whole of: what follows it might complete it, so a
+            // streaming framer waits there and frames nothing after it.
+            if (bytes[i] >= 0x80) {
+                if (std.unicode.utf8ByteSequenceLength(bytes[i])) |n| {
+                    if (i + n > bytes.len) break;
+                } else |_| {}
+            }
+            i += 1;
+            continue;
+        }
+        const used = frameEscape(bytes[i..]) orelse break;
+        out[frames] = .{ .start = i, .len = used };
+        frames += 1;
+        i += used;
+    }
+    return out[0..frames];
+}
+
+/// Where the sequence beginning at `bytes[0]`, which is an `ESC`, ends, or
+/// null when the bytes do not hold the whole of it.
+///
+/// A length of one is a byte that introduces nothing: an `ESC` before a
+/// second `ESC`, or one whose sequence has a byte in it the grammar does not
+/// allow there. Either way one byte goes and the machine starts again.
+fn frameEscape(bytes: []const u8) ?usize {
+    std.debug.assert(bytes.len != 0 and bytes[0] == seq.esc);
+
+    const State = enum {
+        /// Just past the `ESC`, deciding what it introduces.
+        introducer,
+        /// Just past a `CSI`, where a private marker may stand.
+        csi_marker,
+        /// In a `CSI`'s parameter bytes.
+        csi_parameter,
+        /// In a `CSI`'s intermediate bytes, and then its final.
+        csi_intermediate,
+        /// In an `SS3`'s parameter bytes, and then its final.
+        ss3,
+        /// In a control string.
+        string,
+        /// In a control string, one byte past an `ESC`.
+        string_escape,
+        /// In the intermediate bytes of a short escape, and then its final.
+        short_escape,
+    };
+
+    var state: State = .introducer;
+    var marked = false;
+    var parameterised = false;
+    var intermediate = false;
+    var i: usize = 1;
+
+    while (i < bytes.len) {
+        const b = bytes[i];
+        switch (state) {
+            .introducer => {
+                // Two escapes running: the first is a key on its own.
+                if (b == seq.esc) return 1;
+                i += 1;
+                if (b == '[') {
+                    state = .csi_marker;
+                } else if (b == 'O') {
+                    state = .ss3;
+                } else if (b == ']' or b == 'P' or b == 'X' or b == '^' or b == '_') {
+                    state = .string;
+                } else if (b >= 0x20 and b <= 0x2f) {
+                    state = .short_escape;
+                } else if (b < 0x80) {
+                    // `ESC` and a key, which is how alt is spelled.
+                    return 2;
+                } else {
+                    const n = std.unicode.utf8ByteSequenceLength(b) catch return 2;
+                    if (1 + n > bytes.len) return null;
+                    _ = std.unicode.utf8Decode(bytes[1..][0..n]) catch return 2;
+                    return 1 + n;
+                }
+            },
+            .csi_marker => {
+                if (b >= '<' and b <= '?') {
+                    marked = true;
+                    i += 1;
+                }
+                state = .csi_parameter;
+            },
+            .csi_parameter => {
+                if (b >= 0x30 and b <= 0x3f) {
+                    parameterised = true;
+                    i += 1;
+                } else {
+                    state = .csi_intermediate;
+                }
+            },
+            .csi_intermediate => {
+                if (b >= 0x20 and b <= 0x2f) {
+                    intermediate = true;
+                    i += 1;
+                    continue;
+                }
+                if (b < 0x40 or b > 0x7e) return 1;
+                // `CSI M` with nothing in front of the `M` is the older
+                // mouse report, whose three bytes are arbitrary and are part
+                // of the sequence. Its length is the only one in the whole
+                // grammar that the final byte does not give.
+                if (b == 'M' and !marked and !parameterised and !intermediate) {
+                    if (i + 1 + x10_mouse_fields > bytes.len) return null;
+                    return i + 1 + x10_mouse_fields;
+                }
+                return i + 1;
+            },
+            .ss3 => {
+                if (b >= 0x30 and b <= 0x3f) {
+                    i += 1;
+                    continue;
+                }
+                if (b < 0x40 or b > 0x7e) return 1;
+                return i + 1;
+            },
+            .string => {
+                if (b == seq.bel) return i + 1;
+                i += 1;
+                if (b == seq.esc) state = .string_escape;
+            },
+            .string_escape => {
+                // `ST` closes the string; a bare `ESC` is the next sequence
+                // beginning, and the string ends in front of it.
+                if (b == '\\') return i + 1;
+                return i - 1;
+            },
+            .short_escape => {
+                if (b >= 0x20 and b <= 0x2f) {
+                    i += 1;
+                    continue;
+                }
+                if (b < 0x30 or b > 0x7e) return 1;
+                return i + 1;
+            },
+        }
+    }
+    return null;
+}
+
+/// The pieces the differential generator builds a stream out of: complete
+/// sequences, sequences cut off anywhere they can be cut off, and text.
+///
+/// Raw bytes find the shapes nobody thought of; these find the shapes
+/// everybody did, which is where two framers actually differ.
+const framing_pieces = [_][]const u8{
+    "\x1b[A",
+    "\x1b[1;5C",
+    "\x1b[97:65:97;2:3;65u",
+    "\x1b[<0;40;12M",
+    "\x1b[M\x20\x21\x21",
+    "\x1b[M",
+    "\x1b[M\x1b",
+    "\x1b[200~",
+    "\x1b[?2026;1$y",
+    "\x1b[0;0;0;1;0;1_",
+    "\x1b[>c",
+    "\x1b[?u",
+    "\x1b[\x7f",
+    "\x1b[1;2;3;4;5;6;7;8;9A",
+    "\x1bOP",
+    "\x1bO",
+    "\x1bO\x01",
+    "\x1b]52;c;aGk=\x1b\\",
+    "\x1b]11;rgb:1c1c/1c1c/1c1c\x07",
+    "\x1b]x",
+    "\x1bP+q436f\x1b\\",
+    "\x1b_Gi=31;OK\x1b\\",
+    "\x1b(B",
+    "\x1b(",
+    "\x1b\x1b",
+    "\x1b",
+    "\x1b[",
+    "\x1ba",
+    "\x1b\xf0\x9f\x99\x82",
+    "a",
+    "hello",
+    "\xc3\xa9",
+    "\xf0\x9f\x99\x82",
+    "\x7f",
+    "\r",
+};
+
+test "the two framers agree on the sequences in a stream" {
+    // A worked example before the fuzzer: every shape that has ever framed
+    // differently, in one stream.
+    const bytes = "\x1b[A" ++ "hi" ++ "\x1b[M\x20\x1b\x21" ++ "\x1bOP" ++
+        "\x1b]52;c;aGk=\x1b\\" ++ "\x1b]x\x1b[B" ++ "\x1b\x1b[C" ++
+        "\x1b(B" ++ "\x1b[\x7f" ++ "\x1b\xf0\x9f\x99\x82";
+
+    var mine: [32]Frame = undefined;
+    var theirs: [32]Frame = undefined;
+    const parsed = frameWithParser(bytes, &mine);
+    const grammar = frameWithGrammar(bytes, &theirs);
+
+    try std.testing.expect(parsed.len >= 9);
+    try std.testing.expectEqualSlices(Frame, grammar, parsed);
+
+    // And the frames cover the escapes and nothing else: each one starts on
+    // an `ESC` and none overlaps the next.
+    var at: usize = 0;
+    for (parsed) |frame| {
+        try std.testing.expect(frame.start >= at);
+        try std.testing.expect(frame.len != 0);
+        try std.testing.expectEqual(@as(u8, seq.esc), bytes[frame.start]);
+        at = frame.start + frame.len;
+    }
+}
+
+/// Builds one stream out of `chosen`: the high bit of each byte picks a raw
+/// byte or a piece of grammar, and the rest picks which piece.
+///
+/// A stream that is neither only noise nor only well-formed, which is the
+/// stream a terminal really sends.
+fn buildStream(chosen: []const u8, out: []u8) []u8 {
+    var len: usize = 0;
+    for (chosen) |pick| {
+        if (pick & 0x80 != 0) {
+            if (len == out.len) break;
+            out[len] = pick & 0x7f;
+            len += 1;
+            continue;
+        }
+        const piece = framing_pieces[pick % framing_pieces.len];
+        if (len + piece.len > out.len) break;
+        @memcpy(out[len..][0..piece.len], piece);
+        len += piece.len;
+    }
+    return out[0..len];
+}
+
+/// Frames `bytes` both ways and fails if the two disagree, returning how
+/// many sequences they agreed on.
+fn checkFraming(bytes: []const u8) !usize {
+    var mine: [512]Frame = undefined;
+    var theirs: [512]Frame = undefined;
+    const parsed = frameWithParser(bytes, &mine);
+    const grammar = frameWithGrammar(bytes, &theirs);
+    try std.testing.expectEqualSlices(Frame, grammar, parsed);
+    return parsed.len;
+}
+
+test "the two framers agree over a sweep of generated streams" {
+    // The fuzz target below searches; this one always runs, from a fixed
+    // seed, so a disagreement fails the ordinary build rather than waiting
+    // for somebody to start a fuzzer.
+    var prng: std.Random.DefaultPrng = .init(0xf00dface);
+    const rand = prng.random();
+
+    var frames: usize = 0;
+    for (0..20_000) |_| {
+        var picks: [64]u8 = undefined;
+        const n = rand.intRangeAtMost(usize, 0, picks.len);
+        rand.bytes(picks[0..n]);
+
+        var stream: [512]u8 = undefined;
+        frames += try checkFraming(buildStream(picks[0..n], &stream));
+
+        // And the same bytes as themselves, so the sweep covers the stream
+        // nobody designed as well as the one somebody did.
+        frames += try checkFraming(picks[0..n]);
+    }
+    // The generator really is producing sequences rather than noise.
+    try std.testing.expect(frames > 100_000);
+}
+
+test "fuzz the framing against a second framer" {
+    // The property: the recursive-descent parser and the state machine
+    // written from the grammar frame the same stream into the same
+    // sequences -- the same starts and the same lengths, in the same order.
+    // A disagreement is a bug in one of them, and the test does not say
+    // which, which is the point: neither is the oracle.
+    try std.testing.fuzz({}, struct {
+        fn one_(_: void, smith: *std.testing.Smith) anyerror!void {
+            var picks: [128]u8 = undefined;
+            const chosen = picks[0..smith.sliceWithHash(&picks, 0)];
+
+            var input: [512]u8 = undefined;
+            _ = try checkFraming(buildStream(chosen, &input));
+            // And the bytes as they came, which the generator would never
+            // have put together.
+            _ = try checkFraming(chosen);
+        }
+    }.one_, .{ .corpus = &.{
+        corpus.seed("\x00\x01\x02\x03\x04\x05\x06\x07"),
+        corpus.seed("\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f"),
+        corpus.seed("\x10\x11\x12\x13\x14\x15\x16\x17"),
+        corpus.seed("\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f"),
+        corpus.seed("\x20\x21\x22"),
+        corpus.seed("\x04\x05\x06\xff\xfe\x1b\x1c"),
+        corpus.seed("\x19\x1a\x19\x1a\x19\x1a"),
+        corpus.seed("\x11\x91\x92\x11\x93"),
+        corpus.seed("\x13\x14\x15\x16\x17\x18"),
+    } });
+}
+
 test "an X10 mouse report is framed whole, not split into keypresses" {
     // The regression this framing exists for: without it the three biased
     // bytes are handed to the key decoder as space, A and A.

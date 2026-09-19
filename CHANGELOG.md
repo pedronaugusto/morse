@@ -43,6 +43,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   character — so a record with right Alt, a control bit and a character of
   its own is reported as the character, with neither modifier.
 
+- **A second framer, and a differential test against it.** The parser is
+  recursive descent; the framer beside it in the suite is the same grammar
+  as a state machine, written from the specifications rather than from the
+  code, and the two must frame any stream into the same sequences — the
+  same starts, the same lengths, the same order. A fixed-seed sweep of
+  20,000 generated streams runs on every build, and a fuzz target searches
+  past it; the generator builds streams out of real sequence shapes, whole
+  and truncated, and raw bytes, because two framers differ on the shapes
+  somebody designed rather than on noise. 200,000 streams and 2.7 million
+  framed sequences agree.
+
 - **`Probe`: the startup questions in one write and one round trip.** Every
   question here already had a writer and every answer a parser; what was
   missing was the order, and the order is the whole of what makes one
