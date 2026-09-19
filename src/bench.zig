@@ -52,6 +52,18 @@ fn nanosPer(iterations: usize, context: anytype, comptime body: fn (@TypeOf(cont
     return @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(iterations));
 }
 
+/// The least of three runs of `nanosPer`.
+///
+/// For a measurement that is compared against another measurement rather
+/// than against a ceiling, the least-disturbed run is the one that says
+/// which of the two is faster; a mean on a machine shared with other work
+/// says which of them the scheduler happened to interrupt.
+fn bestNanosPer(iterations: usize, context: anytype, comptime body: fn (@TypeOf(context)) anyerror!void) !f64 {
+    var best: f64 = std.math.floatMax(f64);
+    for (0..3) |_| best = @min(best, try nanosPer(iterations, context, body));
+    return best;
+}
+
 /// Prints one measurement in the shape every line here takes.
 fn report(name: []const u8, value: f64, unit: []const u8, budget: f64) void {
     std.debug.print("bench: {s:<34} {d:>10.2} {s} (budget {d:.2})\n", .{ name, value, unit, budget });
@@ -248,8 +260,8 @@ test "bench: the hand integer encoder against the formatter" {
     };
 
     const context = .{ .buffer = &buffer, .numbers = &numbers };
-    const mine = try nanosPer(100_000, Mine{ .buffer = context.buffer, .numbers = context.numbers }, Mine.one);
-    const theirs = try nanosPer(100_000, Theirs{ .buffer = context.buffer, .numbers = context.numbers }, Theirs.one);
+    const mine = try bestNanosPer(100_000, Mine{ .buffer = context.buffer, .numbers = context.numbers }, Mine.one);
+    const theirs = try bestNanosPer(100_000, Theirs{ .buffer = context.buffer, .numbers = context.numbers }, Theirs.one);
     report("writeInt, eight numbers", mine, "ns", 8000);
     report("the formatter, the same eight", theirs, "ns", 8000);
     std.debug.print("bench: {s:<34} {d:>10.2}x\n", .{ "writeInt against the formatter", theirs / mine });
