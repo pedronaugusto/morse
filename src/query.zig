@@ -19,6 +19,15 @@ const Writer = std.Io.Writer;
 /// The answer arrives on the terminal's input as a sequence `parseModeReply`
 /// reads. A terminal too old for DECRQM answers nothing, so a program must
 /// not block waiting for one.
+///
+/// The rule that survives contact with real terminals is coarse: `set`,
+/// `reset` and `permanently_set` mean the mode is there, and
+/// `not_recognized`, `permanently_reset` and silence mean it is not.
+/// Terminals disagree about which of those they send for the same mode —
+/// one answers `reset` for everything it does not implement, another
+/// `permanently_reset` for everything, and several implement no DECRQM at
+/// all while implementing the modes — so a program that branches on any
+/// finer distinction than those two groups is branching on a coin toss.
 pub fn queryMode(w: *Writer, mode: u16) Writer.Error!void {
     try w.writeAll(seq.csi ++ "?");
     try seq.writeInt(w, mode);

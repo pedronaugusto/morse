@@ -117,6 +117,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Three doc comments said things the field does not do.** `unicodeCore`
+  said a terminal answering `not_recognized` to mode 2027 measures by
+  codepoint; at least one answers that deliberately and clusters by grapheme
+  regardless, so the answer is not a capability test and there is none.
+  `inBandResize` did not say that the report arrives on being enabled, nor
+  that `permanently_reset` is a no as much as `not_recognized` is.
+  `queryMode` now gives the only rule that survives contact with real
+  terminals: three of the five states mean the mode is there, the other two
+  and silence mean it is not, and anything finer is a coin toss.
+
 - **A sequence lying across the end of the buffer is no longer dropped.**
   The drop that exists for a sequence longer than the buffer fired whenever
   the buffer was merely full and the sequence at its head unfinished, which

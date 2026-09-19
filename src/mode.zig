@@ -87,9 +87,16 @@ pub const cursorVisible = PrivateMode(25);
 ///
 /// Worth querying rather than setting blind: a program that lays text out
 /// itself has to measure it the same way the terminal does, and the two
-/// answers differ for exactly the text users complain about. `queryMode` with
-/// this number is how to find out which one is in effect, and a terminal that
-/// answers `not_recognized` is one measuring by codepoint.
+/// answers differ for exactly the text users complain about. `queryMode`
+/// with this number asks.
+///
+/// What the answer does not tell you is how the terminal measures. At least
+/// one terminal answers `not_recognized` to this mode deliberately, because
+/// it clusters by grapheme always and has no mode to set — so a `0` here is
+/// a terminal that will not be switched, not a terminal measuring by
+/// codepoint. The mode is worth setting for the terminals that have it and
+/// worth asking about for the record; it is not a capability test, and
+/// there is no capability test.
 pub const unicodeCore = PrivateMode(2027);
 
 /// In-band resize reporting (mode 2048). On, the terminal sends
@@ -103,8 +110,15 @@ pub const unicodeCore = PrivateMode(2027);
 /// on another machine, all of which are cases where asking the operating
 /// system asks the wrong computer.
 ///
+/// The report arrives on being enabled, before anything has resized: a
+/// program that turns this on has asked the terminal for its size and will
+/// be told, so it need not also ask.
+///
 /// Newer than the rest of this file and not yet universal, so pair it with
-/// `queryMode` or keep whatever size the program already had.
+/// `queryMode` or keep whatever size the program already had. A `queryMode`
+/// answer of `not_recognized` **or** `permanently_reset` is a terminal
+/// without it: the specification gives both as the no, and terminals send
+/// both.
 pub const inBandResize = PrivateMode(2048);
 
 /// Win32 input mode (mode 9001). On, a terminal on Windows sends every key as

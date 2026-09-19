@@ -367,6 +367,9 @@ pub const Event = union(enum) {
     /// way a program learns its own size without asking the operating
     /// system, which is what makes it work unchanged down a pipe, inside a
     /// multiplexer, and on a machine whose terminal is somewhere else.
+    ///
+    /// The first one arrives on being asked, before anything has resized,
+    /// so a program that turns the mode on has already asked its size.
     resize: Resize,
     /// The terminal's palette became light or dark, and it said so on the
     /// input stream (`CSI ? 997 ; 1 n` or `; 2 n`).
