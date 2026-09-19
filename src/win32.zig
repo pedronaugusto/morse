@@ -14,6 +14,10 @@
 //! types are declared here, field for field, so that the translation compiles
 //! and is tested on every platform; a caller reads the real records with
 //! whichever API it likes and copies the fields across.
+//!
+//! What this file will never hold: a console handle. It opens nothing, reads
+//! nothing and sets no console mode; `win32Input` writes the sequence that
+//! asks for the other shape, and the rest is the caller's.
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
@@ -163,7 +167,7 @@ pub fn keyFromVirtualKey(vk: u16) ?Key {
 /// and for half a surrogate pair, which is not a codepoint. Pairing the
 /// halves is the caller's: a console sends a character outside the basic
 /// plane as two events, and nothing here keeps state between them.
-pub fn keyFromFields(vk: u16, uc: u16, mods: *Modifiers) ?Key {
+fn keyFromFields(vk: u16, uc: u16, mods: *Modifiers) ?Key {
     if (uc >= 0x20 and uc != 0x7f) {
         if (uc >= 0xd800 and uc <= 0xdfff) return null;
         return .{ .char = uc };

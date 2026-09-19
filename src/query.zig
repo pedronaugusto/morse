@@ -3,6 +3,10 @@
 //! Every parser here takes the whole sequence and nothing more, returns null
 //! for anything it does not recognise, and never an error: a terminal's input
 //! is not a place to distinguish twenty kinds of malformed.
+//!
+//! What this file will never hold: the waiting, the timeout, or the pairing.
+//! A question is written and an answer is read; that the two belong together,
+//! and that silence is also an answer, is the caller's to arrange.
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
@@ -17,7 +21,7 @@ const Writer = std.Io.Writer;
 /// not block waiting for one.
 pub fn queryMode(w: *Writer, mode: u16) Writer.Error!void {
     try w.writeAll(seq.csi ++ "?");
-    try w.print("{d}", .{mode});
+    try seq.writeInt(w, mode);
     try w.writeAll("$p");
 }
 
@@ -168,6 +172,64 @@ pub fn parseExtendedCursorPosition(bytes: []const u8) ?ExtendedCursorPosition {
     if (!std.mem.eql(u8, rest, "R")) return null;
 
     return .{ .row = row.value, .col = col.value, .page = page.value };
+}
+
+//=========================================================================
+// The colour scheme, modes 2031 and 996/997.
+//=========================================================================
+
+/// Which way round the terminal's palette is.
+///
+/// Not a colour: it is the terminal's own word for whether the user is
+/// looking at light text on a dark background or the other way about. A
+/// program that reads the background with `queryColor` learns the same thing
+/// less reliably, because a terminal's background may be an image, a
+/// translucent pane, or a colour whose brightness sits in the middle.
+pub const ColorScheme = enum(u8) {
+    /// Light text on a dark background.
+    dark = 1,
+    /// Dark text on a light background.
+    light = 2,
+};
+
+/// Asks which way round the terminal's palette is: `CSI ? 996 n`.
+///
+/// The answer arrives on the input stream as `CSI ? 997 ; 1 n` or
+/// `CSI ? 997 ; 2 n`, which `KeyParser` decodes into `Event.color_scheme`
+/// and `parseColorSchemeReply` reads on its own. A terminal that does not
+/// implement it answers nothing, so pair it with `queryDeviceAttributes`.
+///
+/// `colorScheme`, mode 2031, is the standing form of the same question: it
+/// makes the terminal send that report again whenever the palette changes.
+///
+/// Read against the specification text of 2026-08-15.
+pub fn queryColorScheme(w: *Writer) Writer.Error!void {
+    try w.writeAll(seq.csi ++ "?996n");
+}
+
+/// Reads a colour scheme report: `CSI ? 997 ; 1 n` for dark and
+/// `CSI ? 997 ; 2 n` for light.
+///
+/// The same sequence answers `queryColorScheme` and arrives unasked from a
+/// terminal in mode 2031 — there is nothing in the bytes that tells the two
+/// apart, and nothing that needs to.
+///
+/// Returns null for anything else, a third scheme value included. `bytes`
+/// must be exactly the sequence.
+pub fn parseColorSchemeReply(bytes: []const u8) ?ColorScheme {
+    const prefix = seq.csi ++ "?997;";
+    if (!std.mem.startsWith(u8, bytes, prefix)) return null;
+    var rest = bytes[prefix.len..];
+
+    const value = seq.scanInt(u8, rest) orelse return null;
+    rest = rest[value.len..];
+    if (!std.mem.eql(u8, rest, "n")) return null;
+
+    return switch (value.value) {
+        @intFromEnum(ColorScheme.dark) => .dark,
+        @intFromEnum(ColorScheme.light) => .light,
+        else => null,
+    };
 }
 
 test "queryMode asks with DECRQM" {
@@ -410,5 +472,76 @@ test "fuzz parseExtendedCursorPosition" {
         corpus.seed("\x1b[?12;40R"),
         corpus.seed("\x1b[?12;40;1;1R"),
         corpus.seed("\x1b[?12;40;1"),
+    } });
+}
+
+test "queryColorScheme asks which way round the palette is" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try queryColorScheme(&out.writer);
+    try std.testing.expectEqualStrings("\x1b[?996n", out.written());
+}
+
+test "parseColorSchemeReply reads both schemes" {
+    try std.testing.expectEqual(ColorScheme.dark, parseColorSchemeReply("\x1b[?997;1n").?);
+    try std.testing.expectEqual(ColorScheme.light, parseColorSchemeReply("\x1b[?997;2n").?);
+}
+
+test "parseColorSchemeReply returns null on anything it does not recognise" {
+    const rejected = [_][]const u8{
+        "", // nothing at all
+        "\x1b[?997;1", // no final byte
+        "\x1b[?997;", // no scheme
+        "\x1b[?997n", // no separator
+        "\x1b[?996;1n", // the question, not the answer
+        "\x1b[997;1n", // not a private report
+        "\x1b]?997;1n", // OSC, not CSI
+        "\x1b[?997;0n", // no such scheme
+        "\x1b[?997;3n", // no such scheme
+        "\x1b[?997;1nn", // trailing rubbish
+        " \x1b[?997;1n", // leading rubbish
+        "\x1b[?997;1;1n", // a field too many
+        "\x1b[?997;256n", // a scheme too large for its field
+    };
+    for (rejected) |bytes| {
+        try std.testing.expect(parseColorSchemeReply(bytes) == null);
+    }
+}
+
+test "parseColorSchemeReply survives a number long enough to overflow" {
+    try std.testing.expect(parseColorSchemeReply("\x1b[?997;99999999999999999999n") == null);
+}
+
+test "the colour scheme report is not a mode report and the reverse" {
+    try std.testing.expect(parseModeReply("\x1b[?997;1n") == null);
+    try std.testing.expect(parseColorSchemeReply("\x1b[?2031;1$y") == null);
+}
+
+test "fuzz parseColorSchemeReply" {
+    // The property: no input panics or overflows, and every report that
+    // parses renders back to a report that parses to the same scheme.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const scheme = parseColorSchemeReply(bytes) orelse return;
+
+            var output: [32]u8 = undefined;
+            var w: Writer = .fixed(&output);
+            try w.writeAll("\x1b[?997;");
+            try seq.writeInt(&w, @intFromEnum(scheme));
+            try w.writeByte('n');
+            try std.testing.expectEqual(scheme, parseColorSchemeReply(w.buffered()).?);
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b[?997;1n"),
+        corpus.seed("\x1b[?997;2n"),
+        corpus.seed("\x1b[?997;0n"),
+        corpus.seed("\x1b[?997;3n"),
+        corpus.seed("\x1b[?996n"),
+        corpus.seed("\x1b[?997;1nn"),
+        corpus.seed("\x1b[?997;256n"),
     } });
 }

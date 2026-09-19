@@ -30,6 +30,61 @@ pub const osc = "\x1b]";
 /// and the XTVERSION one.
 pub const dcs = "\x1bP";
 
+/// `APC`, the application program command introducer, spelled `ESC _`. The
+/// kitty graphics protocol is the only thing this package spells with it, on
+/// both sides of the wire.
+pub const apc = "\x1b_";
+
+/// Writes `value` in decimal, without the formatter.
+///
+/// Every sequence here is digits and punctuation, and the digits are the
+/// whole of the arithmetic: a renderer writing a frame calls this a few
+/// thousand times. It fills a stack buffer from the back and writes the run
+/// once, which is one pass, one call and no comptime format machinery.
+///
+/// `u64` so that every unsigned type in the package coerces to it. The
+/// buffer is twenty digits, which is the widest a `u64` spells.
+pub fn writeInt(w: *std.Io.Writer, value: u64) std.Io.Writer.Error!void {
+    var buffer: [20]u8 = undefined;
+    var i: usize = buffer.len;
+    var rest = value;
+    while (true) {
+        i -= 1;
+        buffer[i] = '0' + @as(u8, @intCast(rest % 10));
+        rest /= 10;
+        if (rest == 0) break;
+    }
+    try w.writeAll(buffer[i..]);
+}
+
+/// Writes `value` in decimal with a leading `-` when it is negative.
+///
+/// The negation goes through `i64` because `-minInt(i32)` does not fit in an
+/// `i32`, and the z-index of a graphics placement is a full `i32`.
+pub fn writeSigned(w: *std.Io.Writer, value: i32) std.Io.Writer.Error!void {
+    if (value < 0) {
+        try w.writeByte('-');
+        return writeInt(w, @intCast(-@as(i64, value)));
+    }
+    return writeInt(w, @intCast(value));
+}
+
+/// Writes exactly `digits` lowercase hexadecimal digits of `value`.
+///
+/// Two digits for a byte of an XTGETTCAP name, four for a channel of an OSC
+/// colour: the two spellings of hex in the package, in one place.
+pub fn writeHex(w: *std.Io.Writer, value: u64, comptime digits: usize) std.Io.Writer.Error!void {
+    var buffer: [digits]u8 = undefined;
+    var i: usize = digits;
+    var rest = value;
+    while (i != 0) {
+        i -= 1;
+        buffer[i] = "0123456789abcdef"[@as(usize, @intCast(rest & 0xf))];
+        rest >>= 4;
+    }
+    try w.writeAll(&buffer);
+}
+
 /// A decimal number read off the front of a byte string, and how many bytes
 /// it took.
 pub fn Scan(comptime T: type) type {
@@ -66,6 +121,74 @@ pub fn stripStringTerminator(bytes: []const u8) ?[]const u8 {
     if (std.mem.endsWith(u8, bytes, st)) return bytes[0 .. bytes.len - st.len];
     if (bytes.len != 0 and bytes[bytes.len - 1] == bel) return bytes[0 .. bytes.len - 1];
     return null;
+}
+
+test "writeInt spells every value the sequences carry" {
+    const cases = [_]struct { value: u64, bytes: []const u8 }{
+        .{ .value = 0, .bytes = "0" },
+        .{ .value = 1, .bytes = "1" },
+        .{ .value = 9, .bytes = "9" },
+        .{ .value = 10, .bytes = "10" },
+        .{ .value = 255, .bytes = "255" },
+        .{ .value = 65535, .bytes = "65535" },
+        .{ .value = 4294967295, .bytes = "4294967295" },
+        .{ .value = std.math.maxInt(u64), .bytes = "18446744073709551615" },
+    };
+    for (cases) |case| {
+        var buffer: [24]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buffer);
+        try writeInt(&w, case.value);
+        try std.testing.expectEqualStrings(case.bytes, w.buffered());
+    }
+}
+
+test "writeInt agrees with the formatter on every value to ten thousand" {
+    var value: u64 = 0;
+    while (value < 10_000) : (value += 1) {
+        var mine: [24]u8 = undefined;
+        var theirs: [24]u8 = undefined;
+        var a: std.Io.Writer = .fixed(&mine);
+        var b: std.Io.Writer = .fixed(&theirs);
+        try writeInt(&a, value);
+        try b.print("{d}", .{value});
+        try std.testing.expectEqualStrings(b.buffered(), a.buffered());
+    }
+}
+
+test "writeSigned writes the sign and the digits, the smallest i32 included" {
+    const cases = [_]struct { value: i32, bytes: []const u8 }{
+        .{ .value = 0, .bytes = "0" },
+        .{ .value = 7, .bytes = "7" },
+        .{ .value = -1, .bytes = "-1" },
+        .{ .value = -1024, .bytes = "-1024" },
+        .{ .value = std.math.maxInt(i32), .bytes = "2147483647" },
+        .{ .value = std.math.minInt(i32), .bytes = "-2147483648" },
+    };
+    for (cases) |case| {
+        var buffer: [16]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buffer);
+        try writeSigned(&w, case.value);
+        try std.testing.expectEqualStrings(case.bytes, w.buffered());
+    }
+}
+
+test "writeHex pads to the width it was asked for" {
+    var buffer: [8]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buffer);
+    try writeHex(&w, 0x0a, 2);
+    try writeHex(&w, 0xff, 2);
+    try std.testing.expectEqualStrings("0aff", w.buffered());
+
+    var wide: [8]u8 = undefined;
+    var v: std.Io.Writer = .fixed(&wide);
+    try writeHex(&v, 0x1c1c, 4);
+    try std.testing.expectEqualStrings("1c1c", v.buffered());
+}
+
+test "writeInt refuses to fit where there is no room" {
+    var buffer: [2]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buffer);
+    try std.testing.expectError(error.WriteFailed, writeInt(&w, 1000));
 }
 
 test "scanInt reads digits and reports how many it used" {

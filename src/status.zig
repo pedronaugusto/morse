@@ -13,6 +13,10 @@
 //! None of it is acknowledged and none of it is standardised: a terminal that
 //! does not implement a mark ignores it, and there is no reply to read. Write
 //! these if the program has the information, and expect nothing back.
+//!
+//! What this file will never hold: a command history. Which command is
+//! running and what it exited with is the shell's; these sequences are how it
+//! says so.
 
 const std = @import("std");
 const seq = @import("seq.zig");
@@ -57,7 +61,10 @@ pub fn commandStart(w: *Writer) Writer.Error!void {
 /// 128 plus the signal number, which fits too.
 pub fn commandEnd(w: *Writer, exit_code: ?u8) Writer.Error!void {
     try w.writeAll(seq.osc ++ "133;D");
-    if (exit_code) |code| try w.print(";{d}", .{code});
+    if (exit_code) |code| {
+        try w.writeByte(';');
+        try seq.writeInt(w, code);
+    }
     try w.writeAll(seq.st);
 }
 
@@ -108,7 +115,9 @@ pub fn progress(w: *Writer, state: Progress) Writer.Error!void {
     };
 
     try w.writeAll(seq.osc ++ "9;4;");
-    try w.print("{d};{d}", .{ code, value });
+    try seq.writeInt(w, code);
+    try w.writeByte(';');
+    try seq.writeInt(w, value);
     try w.writeAll(seq.st);
 }
 

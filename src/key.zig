@@ -27,11 +27,21 @@
 //! holding the whole sequence, for the caller to hand to `parseMouse`,
 //! `parseModeReply`, `parseColorReply` or whichever parser reads it. Framing
 //! the stream once, in one place, is the point.
+//!
+//! What this file will never hold: a key map. Which key means quit, which
+//! chord opens a pane, and how long to wait before settling a lone `ESC` are
+//! all decisions above this layer. It says which key was pressed and with
+//! what held, and stops there.
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
+const query = @import("query.zig");
 const seq = @import("seq.zig");
 const win32 = @import("win32.zig");
+
+/// Which way round the terminal's palette is, as mode 2031 reports it.
+/// Aliased from `query`, where the question that asks for it lives.
+const ColorScheme = query.ColorScheme;
 
 //=========================================================================
 // What a key is.
@@ -358,6 +368,14 @@ pub const Event = union(enum) {
     /// system, which is what makes it work unchanged down a pipe, inside a
     /// multiplexer, and on a machine whose terminal is somewhere else.
     resize: Resize,
+    /// The terminal's palette became light or dark, and it said so on the
+    /// input stream (`CSI ? 997 ; 1 n` or `; 2 n`).
+    ///
+    /// A terminal asked for `colorScheme`, mode 2031, sends these unprompted
+    /// whenever the palette changes; the same sequence is the answer to
+    /// `queryColorScheme`, so a program that asked once and then asked to be
+    /// told sees both here and needs to tell neither apart.
+    color_scheme: ColorScheme,
     /// A complete sequence the parser framed but does not read as input: a
     /// mouse report, a reply to a query, an OSC or DCS the terminal sent
     /// back. Hand it to the parser that does read it.
@@ -812,11 +830,12 @@ fn decodeCsi(bytes: []const u8, report_key_up: bool) Decoded {
     // A private marker, if there is one: `<` for a mouse report, `?` for a
     // DEC private reply, `>` for a secondary attributes reply. None of them
     // is ever a key.
-    var private = false;
+    var marker: u8 = 0;
     if (i < bytes.len and bytes[i] >= '<' and bytes[i] <= '?') {
-        private = true;
+        marker = bytes[i];
         i += 1;
     }
+    const private = marker != 0;
 
     const param_start = i;
     while (i < bytes.len and bytes[i] >= 0x30 and bytes[i] <= 0x3f) : (i += 1) {}
@@ -841,6 +860,17 @@ fn decodeCsi(bytes: []const u8, report_key_up: bool) Decoded {
 
     const len = i + 1;
     const whole = bytes[0..len];
+
+    // One private reply is an event rather than an answer to fetch: the
+    // colour scheme report, which a terminal in mode 2031 sends unasked.
+    // Everything else wearing a private marker is a reply to a question
+    // somebody asked, and goes back whole for the parser that asked it.
+    if (marker == '?' and final == 'n' and intermediate_end == param_end) {
+        if (scanParams(bytes[param_start..param_end])) |params| {
+            if (colorSchemeEvent(params)) |event| return ready(event, len);
+        }
+    }
+
     if (private or intermediate_end != param_end) return ready(.{ .unhandled = whole }, len);
 
     const params = scanParams(bytes[param_start..param_end]) orelse
@@ -942,6 +972,21 @@ fn tildeEvent(params: Params) ?Event {
             return .{ .key = ev };
         },
     }
+}
+
+/// Reads a colour scheme report: `CSI ? 997 ; scheme n`.
+///
+/// Exactly two parameters, no sub-parameters, and a scheme the protocol
+/// names — anything else is somebody's reply and is handed back whole.
+fn colorSchemeEvent(params: Params) ?Event {
+    if (params.count != 2) return null;
+    if (params.get(0, 1) != null or params.get(1, 1) != null) return null;
+    if (params.get(0, 0) != 997) return null;
+    return switch (params.get(1, 0) orelse return null) {
+        @intFromEnum(ColorScheme.dark) => .{ .color_scheme = .dark },
+        @intFromEnum(ColorScheme.light) => .{ .color_scheme = .light },
+        else => null,
+    };
 }
 
 /// Reads an in-band resize report: `CSI 48 ; rows ; cols ; ypixels ; xpixels t`.
@@ -2394,4 +2439,49 @@ test "fuzz the win32 input mode decoder" {
         corpus.seed("\x1b[65;0;97;1;0;1;1_"),
         corpus.seed("\x1b[65;30;97;1;0;2_b"),
     } });
+}
+
+test "a colour scheme report decodes to the scheme it names" {
+    try std.testing.expectEqual(ColorScheme.dark, one("\x1b[?997;1n").?.color_scheme);
+    try std.testing.expectEqual(ColorScheme.light, one("\x1b[?997;2n").?.color_scheme);
+}
+
+test "a colour scheme report arrives in among the keys" {
+    var storage: [8]Event = undefined;
+    const events = collect("a\x1b[?997;2nb", &storage);
+    try std.testing.expectEqual(@as(usize, 3), events.len);
+    try std.testing.expectEqual(Key{ .char = 'a' }, events[0].key.key);
+    try std.testing.expectEqual(ColorScheme.light, events[1].color_scheme);
+    try std.testing.expectEqual(Key{ .char = 'b' }, events[2].key.key);
+}
+
+test "a private report that is not the colour scheme is handed back whole" {
+    const rejected = [_][]const u8{
+        "\x1b[?997;0n", // no such scheme
+        "\x1b[?997;3n", // no such scheme
+        "\x1b[?997n", // no scheme
+        "\x1b[?997;1;1n", // a field too many
+        "\x1b[?996;1n", // a different report
+        "\x1b[?6n", // the DECXCPR request
+        "\x1b[?997:1;1n", // sub-parameters, which this report has none of
+    };
+    for (rejected) |bytes| {
+        // Checked while the parser still holds it: an unhandled event
+        // borrows from the parser's buffer.
+        var storage: [KeyParser.min_buffer]u8 = undefined;
+        var parser: KeyParser = .init(&storage);
+        var events = parser.feed(bytes);
+        const event = events.next().?;
+        try std.testing.expectEqualStrings(bytes, event.unhandled);
+        try std.testing.expect(events.next() == null);
+    }
+}
+
+test "the plain colour scheme parser and the event agree" {
+    for ([_][]const u8{ "\x1b[?997;1n", "\x1b[?997;2n" }) |bytes| {
+        try std.testing.expectEqual(
+            query.parseColorSchemeReply(bytes).?,
+            one(bytes).?.color_scheme,
+        );
+    }
 }

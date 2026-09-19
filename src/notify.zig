@@ -3,6 +3,9 @@
 //! Neither is standardised and neither is acknowledged: a terminal that does
 //! not implement one ignores it, and a program cannot tell the difference
 //! between a notification shown and a notification dropped.
+//!
+//! What this file will never hold: a queue, an id, or a way to take a
+//! notification back. Neither form carries one.
 
 const std = @import("std");
 const seq = @import("seq.zig");

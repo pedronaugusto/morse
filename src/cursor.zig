@@ -12,6 +12,11 @@
 //! scroll region, silently — there is no reply and no error, so a program that
 //! has lost track of where the cursor is cannot find out by moving it.
 //! `cursorTo` is how such a program recovers.
+//!
+//! What this file will never hold: an idea of where the cursor is. Every
+//! sequence here is written and forgotten, because the terminal is the only
+//! thing that knows the answer and `requestCursorPosition` is how to ask it.
+//! No screen model, no damage tracking, no clamping of its own.
 
 const std = @import("std");
 const seq = @import("seq.zig");
@@ -21,17 +26,35 @@ const Writer = std.Io.Writer;
 /// Writes `CSI n final`, the shape every one-argument sequence here takes.
 fn csi1(w: *Writer, n: u32, final: u8) Writer.Error!void {
     try w.writeAll(seq.csi);
-    try w.print("{d}", .{n});
+    try seq.writeInt(w, n);
     try w.writeByte(final);
 }
 
 /// Writes `CSI a ; b final`, the shape every two-argument sequence here takes.
 fn csi2(w: *Writer, a: u32, b: u32, final: u8) Writer.Error!void {
     try w.writeAll(seq.csi);
-    try w.print("{d}", .{a});
+    try seq.writeInt(w, a);
     try w.writeByte(';');
-    try w.print("{d}", .{b});
+    try seq.writeInt(w, b);
     try w.writeByte(final);
+}
+
+/// Repeats the last character written, `count` more times: `CSI count b`,
+/// REP.
+///
+/// A run of the same glyph is the one thing a terminal can be told to draw
+/// in fewer bytes than the glyphs themselves take: eighty spaces is a space
+/// and `CSI 79 b`, which is six bytes instead of eighty. A renderer clearing
+/// a row, drawing a rule, or filling a gauge writes runs like that
+/// constantly.
+///
+/// It repeats the last *graphic* character, so it must follow one
+/// immediately: a cursor move, a style change or anything else in between
+/// makes what it repeats undefined. Terminals that do not implement it
+/// ignore it, which draws a shorter run rather than a wrong one, so a
+/// program that cannot verify support is safer writing the glyphs.
+pub fn repeatChar(w: *Writer, count: u32) Writer.Error!void {
+    try csi1(w, count, 'b');
 }
 
 /// Moves the cursor to `row` and `col`, counting from 1 at the top-left:
@@ -408,4 +431,24 @@ test "a count of zero is written as given, as everywhere else here" {
     try eraseChars(&out.writer, 0);
     try cursorRow(&out.writer, 0);
     try std.testing.expectEqualStrings("\x1b[0@\x1b[0X\x1b[0d", out.written());
+}
+
+test "repeatChar writes REP with the count it was given" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try repeatChar(&out.writer, 1);
+    try repeatChar(&out.writer, 79);
+    try repeatChar(&out.writer, 4294967295);
+    try std.testing.expectEqualStrings("\x1b[1b\x1b[79b\x1b[4294967295b", out.written());
+}
+
+test "a run written as REP is shorter than the glyphs it stands for" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    // What a renderer writes for eighty spaces: one space and a repeat.
+    try out.writer.writeByte(' ');
+    try repeatChar(&out.writer, 79);
+    try std.testing.expectEqual(@as(usize, 6), out.written().len);
 }

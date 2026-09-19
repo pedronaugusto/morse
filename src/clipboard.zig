@@ -2,11 +2,19 @@
 //! system clipboard of the machine a terminal is running on — which is what
 //! makes it worth the trouble over a remote session.
 //!
-//! The payload is base64. The encoder here streams it three input bytes at a
-//! time straight into the writer, so no buffer is sized to the data and no
-//! allocator is involved; the decoder writes into a buffer the caller owns.
+//! The payload is base64, spelled by `base64.zig`, which streams it three
+//! input bytes at a time straight into the writer: no buffer is sized to the
+//! data and no allocator is involved. The decoder writes into a buffer the
+//! caller owns and sizes from `ClipboardReply.decodedLen`.
+//!
+//! What this file holds is the OSC 52 grammar and the twelve selections it
+//! addresses. It will never hold a selection cache, a paste policy, or a
+//! guess at what the terminal did with the request: OSC 52 is write-only on
+//! most terminals and silent on the rest, and there is nothing here that can
+//! tell the difference.
 
 const std = @import("std");
+const base64 = @import("base64.zig");
 const corpus = @import("corpus.zig");
 const seq = @import("seq.zig");
 
@@ -93,7 +101,7 @@ pub fn clipboardWrite(w: *Writer, target: Clipboard, bytes: []const u8) Writer.E
     try w.writeAll(seq.osc ++ "52;");
     try w.writeByte(target.char());
     try w.writeByte(';');
-    try writeBase64(w, bytes);
+    try base64.write(w, bytes);
     try w.writeAll(seq.st);
 }
 
@@ -129,12 +137,7 @@ pub const ClipboardReply = struct {
     /// Exact, not an upper bound: `parseClipboardReply` has already
     /// established that `data` is well-formed base64.
     pub fn decodedLen(reply: ClipboardReply) usize {
-        std.debug.assert(reply.data.len % 4 == 0);
-        if (reply.data.len == 0) return 0;
-        var padding: usize = 0;
-        if (reply.data[reply.data.len - 1] == '=') padding += 1;
-        if (reply.data[reply.data.len - 2] == '=') padding += 1;
-        return reply.data.len / 4 * 3 - padding;
+        return base64.decodedLen(reply.data);
     }
 };
 
@@ -160,7 +163,7 @@ pub fn parseClipboardReply(bytes: []const u8) ?ClipboardReply {
     }
 
     const data = body[separator + 1 ..];
-    if (!isBase64(data)) return null;
+    if (!base64.isValid(data)) return null;
     return .{ .target = Clipboard.fromChar(selections[0]).?, .data = data };
 }
 
@@ -171,97 +174,7 @@ pub fn parseClipboardReply(bytes: []const u8) ?ClipboardReply {
 /// `out` too small, which `reply.decodedLen()` lets a caller rule out before
 /// calling.
 pub fn decodeClipboard(reply: ClipboardReply, out: []u8) error{NoSpaceLeft}![]u8 {
-    const len = reply.decodedLen();
-    if (out.len < len) return error.NoSpaceLeft;
-
-    var accumulator: u32 = 0;
-    var bits: u8 = 0;
-    var written: usize = 0;
-    for (reply.data) |c| {
-        if (c == '=') break;
-        accumulator = (accumulator << 6) | base64_index[c];
-        bits += 6;
-        if (bits >= 8) {
-            bits -= 8;
-            out[written] = @truncate(accumulator >> @intCast(bits));
-            written += 1;
-        }
-    }
-    std.debug.assert(written == len);
-    return out[0..len];
-}
-
-const base64_alphabet = std.base64.standard_alphabet_chars;
-
-/// Sentinel for a byte that is not in the base64 alphabet.
-const base64_invalid: u8 = 0xff;
-
-const base64_index: [256]u8 = blk: {
-    var table = [_]u8{base64_invalid} ** 256;
-    for (base64_alphabet, 0..) |c, i| table[c] = i;
-    break :blk table;
-};
-
-/// Writes `bytes` as padded standard base64, three input bytes at a time,
-/// with no buffer proportional to the input and no allocator.
-fn writeBase64(w: *Writer, bytes: []const u8) Writer.Error!void {
-    var group: [4]u8 = undefined;
-    var i: usize = 0;
-    while (i + 3 <= bytes.len) : (i += 3) {
-        const in = bytes[i..][0..3];
-        group[0] = base64_alphabet[in[0] >> 2];
-        group[1] = base64_alphabet[(in[0] & 0x03) << 4 | in[1] >> 4];
-        group[2] = base64_alphabet[(in[1] & 0x0f) << 2 | in[2] >> 6];
-        group[3] = base64_alphabet[in[2] & 0x3f];
-        try w.writeAll(&group);
-    }
-    switch (bytes.len - i) {
-        0 => {},
-        1 => {
-            group[0] = base64_alphabet[bytes[i] >> 2];
-            group[1] = base64_alphabet[(bytes[i] & 0x03) << 4];
-            group[2] = '=';
-            group[3] = '=';
-            try w.writeAll(&group);
-        },
-        2 => {
-            group[0] = base64_alphabet[bytes[i] >> 2];
-            group[1] = base64_alphabet[(bytes[i] & 0x03) << 4 | bytes[i + 1] >> 4];
-            group[2] = base64_alphabet[(bytes[i + 1] & 0x0f) << 2];
-            group[3] = '=';
-            try w.writeAll(&group);
-        },
-        else => unreachable,
-    }
-}
-
-/// Whether `data` is padded standard base64 that decodes without loss: a
-/// multiple of four bytes, alphabet characters followed by at most two `=`,
-/// and no bits set in the final character that padding throws away.
-///
-/// The last of those is what lets `decodeClipboard` promise it cannot fail on
-/// content.
-fn isBase64(data: []const u8) bool {
-    if (data.len % 4 != 0) return false;
-    if (data.len == 0) return true;
-
-    var padding: usize = 0;
-    for (data, 0..) |c, i| {
-        if (c == '=') {
-            // Padding is only ever the last byte or the last two.
-            if (i + 2 < data.len) return false;
-            padding += 1;
-        } else {
-            if (padding != 0) return false;
-            if (base64_index[c] == base64_invalid) return false;
-        }
-    }
-    return switch (padding) {
-        0 => true,
-        1 => base64_index[data[data.len - 2]] & 0x03 == 0,
-        2 => base64_index[data[data.len - 3]] & 0x0f == 0,
-        else => unreachable,
-    };
+    return base64.decode(reply.data, out);
 }
 
 test "clipboardWrite encodes a two-byte payload" {

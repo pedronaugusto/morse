@@ -18,6 +18,11 @@
 //! terminal that knows neither answers `DCS 0 + r ... ST` or says nothing at
 //! all. Ask for what you need, pair it with a query that is always answered,
 //! and treat silence as a no.
+//!
+//! What this file will never hold: a terminfo database. The point of
+//! XTGETTCAP is that the terminal has the answers and can be asked over the
+//! same wire everything else travels on, so there is nothing here to compile,
+//! ship, or keep up to date.
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
@@ -62,7 +67,7 @@ pub fn queryCapabilities(w: *Writer, names: []const []const u8) Writer.Error!voi
 
 /// Writes `bytes` as lowercase hexadecimal, two digits a byte.
 fn writeHex(w: *Writer, bytes: []const u8) Writer.Error!void {
-    for (bytes) |b| try w.print("{x:0>2}", .{b});
+    for (bytes) |b| try seq.writeHex(w, b, 2);
 }
 
 /// One capability out of a reply, with both halves still in hexadecimal.

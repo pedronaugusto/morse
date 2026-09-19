@@ -17,6 +17,12 @@
 //!
 //! morse holds no state, so `from` is the caller's to remember: it is the
 //! style of whatever it wrote last, and getting it wrong shows on screen.
+//!
+//! What this file will never hold: a colour downgraded to fit a terminal.
+//! Mapping a direct colour onto the palette, or the palette onto eight
+//! colours, is a decision about how a program should look on a terminal it
+//! has guessed the abilities of, and morse guesses nothing. Write the colour;
+//! `queryCapability` with `Co` asks how many the terminal has.
 
 const std = @import("std");
 const seq = @import("seq.zig");
@@ -105,6 +111,23 @@ pub const Color = union(enum) {
     rgb: Rgb,
 };
 
+/// Whether a cell's glyphs are raised, lowered, or neither: SGR 73, 74 and
+/// 75.
+///
+/// One field rather than two flags, because the codes are mutually
+/// exclusive: 74 replaces 73 rather than joining it, and 75 turns off
+/// whichever is on. Terminals that implement the text sizing protocol draw
+/// these; the rest ignore all three codes and draw the glyphs at their usual
+/// height, which is the right failure.
+pub const Script = enum(u8) {
+    /// On the baseline, at the usual size.
+    none = 0,
+    /// Raised and smaller, SGR 73.
+    superscript = 73,
+    /// Lowered and smaller, SGR 74.
+    subscript = 74,
+};
+
 /// Which underline a cell carries, numbered as the SGR 4 sub-parameter
 /// numbers them.
 ///
@@ -169,6 +192,8 @@ pub const Style = struct {
     /// form for the overline and no code for its colour. Terminals that do
     /// not implement it ignore both codes.
     overline: bool = false,
+    /// Whether the glyphs are raised, lowered, or on the baseline.
+    script: Script = .none,
 };
 
 /// One `CSI ... m` being built up, parameter by parameter.
@@ -192,13 +217,26 @@ const Params = struct {
     /// Writes one plain numeric parameter.
     fn code(p: *Params, value: u8) Writer.Error!void {
         try p.open();
-        try p.w.print("{d}", .{value});
+        try seq.writeInt(p.w, value);
     }
 
-    /// Writes one parameter that has fields of its own.
-    fn compound(p: *Params, comptime fmt: []const u8, args: anytype) Writer.Error!void {
+    /// Opens a parameter that has fields of its own and writes its first
+    /// piece; the caller writes the rest straight to `p.w`.
+    fn compound(p: *Params, bytes: []const u8) Writer.Error!void {
         try p.open();
-        try p.w.print(fmt, args);
+        try p.w.writeAll(bytes);
+    }
+
+    /// Writes `;` and a number, the tail every compound parameter is made of.
+    fn field(p: *Params, value: u8) Writer.Error!void {
+        try p.w.writeByte(';');
+        try seq.writeInt(p.w, value);
+    }
+
+    /// Writes `:` and a number, the same for the colon-separated forms.
+    fn subfield(p: *Params, value: u8) Writer.Error!void {
+        try p.w.writeByte(':');
+        try seq.writeInt(p.w, value);
     }
 
     /// Ends the sequence, or writes nothing when no parameter was produced.
@@ -236,8 +274,18 @@ fn writeFgBg(
             const index = @intFromEnum(a);
             try p.code(if (index < 8) base + index else bright_base + (index - 8));
         },
-        .palette => |n| try p.compound("{d};5;{d}", .{ extended, n }),
-        .rgb => |c| try p.compound("{d};2;{d};{d};{d}", .{ extended, c.r, c.g, c.b }),
+        .palette => |n| {
+            try p.code(extended);
+            try p.w.writeAll(";5;");
+            try seq.writeInt(p.w, n);
+        },
+        .rgb => |c| {
+            try p.code(extended);
+            try p.w.writeAll(";2;");
+            try seq.writeInt(p.w, c.r);
+            try p.field(c.g);
+            try p.field(c.b);
+        },
     }
 }
 
@@ -255,9 +303,20 @@ fn writeFgBg(
 fn writeUnderlineColor(p: *Params, color: Color) Writer.Error!void {
     switch (color) {
         .default => try p.code(59),
-        .ansi => |a| try p.compound("58:5:{d}", .{@intFromEnum(a)}),
-        .palette => |n| try p.compound("58:5:{d}", .{n}),
-        .rgb => |c| try p.compound("58:2::{d}:{d}:{d}", .{ c.r, c.g, c.b }),
+        .ansi => |a| {
+            try p.compound("58:5:");
+            try seq.writeInt(p.w, @intFromEnum(a));
+        },
+        .palette => |n| {
+            try p.compound("58:5:");
+            try seq.writeInt(p.w, n);
+        },
+        .rgb => |c| {
+            try p.compound("58:2::");
+            try seq.writeInt(p.w, c.r);
+            try p.subfield(c.g);
+            try p.subfield(c.b);
+        },
     }
 }
 
@@ -297,6 +356,7 @@ pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
     if (from.hidden and !to.hidden) try params.code(28);
     if (from.strikethrough and !to.strikethrough) try params.code(29);
     if (from.overline and !to.overline) try params.code(55);
+    if (from.script != to.script and to.script == .none) try params.code(75);
 
     // Hence the `or off_bold_dim`: turning one of the pair off has just
     // turned the other off too, so the survivor is stated again.
@@ -310,7 +370,8 @@ pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
             // heard of `4:1` still draw it.
             try params.code(4);
         } else {
-            try params.compound("4:{d}", .{@intFromEnum(to.underline)});
+            try params.compound("4:");
+            try seq.writeInt(w, @intFromEnum(to.underline));
         }
     }
     if (to.blink and !from.blink) try params.code(5);
@@ -318,6 +379,9 @@ pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
     if (to.hidden and !from.hidden) try params.code(8);
     if (to.strikethrough and !from.strikethrough) try params.code(9);
     if (to.overline and !from.overline) try params.code(53);
+    if (to.script != from.script and to.script != .none) {
+        try params.code(@intFromEnum(to.script));
+    }
 
     if (!std.meta.eql(from.fg, to.fg)) try writeFgBg(&params, to.fg, 39, 30, 90, 38);
     if (!std.meta.eql(from.bg, to.bg)) try writeFgBg(&params, to.bg, 49, 40, 100, 48);
@@ -731,4 +795,63 @@ test "an overline that stays on writes nothing" {
         .{ .overline = true, .bold = true },
     );
     try std.testing.expectEqualStrings("", out.written());
+}
+
+test "a superscript and a subscript write their own codes" {
+    const cases = [_]struct { style: Style, bytes: []const u8 }{
+        .{ .style = .{ .script = .superscript }, .bytes = "\x1b[73m" },
+        .{ .style = .{ .script = .subscript }, .bytes = "\x1b[74m" },
+    };
+    for (cases) |case| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+        try setStyle(&out.writer, case.style);
+        try std.testing.expectEqualStrings(case.bytes, out.written());
+    }
+}
+
+test "the script diff writes one code, and 75 only on the way back to none" {
+    const cases = [_]struct { from: Script, to: Script, bytes: []const u8 }{
+        .{ .from = .none, .to = .none, .bytes = "" },
+        .{ .from = .none, .to = .superscript, .bytes = "\x1b[73m" },
+        .{ .from = .none, .to = .subscript, .bytes = "\x1b[74m" },
+        .{ .from = .superscript, .to = .subscript, .bytes = "\x1b[74m" },
+        .{ .from = .subscript, .to = .superscript, .bytes = "\x1b[73m" },
+        .{ .from = .superscript, .to = .none, .bytes = "\x1b[75m" },
+        .{ .from = .subscript, .to = .none, .bytes = "\x1b[75m" },
+        .{ .from = .subscript, .to = .subscript, .bytes = "" },
+    };
+    for (cases) |case| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+        try diffStyle(&out.writer, .{ .script = case.from }, .{ .script = case.to });
+        try std.testing.expectEqualStrings(case.bytes, out.written());
+    }
+}
+
+test "the script travels with every other attribute in one sequence" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try diffStyle(
+        &out.writer,
+        .{ .bold = true, .script = .subscript },
+        .{ .italic = true, .script = .superscript },
+    );
+    try std.testing.expectEqualStrings("\x1b[22;3;73m", out.written());
+}
+
+test "a style has no padding, so two of them compare byte for byte" {
+    // The comptime block above asserts it; this says what it buys, which is
+    // that a renderer may compare styles -- and rows of cells holding them --
+    // without walking the fields.
+    const a: Style = .{ .bold = true, .fg = .{ .ansi = .red } };
+    var b: Style = undefined;
+    @memset(std.mem.asBytes(&b), 0xaa);
+    b = a;
+    try std.testing.expectEqualSlices(u8, std.mem.asBytes(&a), std.mem.asBytes(&b));
+
+    const c: Style = .{ .bold = true, .fg = .{ .ansi = .blue } };
+    try std.testing.expect(!std.mem.eql(u8, std.mem.asBytes(&a), std.mem.asBytes(&c)));
+    try std.testing.expectEqual(@as(usize, 1), @alignOf(Style));
 }

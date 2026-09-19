@@ -24,9 +24,11 @@
 const clipboard = @import("clipboard.zig");
 const cursor = @import("cursor.zig");
 const device = @import("device.zig");
+const graphics = @import("graphics.zig");
 const key = @import("key.zig");
 const mode = @import("mode.zig");
 const mouse_events = @import("mouse.zig");
+const multicursor = @import("multicursor.zig");
 const notifications = @import("notify.zig");
 const osc = @import("osc.zig");
 const query = @import("query.zig");
@@ -41,6 +43,8 @@ const win32 = @import("win32.zig");
 
 /// Sets the window title: `OSC 2 ; text BEL`.
 pub const title = osc.title;
+/// Sets the icon name, the short label shown where a title will not fit.
+pub const iconName = osc.iconName;
 /// Pushes the window title onto the terminal's title stack.
 pub const titlePush = osc.titlePush;
 /// Pops the window title off the terminal's title stack.
@@ -53,6 +57,21 @@ pub const hyperlinkStart = osc.hyperlinkStart;
 pub const hyperlinkEnd = osc.hyperlinkEnd;
 /// Writes one piece of text as a hyperlink.
 pub const hyperlink = osc.hyperlink;
+
+//=========================================================================
+// Text sizing, OSC 66.
+//=========================================================================
+
+/// Where fractionally scaled text sits in its block, vertically.
+pub const VerticalAlign = osc.VerticalAlign;
+/// The same horizontally.
+pub const HorizontalAlign = osc.HorizontalAlign;
+/// How big a piece of text is drawn, and in how many cells.
+pub const TextSize = osc.TextSize;
+/// Draws text at a size, and says how many cells it takes (OSC 66).
+pub const textSize = osc.textSize;
+/// The most text one OSC 66 sequence may carry.
+pub const text_size_max = osc.text_size_max;
 
 //=========================================================================
 // Semantic prompt marks, OSC 133.
@@ -126,6 +145,9 @@ pub const inBandResize = mode.inBandResize;
 pub const win32Input = mode.win32Input;
 /// Auto-wrap at the last column, DECAWM (mode 7).
 pub const autoWrap = mode.autoWrap;
+/// Unasked reports when the terminal's palette turns light or dark
+/// (mode 2031).
+pub const colorScheme = mode.colorScheme;
 /// Which mouse reports a program wants.
 pub const Mouse = mode.Mouse;
 /// Sets every mouse mode at once, each flag its own `h` or `l`.
@@ -180,6 +202,12 @@ pub const requestExtendedCursorPosition = query.requestExtendedCursorPosition;
 pub const ExtendedCursorPosition = query.ExtendedCursorPosition;
 /// Reads a DEC extended cursor position report, or null.
 pub const parseExtendedCursorPosition = query.parseExtendedCursorPosition;
+/// Which way round the terminal's palette is.
+pub const ColorScheme = query.ColorScheme;
+/// Asks which way round the terminal's palette is (`CSI ? 996 n`).
+pub const queryColorScheme = query.queryColorScheme;
+/// Reads a colour scheme report, or null.
+pub const parseColorSchemeReply = query.parseColorSchemeReply;
 
 //=========================================================================
 // Mouse reports.
@@ -254,6 +282,8 @@ pub const insertChars = cursor.insertChars;
 pub const deleteChars = cursor.deleteChars;
 /// Erases cells from the cursor rightwards, without moving anything.
 pub const eraseChars = cursor.eraseChars;
+/// Repeats the last character written, REP.
+pub const repeatChar = cursor.repeatChar;
 
 //=========================================================================
 // Styles and colour, SGR.
@@ -267,6 +297,8 @@ pub const Rgb = style.Rgb;
 pub const Color = style.Color;
 /// Which underline a cell carries.
 pub const Underline = style.Underline;
+/// Whether a cell's glyphs are raised, lowered, or on the baseline.
+pub const Script = style.Script;
 /// Everything SGR can say about a cell, in one value.
 pub const Style = style.Style;
 /// Clears every attribute and both colours.
@@ -394,13 +426,112 @@ pub const Capabilities = tcap.Capabilities;
 /// Reads an XTGETTCAP reply, or null.
 pub const parseCapabilityReply = tcap.parseCapabilityReply;
 
+//=========================================================================
+// The kitty graphics protocol.
+//=========================================================================
+
+/// The shape of the pixels being sent: RGB, RGBA or PNG.
+pub const GraphicsFormat = graphics.GraphicsFormat;
+/// Where the terminal reads the pixels from: the escape code, a file, a
+/// temporary file, or a shared memory object.
+pub const GraphicsMedium = graphics.GraphicsMedium;
+/// How much the terminal may say back about a graphics command.
+pub const GraphicsQuiet = graphics.GraphicsQuiet;
+/// Which image a graphics command is about: an id, a number, or neither.
+pub const GraphicsImage = graphics.GraphicsImage;
+/// A rectangle of a source image, in pixels.
+pub const GraphicsRect = graphics.GraphicsRect;
+/// What a transmit does with the image once it has it.
+pub const GraphicsAction = graphics.GraphicsAction;
+/// Where a placement goes and how much of the image it shows.
+pub const Placement = graphics.Placement;
+/// One image on its way to the terminal.
+pub const Transmit = graphics.Transmit;
+/// A command that shows an image already sent.
+pub const Place = graphics.Place;
+/// What a delete command names.
+pub const DeleteTarget = graphics.DeleteTarget;
+/// A command that takes images or placements off the screen.
+pub const Delete = graphics.Delete;
+/// Sends an image, chunked by the protocol's rule.
+pub const transmitImage = graphics.transmitImage;
+/// Shows an image the terminal already has.
+pub const placeImage = graphics.placeImage;
+/// Takes images or placements off the screen.
+pub const deleteImage = graphics.deleteImage;
+/// Asks whether the terminal implements the graphics protocol at all.
+pub const queryGraphics = graphics.queryGraphics;
+/// The image bytes one transmit sequence carries.
+pub const graphics_chunk_bytes = graphics.chunk_bytes;
+/// The most base64 one transmit sequence may carry.
+pub const graphics_chunk_base64_max = graphics.chunk_base64_max;
+/// One row of a Unicode placeholder grid.
+pub const Placeholder = graphics.Placeholder;
+/// Writes one row of a Unicode placeholder, colours included.
+pub const placeholderRow = graphics.placeholderRow;
+/// Writes one placeholder cell and its diacritics.
+pub const placeholderCell = graphics.placeholderCell;
+/// The character that stands in for an image cell, U+10EEEE.
+pub const graphics_placeholder = graphics.placeholder;
+/// How many rows or columns a placeholder grid can address.
+pub const graphics_placeholder_max = graphics.placeholder_max;
+
+//=========================================================================
+// The multiple cursors protocol.
+//=========================================================================
+
+/// The shape an extra cursor takes.
+pub const ExtraCursorShape = multicursor.ExtraCursorShape;
+/// A cell an extra cursor sits on, counting from one.
+pub const CursorCell = multicursor.CursorCell;
+/// A rectangle of cells, both corners included.
+pub const CursorRect = multicursor.CursorRect;
+/// Where a shape is being set: the main cursor, cells, or rectangles.
+pub const CursorSpan = multicursor.CursorSpan;
+/// Which half of the extra cursors' colour pair is being set.
+pub const CursorColorTarget = multicursor.CursorColorTarget;
+/// A colour for the extra cursors.
+pub const CursorColor = multicursor.CursorColor;
+/// Sets a shape on every cell the spans name.
+pub const extraCursors = multicursor.extraCursors;
+/// Takes every extra cursor off the screen.
+pub const extraCursorsClear = multicursor.extraCursorsClear;
+/// Sets one half of the extra cursors' colour pair.
+pub const extraCursorColor = multicursor.extraCursorColor;
+/// Asks whether the terminal implements the protocol at all.
+pub const queryExtraCursorSupport = multicursor.queryExtraCursorSupport;
+/// Asks what extra cursors are set now.
+pub const queryExtraCursors = multicursor.queryExtraCursors;
+/// Asks what colour pair the extra cursors are drawn in.
+pub const queryExtraCursorColors = multicursor.queryExtraCursorColors;
+/// What a terminal says it can do with extra cursors.
+pub const ExtraCursorSupport = multicursor.ExtraCursorSupport;
+/// Reads a support reply, or null.
+pub const parseExtraCursorSupport = multicursor.parseExtraCursorSupport;
+/// One extra cursor the terminal says is set.
+pub const ExtraCursorAt = multicursor.ExtraCursorAt;
+/// A terminal's answer to `queryExtraCursors`.
+pub const ExtraCursorReport = multicursor.ExtraCursorReport;
+/// The cursors one reply names, one at a time.
+pub const ExtraCursors = multicursor.ExtraCursors;
+/// Reads a set-cursors reply, or null.
+pub const parseExtraCursors = multicursor.parseExtraCursors;
+/// The colour pair a terminal says the extra cursors are drawn in.
+pub const ExtraCursorColors = multicursor.ExtraCursorColors;
+/// Reads a cursor colour reply, or null.
+pub const parseExtraCursorColors = multicursor.parseExtraCursorColors;
+
 test {
+    _ = @import("base64.zig");
+    _ = @import("bench.zig");
     _ = @import("clipboard.zig");
     _ = @import("cursor.zig");
     _ = @import("device.zig");
+    _ = @import("graphics.zig");
     _ = @import("key.zig");
     _ = @import("mode.zig");
     _ = @import("mouse.zig");
+    _ = @import("multicursor.zig");
     _ = @import("notify.zig");
     _ = @import("osc.zig");
     _ = @import("query.zig");
@@ -507,6 +638,26 @@ test "the root module re-exports what the README promises" {
     try queryCapability(w, "Co");
     try queryCapabilities(w, &.{ "Co", "TN" });
 
+    try iconName(w, "morse");
+    try textSize(w, .{ .scale = 2 }, "big");
+    try repeatChar(w, 3);
+    try colorScheme.set(w, true);
+    try queryColorScheme(w);
+
+    try transmitImage(w, .{ .image = .{ .id = 1 }, .width = 1, .height = 1 }, "abc");
+    try placeImage(w, .{ .image = .{ .id = 1 }, .placement = .{ .z = -1 } });
+    try deleteImage(w, .{ .target = .{ .image = .{ .id = 1 } }, .free = true });
+    try queryGraphics(w, 31);
+    try placeholderRow(w, .{ .id = 1, .row = 0, .columns = 1 });
+    try placeholderCell(w, 0, 0, 0);
+
+    try extraCursors(w, .main, &.{.{ .cells = &.{.{ .row = 1, .col = 1 }} }});
+    try extraCursorsClear(w);
+    try extraCursorColor(w, .cursor, .{ .indexed = 4 });
+    try queryExtraCursorSupport(w);
+    try queryExtraCursors(w);
+    try queryExtraCursorColors(w);
+
     try std.testing.expectEqual(Clipboard.clipboard, parseClipboardReply("\x1b]52;c;aGk=\x1b\\").?.target);
     try std.testing.expectEqual(ModeState.set, parseModeReply("\x1b[?2026;1$y").?.state);
     try std.testing.expectEqual(@as(u32, 12), parseCursorPosition("\x1b[12;40R").?.row);
@@ -561,6 +712,49 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(@as(usize, 2), cap.nameLen());
     try std.testing.expectEqual(@as(usize, 3), cap.valueLen());
 
+    try std.testing.expectEqual(ColorScheme.dark, parseColorSchemeReply("\x1b[?997;1n").?);
+    try std.testing.expect(parseExtraCursorSupport("\x1b[>1;29 q").?.block);
+    const set_cursors: ExtraCursorReport = parseExtraCursors("\x1b[>100;1:2:7:1 q").?;
+    var cursor_list: ExtraCursors = set_cursors.iterator();
+    const at: ExtraCursorAt = cursor_list.next().?;
+    try std.testing.expectEqual(ExtraCursorShape.block, at.shape);
+    try std.testing.expectEqual(CursorCell{ .row = 7, .col = 1 }, at.where.cell);
+    const pair: ExtraCursorColors = parseExtraCursorColors("\x1b[>101;30:0;40:1 q").?;
+    try std.testing.expectEqual(CursorColor.unset, pair.text);
+
+    const span: CursorSpan = .main_cursor;
+    const box: CursorRect = .{ .top = 1, .left = 1, .bottom = 2, .right = 2 };
+    const which: CursorColorTarget = .text;
+    try std.testing.expect(span == .main_cursor and box.top == 1 and which == .text);
+
+    const image: GraphicsImage = .{ .id = 1 };
+    const area: GraphicsRect = .{ .width = 4, .height = 4 };
+    const how: GraphicsAction = .store;
+    const shown: Placement = .{ .z = -1 };
+    const sending: Transmit = .{ .format = .png, .medium = .file, .quiet = .silent };
+    const showing: Place = .{ .image = image, .placement = shown };
+    const removing: Delete = .{ .target = .all };
+    const gone: DeleteTarget = .at_cursor;
+    const grid: Placeholder = .{ .id = 1, .row = 0, .columns = 1 };
+    try std.testing.expect(image == .id and area.width == 4 and how == .store);
+    try std.testing.expect(sending.format == .png and showing.placement.z == -1);
+    try std.testing.expect(removing.target == .all and gone == .at_cursor);
+    try std.testing.expect(grid.columns == 1 and graphics_placeholder == 0x10EEEE);
+    try std.testing.expectEqual(@as(usize, 4096), graphics_chunk_base64_max);
+    try std.testing.expectEqual(@as(usize, 3072), graphics_chunk_bytes);
+    try std.testing.expectEqual(@as(u16, 297), graphics_placeholder_max);
+    try std.testing.expectEqual(GraphicsFormat.rgba, GraphicsFormat.rgba);
+    try std.testing.expectEqual(GraphicsMedium.direct, GraphicsMedium.direct);
+    try std.testing.expectEqual(GraphicsQuiet.answers, GraphicsQuiet.answers);
+
+    const scaled: TextSize = .{ .scale = 2, .vertical = .center, .horizontal = .right };
+    try std.testing.expect(scaled.vertical == VerticalAlign.center);
+    try std.testing.expect(scaled.horizontal == HorizontalAlign.right);
+    try std.testing.expectEqual(@as(usize, 4096), text_size_max);
+
+    const raised: Script = .superscript;
+    try std.testing.expect(raised == .superscript);
+
     const grew: Resize = .{ .rows = 24, .cols = 80 };
     try std.testing.expect(grew.rows == 24 and grew.xpixels == 0);
 
@@ -607,10 +801,10 @@ test "the root module re-exports what the README promises" {
     const da: DeviceAttributes = .{ .class = 1 };
     const da2: SecondaryDeviceAttributes = .{ .terminal_type = 0, .version = 0 };
     const colours: ColorReport = .{ .target = .cursor, .color = wide };
-    const graphics: GraphicsResponse = .{ .message = "OK" };
+    const acknowledged: GraphicsResponse = .{ .message = "OK" };
     try std.testing.expectEqual(@as(u8, 255), wide.to8().r);
     try std.testing.expect(da.class == 1 and da2.version == 0);
-    try std.testing.expect(colours.target == .cursor and graphics.ok());
+    try std.testing.expect(colours.target == .cursor and acknowledged.ok());
 
     const done: Progress = .{ .percent = 100 };
     try std.testing.expect(done == .percent and done.percent == 100);

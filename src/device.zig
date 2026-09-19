@@ -9,6 +9,11 @@
 //! query says nothing — no error, no empty reply, nothing on the input at
 //! all — which is itself the answer, and the only way to read it is to stop
 //! waiting. None of these may be waited on without a timeout the caller owns.
+//!
+//! What this file will never hold: the waiting. No timeout, no cache of what
+//! a terminal answered last time, no guess at a capability from a terminal's
+//! name. A question goes out, an answer comes back or does not, and what to
+//! make of that is the caller's.
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
@@ -26,11 +31,6 @@ const KittyFlags = mode.KittyFlags;
 /// written from, because a background the terminal reported and a background
 /// the program draws are the same kind of thing.
 const Rgb = style.Rgb;
-
-/// `APC`, the application program command introducer, spelled `ESC _`. Not in
-/// `seq` because the kitty graphics response is the only APC this package
-/// reads.
-const apc = [_]u8{ seq.esc, '_' };
 
 //=========================================================================
 // Primary device attributes.
@@ -288,7 +288,8 @@ pub const Rgb16 = struct {
 /// reads. Terminals that do not implement the query answer nothing.
 pub fn queryColor(w: *Writer, target: ColorTarget) Writer.Error!void {
     try w.writeAll(seq.osc);
-    try w.print("{d};?", .{@intFromEnum(target)});
+    try seq.writeInt(w, @intFromEnum(target));
+    try w.writeAll(";?");
     try w.writeAll(seq.st);
 }
 
@@ -300,7 +301,8 @@ pub fn queryColor(w: *Writer, target: ColorTarget) Writer.Error!void {
 /// choose.
 pub fn setColor(w: *Writer, target: ColorTarget, color: Rgb16) Writer.Error!void {
     try w.writeAll(seq.osc);
-    try w.print("{d};", .{@intFromEnum(target)});
+    try seq.writeInt(w, @intFromEnum(target));
+    try w.writeByte(';');
     try writeRgb(w, color);
     try w.writeAll(seq.st);
 }
@@ -314,7 +316,8 @@ pub fn setColor(w: *Writer, target: ColorTarget, color: Rgb16) Writer.Error!void
 /// it again with `setColor`.
 pub fn resetColor(w: *Writer, target: ColorTarget) Writer.Error!void {
     try w.writeAll(seq.osc);
-    try w.print("{d};", .{@as(u16, @intFromEnum(target)) + 100});
+    try seq.writeInt(w, @as(u16, @intFromEnum(target)) + 100);
+    try w.writeByte(';');
     try w.writeAll(seq.st);
 }
 
@@ -366,7 +369,12 @@ pub fn parseColorReply(bytes: []const u8) ?ColorReport {
 /// Writes a colour in the form every OSC that carries one uses:
 /// `rgb:rrrr/gggg/bbbb`, four lowercase hex digits a channel.
 fn writeRgb(w: *Writer, color: Rgb16) Writer.Error!void {
-    try w.print("rgb:{x:0>4}/{x:0>4}/{x:0>4}", .{ color.r, color.g, color.b });
+    try w.writeAll("rgb:");
+    try seq.writeHex(w, color.r, 4);
+    try w.writeByte('/');
+    try seq.writeHex(w, color.g, 4);
+    try w.writeByte('/');
+    try seq.writeHex(w, color.b, 4);
 }
 
 /// Reads the `rgb:rrrr/gggg/bbbb` body an OSC colour reply carries, at any
@@ -427,7 +435,9 @@ pub const palette_size: u16 = 256;
 /// them in one reply, which is a form `parsePaletteReply` does not read.
 pub fn queryPaletteColor(w: *Writer, index: u8) Writer.Error!void {
     try w.writeAll(seq.osc);
-    try w.print("4;{d};?", .{index});
+    try w.writeAll("4;");
+    try seq.writeInt(w, index);
+    try w.writeAll(";?");
     try w.writeAll(seq.st);
 }
 
@@ -439,7 +449,9 @@ pub fn queryPaletteColor(w: *Writer, index: u8) Writer.Error!void {
 /// program that sets an entry should call `resetPaletteColor` on the way out.
 pub fn setPaletteColor(w: *Writer, index: u8, color: Rgb16) Writer.Error!void {
     try w.writeAll(seq.osc);
-    try w.print("4;{d};", .{index});
+    try w.writeAll("4;");
+    try seq.writeInt(w, index);
+    try w.writeByte(';');
     try writeRgb(w, color);
     try w.writeAll(seq.st);
 }
@@ -452,7 +464,8 @@ pub fn setPaletteColor(w: *Writer, index: u8, color: Rgb16) Writer.Error!void {
 /// the entry with `queryPaletteColor` first and set it again afterwards.
 pub fn resetPaletteColor(w: *Writer, index: u8) Writer.Error!void {
     try w.writeAll(seq.osc);
-    try w.print("104;{d}", .{index});
+    try w.writeAll("104;");
+    try seq.writeInt(w, index);
     try w.writeAll(seq.st);
 }
 
@@ -545,7 +558,7 @@ pub const SizeQuery = enum(u8) {
 /// hand should prefer it and keep this for the cases where it has none.
 pub fn queryWindowSize(w: *Writer, what: SizeQuery) Writer.Error!void {
     try w.writeAll(seq.csi);
-    try w.print("{d}", .{@intFromEnum(what)});
+    try seq.writeInt(w, @intFromEnum(what));
     try w.writeByte('t');
 }
 
@@ -557,7 +570,9 @@ pub fn queryWindowSize(w: *Writer, what: SizeQuery) Writer.Error!void {
 /// `inBandResize` on and wait for the report.
 pub fn resizeTextArea(w: *Writer, rows: u32, cols: u32) Writer.Error!void {
     try w.writeAll(seq.csi ++ "8;");
-    try w.print("{d};{d}", .{ rows, cols });
+    try seq.writeInt(w, rows);
+    try w.writeByte(';');
+    try seq.writeInt(w, cols);
     try w.writeByte('t');
 }
 
@@ -676,8 +691,8 @@ pub const GraphicsResponse = struct {
 /// anything else. `bytes` must be exactly the sequence, with nothing before
 /// or after it.
 pub fn parseGraphicsResponse(bytes: []const u8) ?GraphicsResponse {
-    if (!std.mem.startsWith(u8, bytes, &apc)) return null;
-    var rest = bytes[apc.len..];
+    if (!std.mem.startsWith(u8, bytes, seq.apc)) return null;
+    var rest = bytes[seq.apc.len..];
     if (rest.len == 0 or rest[0] != 'G') return null;
     rest = rest[1..];
 

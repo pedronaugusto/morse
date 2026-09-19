@@ -24,6 +24,11 @@
 //! depend on a mode the input stream does not carry -- so it cannot even be
 //! framed without knowing what was asked for. It was superseded by SGR before
 //! it was widely implemented.
+//!
+//! What this file will never hold: a gesture. A drag, a double click, a
+//! selection and a scroll with momentum are all built out of these reports by
+//! something that remembers the last one, and nothing here remembers
+//! anything.
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
@@ -106,7 +111,11 @@ pub fn encodeMouse(w: *Writer, ev: MouseEvent) Writer.Error!void {
     if (ev.motion) code |= 32;
 
     try w.writeAll(seq.csi ++ "<");
-    try w.print("{d};{d};{d}", .{ code, ev.x, ev.y });
+    try seq.writeInt(w, code);
+    try w.writeByte(';');
+    try seq.writeInt(w, ev.x);
+    try w.writeByte(';');
+    try seq.writeInt(w, ev.y);
     try w.writeByte(if (ev.press) 'M' else 'm');
 }
 

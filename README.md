@@ -18,14 +18,14 @@ const morse = @import("morse");
 
 // Any `*std.Io.Writer` will do -- a buffered writer over stdout is the
 // real one. Nothing below allocates or flushes: batching is yours.
-var buffer: [1024]u8 = undefined;
+var buffer: [2048]u8 = undefined;
 var out: std.Io.Writer = .fixed(&buffer);
 const w = &out;
 
-// Take the screen: alternate buffer, no cursor, synchronised repaints.
+// Take the screen: alternate buffer, no cursor. Synchronised output is
+// not here -- it is a bracket around each frame, further down.
 try morse.altScreen.set(w, true);
 try morse.cursorVisible.set(w, false);
-try morse.syncOutput.set(w, true);
 
 // Ask for mouse press and wheel reports in SGR form -- and, by saying so
 // in one call, for no report per cell the pointer crosses.
@@ -41,14 +41,24 @@ try morse.kittyKeyboardPush(w, .{
 try morse.bracketedPaste.set(w, true);
 try morse.inBandResize.set(w, true);
 
+// And ask to be told when the user's theme turns light or dark, so a
+// program that chose its colours on startup hears that they no longer
+// suit the background.
+try morse.colorScheme.set(w, true);
+
 // On Windows, keys as sequences rather than as bytes: mode 9001 says
 // which physical key it was and whether it went down or came up, and
 // `KeyParser` reads it into the same `Key` as everything else.
 try morse.win32Input.set(w, true);
 
-// A frame: clear, go to the top-left, write a heading in a style. The
-// second style call writes only what changed -- four bytes rather than a
-// reset and a repaint of attributes that were already right.
+// A frame, bracketed by mode 2026 so the terminal shows all of it or
+// none of it. The bracket is per frame, it does not nest, and each half
+// is its own sequence -- never batched with another mode.
+try morse.syncOutput.set(w, true);
+
+// Clear, go to the top-left, write a heading in a style. The second style
+// call writes only what changed -- four bytes rather than a reset and a
+// repaint of attributes that were already right.
 const heading: morse.Style = .{ .bold = true, .fg = .{ .ansi = .cyan } };
 const body: morse.Style = .{ .fg = .{ .ansi = .cyan } };
 try morse.clearScreen(w, .all);
@@ -58,6 +68,46 @@ try w.writeAll("morse");
 try morse.diffStyle(w, heading, body);
 try w.writeAll(" -- terminal control sequences");
 try morse.resetStyle(w);
+
+// A rule under it, written as one glyph and a repeat count rather than
+// as thirty glyphs.
+try morse.cursorTo(w, 2, 1);
+try w.writeAll("\u{2500}");
+try morse.repeatChar(w, 29);
+
+// A heading drawn two cells tall, and a footnote marker drawn half size
+// at the top of its cell. Terminals without the protocol draw both at
+// the usual size, which still reads correctly.
+try morse.cursorTo(w, 4, 1);
+try morse.textSize(w, .{ .scale = 2 }, "morse");
+try morse.textSize(w, .{ .numerator = 1, .denominator = 2 }, "1");
+
+// An image, under the text. Send the pixels, then place them: the two are
+// separate so the picture can be moved, replaced or taken away without
+// sending it again. `q=2` because nothing here reads the reply.
+const pixels = [_]u8{ 0xff, 0x00, 0x00, 0xff }; // one red pixel, RGBA
+try morse.transmitImage(w, .{
+    .image = .{ .id = 7 },
+    .width = 1,
+    .height = 1,
+    .quiet = .silent,
+}, &pixels);
+try morse.cursorTo(w, 6, 1);
+try morse.placeImage(w, .{
+    .image = .{ .id = 7 },
+    .placement = .{ .id = 1, .columns = 20, .rows = 6, .z = -1, .keep_cursor = true },
+    .quiet = .silent,
+});
+
+// Cursors the terminal draws, at the three places an edit is happening.
+try morse.extraCursors(w, .main, &.{.{ .cells = &.{
+    .{ .row = 8, .col = 4 },
+    .{ .row = 9, .col = 4 },
+    .{ .row = 10, .col = 4 },
+} }});
+
+// The frame ends here.
+try morse.syncOutput.set(w, false);
 
 // A title, a clickable link, and a desktop notification.
 try morse.title(w, "morse");
@@ -74,6 +124,8 @@ try morse.queryMode(w, morse.syncOutput.number);
 try morse.queryDeviceAttributes(w);
 try morse.queryColor(w, .background);
 try morse.queryCapability(w, "Co");
+try morse.queryColorScheme(w);
+try morse.queryGraphics(w, 31);
 
 // Input is one byte stream carrying keys, mouse reports and replies all
 // at once, so one parser frames it. The buffer is yours, nothing here
@@ -83,7 +135,7 @@ var input: [1024]u8 = undefined;
 var keys: morse.KeyParser = .init(&input);
 
 // Control and a in the kitty protocol, then an SGR mouse click.
-var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t");
+var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t\x1b[?997;1n");
 while (events.next()) |event| switch (event) {
     // A key, and whatever text the terminal said it produced.
     .key => |key| std.debug.print("key:        {s}{t} {s}\n", .{
@@ -99,6 +151,8 @@ while (events.next()) |event| switch (event) {
     // A terminal asked for in-band resize says so here rather than
     // through a signal.
     .resize => |size| std.debug.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),
+    // A terminal in mode 2031 says so when the user's theme flips.
+    .color_scheme => |scheme| std.debug.print("scheme:     {t}\n", .{scheme}),
     .paste_start, .paste_end, .focus_in, .focus_out => {},
 };
 
@@ -132,13 +186,20 @@ var pixel = morse.parseMouse("\x1b[<0;321;97M").?;
 pixel.pixels = true;
 const cell = morse.toCells(pixel, 8, 16);
 
-// On the way out, in reverse.
+// On the way out, in reverse. The image and the extra cursors are taken
+// away explicitly: they outlive the program that drew them.
+try morse.extraCursorsClear(w);
+try morse.deleteImage(w, .{
+    .target = .{ .image = .{ .id = 7 } },
+    .free = true,
+    .quiet = .silent,
+});
+try morse.colorScheme.set(w, false);
 try morse.win32Input.set(w, false);
 try morse.inBandResize.set(w, false);
 try morse.bracketedPaste.set(w, false);
 try morse.kittyKeyboardPop(w);
 try morse.mouseOff(w);
-try morse.syncOutput.set(w, false);
 try morse.cursorVisible.set(w, true);
 try morse.altScreen.set(w, false);
 ```
@@ -167,16 +228,20 @@ No dependencies: nothing to link, and no C toolchain involved.
 `fromInputRecord`.
 
 **Styles and colour.** `Style`, `Color`, `Ansi`, `Rgb`, `Underline`,
-`setStyle`, `diffStyle`, `resetStyle`.
+`Script`, `setStyle`, `diffStyle`, `resetStyle`.
 
 **Cursor and screen.** `cursorTo`, `cursorUp`, `cursorDown`, `cursorRight`,
 `cursorLeft`, `cursorNextLine`, `cursorPrevLine`, `cursorColumn`, `cursorRow`,
 `cursorSave`, `cursorRestore`, `ClearLine` / `clearLine`, `ClearScreen` /
 `clearScreen`, `scrollRegion`, `scrollRegionReset`, `scrollUp`, `scrollDown`,
-`insertLines`, `deleteLines`, `insertChars`, `deleteChars`, `eraseChars`.
+`insertLines`, `deleteLines`, `insertChars`, `deleteChars`, `eraseChars`,
+`repeatChar` (REP).
 
-**Titles and links.** `title`, `titlePush`, `titlePop`, `workingDirectory`
-(OSC 7), `hyperlinkStart`, `hyperlinkEnd`, `hyperlink`.
+**Titles and links.** `title`, `iconName` (OSC 1), `titlePush`, `titlePop`,
+`workingDirectory` (OSC 7), `hyperlinkStart`, `hyperlinkEnd`, `hyperlink`.
+
+**Text sizing (OSC 66).** `TextSize`, `textSize`, `VerticalAlign`,
+`HorizontalAlign`, `text_size_max`.
 
 **Clipboard (OSC 52).** `Clipboard`, `clipboardWrite`, `clipboardRequest`,
 `ClipboardReply`, `parseClipboardReply`, `decodeClipboard`.
@@ -186,8 +251,8 @@ No dependencies: nothing to link, and no C toolchain involved.
 `commandStart`, `commandEnd` (OSC 133).
 
 **Modes.** `altScreen`, `bracketedPaste`, `syncOutput`, `focusEvents`,
-`cursorVisible`, `unicodeCore`, `inBandResize`, `autoWrap`, `win32Input` —
-each a type with
+`cursorVisible`, `unicodeCore`, `inBandResize`, `autoWrap`, `win32Input`,
+`colorScheme` — each a type with
 `set(w, on)` and a `number` — plus `setMode` for any mode morse does not name,
 and `Mouse` / `mouse` / `mouseOff`.
 
@@ -210,7 +275,25 @@ and `Mouse` / `mouse` / `mouseOff`.
 (OSC 4 and 104), `queryCapability` / `queryCapabilities` / `CapabilityReply` /
 `Capabilities` / `Capability` / `parseCapabilityReply` (XTGETTCAP),
 `GraphicsResponse` / `parseGraphicsResponse`, `SizeQuery` /
-`queryWindowSize` / `resizeTextArea` / `WindowSize` / `parseWindowSize`.
+`queryWindowSize` / `resizeTextArea` / `WindowSize` / `parseWindowSize`,
+`queryColorScheme` / `ColorScheme` / `parseColorSchemeReply` (`CSI ? 996 n`
+and its `CSI ? 997` answer).
+
+**Graphics.** `transmitImage`, `placeImage`, `deleteImage`, `queryGraphics`,
+with `Transmit`, `Place`, `Placement`, `Delete`, `DeleteTarget`,
+`GraphicsFormat`, `GraphicsMedium`, `GraphicsQuiet`, `GraphicsImage`,
+`GraphicsRect`, `GraphicsAction`, `graphics_chunk_bytes` and
+`graphics_chunk_base64_max`; `placeholderRow`, `placeholderCell`,
+`Placeholder`, `graphics_placeholder`, `graphics_placeholder_max` for the
+Unicode placeholder path.
+
+**Extra cursors.** `extraCursors`, `extraCursorsClear`, `extraCursorColor`,
+`queryExtraCursorSupport`, `queryExtraCursors`, `queryExtraCursorColors`,
+with `ExtraCursorShape`, `CursorCell`, `CursorRect`, `CursorSpan`,
+`CursorColor`, `CursorColorTarget`, and the three replies —
+`ExtraCursorSupport` / `parseExtraCursorSupport`, `ExtraCursorReport` /
+`ExtraCursors` / `ExtraCursorAt` / `parseExtraCursors`, `ExtraCursorColors` /
+`parseExtraCursorColors`.
 
 **Mouse reports.** `Button`, `MouseEvent`, `encodeMouse`, `parseMouse`,
 `parseMouseX10`, `parseMouseRxvt`, `mouse_x10_max`, `toCells`.
@@ -275,6 +358,20 @@ sends meanwhile. Modes 1006 and 1016 are byte-identical, so `parseMouse`
 always reports cells and leaves `MouseEvent.pixels` false: set it yourself and
 call `toCells` with your cell size. Both count from 1.
 
+**An image is chunked by the protocol's rule, not by a buffer.**
+`transmitImage` base64-encodes the pixels straight into the writer in the
+3072-byte pieces that fill a 4096-character chunk exactly, writes `m=1` on
+every sequence but the last, and writes no `m` at all when the whole payload
+fitted in one. A megabyte of pixels costs 3,095 bytes of framing — 0.22% —
+and no buffer of its own. Placement lifecycle, acknowledgements and z-layers
+are not here: they need state between frames, and nothing in morse keeps any.
+
+**Synchronised output is a bracket, not a setting.** Mode 2026 goes on
+immediately before a frame and off immediately after it. It does not nest,
+and `syncOutput.set` writes exactly eight bytes on its own, because at least
+one terminal matches those eight rather than parsing the parameter list —
+which is also why no writer here ever puts two modes in one sequence.
+
 **A parsed reply borrows, and its decoder takes a buffer.** `decodeClipboard`
 writes into a buffer you size from `reply.decodedLen()`, exact because the
 parser has already established the payload is well-formed base64;
@@ -288,8 +385,9 @@ parser has already established the payload is well-formed base64;
 - **No screen model.** No cells, no damage tracking, no layout, no width
   tables, no grapheme segmentation.
 - **No widgets and no event loop.**
-- **No graphics protocol writing.** `parseGraphicsResponse` reads the reply,
-  which arrives interleaved with keys; sending an image does not.
+- **No placement model.** morse writes and reads every graphics command;
+  which image ids are free, what is on screen, and when to swap one picture
+  for another are a layer up.
 - **No capability database.** morse asks the terminal instead; see Design.
 
 ## Platforms
@@ -314,7 +412,12 @@ package can represent, every key sequence in every spelling. Each parser has a
 table of malformed inputs — truncated, wrong terminator, trailing rubbish, a
 number too large for its field — and a `std.testing.fuzz` test asserting it
 never panics, never overflows, and that whatever it accepts survives a round
-trip back through the writer. `KeyParser` is fuzzed fed in two pieces, so the
+trip back through the writer. Where morse writes a command nothing answers —
+a graphics command, an OSC 66 — the suite carries a reader of that grammar so
+the round trip is against the bytes rather than against the writer twice.
+`src/bench.zig` measures what a renderer pays for a style diff, a cursor move,
+a megabyte of pixels and a megabyte of input, and fails the build if any of
+them grows past its budget. `KeyParser` is fuzzed fed in two pieces, so the
 split lands anywhere a real read could have. `zig build test --fuzz` keeps searching;
 [`ci/linux.sh`](ci/linux.sh) runs the Linux half in Docker from a machine that
 is not Linux.

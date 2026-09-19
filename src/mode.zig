@@ -1,6 +1,13 @@
 //! The switches a full-screen program throws: DEC private modes, the mouse
 //! reporting modes, the kitty keyboard protocol stack, and the shape of the
 //! cursor and of the pointer.
+//!
+//! What this file will never hold: a record of which modes are on. A mode is
+//! terminal state, not program state, and the terminal is the thing to ask —
+//! `queryMode` does. Nothing here reads a reply either; the parsers live in
+//! `device.zig` and `query.zig`, as `parseKittyKeyboardReply` does for the
+//! flags `kittyKeyboardPush` writes. The multiple cursors protocol is its own
+//! file, `multicursor.zig`, because it has questions and answers of its own.
 
 const std = @import("std");
 const seq = @import("seq.zig");
@@ -13,7 +20,7 @@ const Writer = std.Io.Writer;
 /// for this one for a mode `morse` does not name.
 pub fn setMode(w: *Writer, mode: u16, on: bool) Writer.Error!void {
     try w.writeAll(seq.csi ++ "?");
-    try w.print("{d}", .{mode});
+    try seq.writeInt(w, mode);
     try w.writeByte(if (on) 'h' else 'l');
 }
 
@@ -45,6 +52,24 @@ pub const bracketedPaste = PrivateMode(2004);
 /// showing until this is turned off, so a multi-sequence repaint lands in one
 /// piece rather than tearing. Unsupported terminals ignore both halves,
 /// which is why it is safe to use unconditionally.
+///
+/// It is a bracket around one frame, not a mode a program sets on entry:
+/// `set(w, true)` immediately before the repaint and `set(w, false)`
+/// immediately after, every frame. Held on across a whole session it stops
+/// the terminal drawing anything; held on across a read it deadlocks a
+/// program waiting for a reply it cannot see.
+///
+/// It does not nest. A second `set(w, true)` inside the bracket is not a
+/// second level, and the first `set(w, false)` ends the frame however many
+/// were written, so a program that brackets a frame and also brackets a piece
+/// of it ends the frame early.
+///
+/// And it must go out alone. `set` writes exactly `CSI ? 2026 h` or
+/// `CSI ? 2026 l` and never joins another mode in one sequence, because at
+/// least one terminal matches those eight bytes exactly rather than parsing
+/// the parameter list -- so `CSI ? 2026 ; 25 h` would turn nothing on there.
+/// Nothing in this file batches modes; `mouse` writes one sequence per mode
+/// for the same reason.
 pub const syncOutput = PrivateMode(2026);
 
 /// Focus reporting (mode 1004). On, the terminal sends `CSI I` when the
@@ -96,6 +121,20 @@ pub const inBandResize = PrivateMode(2048);
 /// it unconditionally and reads whichever form arrives. `KeyParser` drops the
 /// key-up half unless `report_key_up` is set.
 pub const win32Input = PrivateMode(9001);
+
+/// Colour scheme reports (mode 2031). On, the terminal sends
+/// `CSI ? 997 ; 1 n` when its palette becomes dark and `CSI ? 997 ; 2 n`
+/// when it becomes light, unasked, and `KeyParser` hands it back as
+/// `Event.color_scheme`.
+///
+/// It fires whenever the palette changed, not only when the desktop theme
+/// did: a user switching terminal profile is the same event. A program that
+/// picked its colours from the background it found on startup has no other
+/// way to hear that the background is no longer that. `queryColorScheme`
+/// asks the same question once.
+///
+/// Read against the specification text of 2026-08-15.
+pub const colorScheme = PrivateMode(2031);
 
 /// Auto-wrap, DECAWM (mode 7). On -- which is the default -- a glyph written
 /// in the last column moves the cursor to the start of the next row.
@@ -201,7 +240,7 @@ pub const KittyFlags = packed struct(u5) {
 /// had set comes back. Terminals without the protocol ignore the sequence.
 pub fn kittyKeyboardPush(w: *Writer, flags: KittyFlags) Writer.Error!void {
     try w.writeAll(seq.csi ++ ">");
-    try w.print("{d}", .{flags.bits()});
+    try seq.writeInt(w, flags.bits());
     try w.writeByte('u');
 }
 
@@ -244,7 +283,7 @@ pub const CursorShape = enum(u8) {
 /// should set `.default` again on the way out.
 pub fn cursorShape(w: *Writer, shape: CursorShape) Writer.Error!void {
     try w.writeAll(seq.csi);
-    try w.print("{d}", .{@intFromEnum(shape)});
+    try seq.writeInt(w, @intFromEnum(shape));
     try w.writeAll(" q");
 }
 
@@ -338,6 +377,10 @@ test "a named mode writes h and l" {
 }
 
 test "every named mode carries the number it documents" {
+    try std.testing.expectEqual(@as(u16, 2031), colorScheme.number);
+    try std.testing.expectEqual(@as(u16, 2048), inBandResize.number);
+    try std.testing.expectEqual(@as(u16, 9001), win32Input.number);
+    try std.testing.expectEqual(@as(u16, 7), autoWrap.number);
     try std.testing.expectEqual(@as(u16, 1049), altScreen.number);
     try std.testing.expectEqual(@as(u16, 2004), bracketedPaste.number);
     try std.testing.expectEqual(@as(u16, 2026), syncOutput.number);
@@ -355,8 +398,10 @@ test "the named modes write the sequences they document" {
     try focusEvents.set(&out.writer, true);
     try cursorVisible.set(&out.writer, false);
     try unicodeCore.set(&out.writer, true);
+    try colorScheme.set(&out.writer, true);
+    try colorScheme.set(&out.writer, false);
     try std.testing.expectEqualStrings(
-        "\x1b[?2004h\x1b[?2026h\x1b[?1004h\x1b[?25l\x1b[?2027h",
+        "\x1b[?2004h\x1b[?2026h\x1b[?1004h\x1b[?25l\x1b[?2027h\x1b[?2031h\x1b[?2031l",
         out.written(),
     );
 }
@@ -540,4 +585,55 @@ test "in-band resize and auto-wrap write their mode numbers" {
     );
     try std.testing.expectEqual(@as(u16, 2048), inBandResize.number);
     try std.testing.expectEqual(@as(u16, 7), autoWrap.number);
+}
+
+test "the synchronised output bracket is exactly eight bytes each way" {
+    // A terminal that matches these eight bytes rather than parsing them is
+    // the reason `set` never joins another mode in one sequence. Pinned so
+    // that a later change cannot shorten, lengthen or combine them.
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try syncOutput.set(&out.writer, true);
+    try std.testing.expectEqualStrings("\x1b[?2026h", out.written());
+    try std.testing.expectEqual(@as(usize, 8), out.written().len);
+
+    var off: Writer.Allocating = .init(std.testing.allocator);
+    defer off.deinit();
+
+    try syncOutput.set(&off.writer, false);
+    try std.testing.expectEqualStrings("\x1b[?2026l", off.written());
+    try std.testing.expectEqual(@as(usize, 8), off.written().len);
+}
+
+test "a frame bracket is two sequences with the frame between them" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try syncOutput.set(&out.writer, true);
+    try out.writer.writeAll("frame");
+    try syncOutput.set(&out.writer, false);
+    try std.testing.expectEqualStrings("\x1b[?2026hframe\x1b[?2026l", out.written());
+}
+
+test "no writer here puts two modes in one sequence" {
+    // Every mode goes out on its own, whichever call asked for it.
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try mouse(&out.writer, .{ .press = true, .sgr = true });
+    try altScreen.set(&out.writer, true);
+    try syncOutput.set(&out.writer, true);
+    try setMode(&out.writer, 25, false);
+
+    var rest = out.written();
+    var count: usize = 0;
+    while (std.mem.indexOf(u8, rest, seq.csi ++ "?")) |at| : (count += 1) {
+        const body = rest[at + 3 ..];
+        const end = std.mem.indexOfAny(u8, body, "hl").?;
+        // One mode number and nothing else: no `;`, no second parameter.
+        try std.testing.expect(std.mem.indexOfScalar(u8, body[0..end], ';') == null);
+        rest = body[end + 1 ..];
+    }
+    try std.testing.expectEqual(@as(usize, 10), count);
 }

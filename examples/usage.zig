@@ -17,14 +17,14 @@ pub fn main() !void {
 
     // Any `*std.Io.Writer` will do -- a buffered writer over stdout is the
     // real one. Nothing below allocates or flushes: batching is yours.
-    var buffer: [1024]u8 = undefined;
+    var buffer: [2048]u8 = undefined;
     var out: std.Io.Writer = .fixed(&buffer);
     const w = &out;
 
-    // Take the screen: alternate buffer, no cursor, synchronised repaints.
+    // Take the screen: alternate buffer, no cursor. Synchronised output is
+    // not here -- it is a bracket around each frame, further down.
     try morse.altScreen.set(w, true);
     try morse.cursorVisible.set(w, false);
-    try morse.syncOutput.set(w, true);
 
     // Ask for mouse press and wheel reports in SGR form -- and, by saying so
     // in one call, for no report per cell the pointer crosses.
@@ -40,14 +40,24 @@ pub fn main() !void {
     try morse.bracketedPaste.set(w, true);
     try morse.inBandResize.set(w, true);
 
+    // And ask to be told when the user's theme turns light or dark, so a
+    // program that chose its colours on startup hears that they no longer
+    // suit the background.
+    try morse.colorScheme.set(w, true);
+
     // On Windows, keys as sequences rather than as bytes: mode 9001 says
     // which physical key it was and whether it went down or came up, and
     // `KeyParser` reads it into the same `Key` as everything else.
     try morse.win32Input.set(w, true);
 
-    // A frame: clear, go to the top-left, write a heading in a style. The
-    // second style call writes only what changed -- four bytes rather than a
-    // reset and a repaint of attributes that were already right.
+    // A frame, bracketed by mode 2026 so the terminal shows all of it or
+    // none of it. The bracket is per frame, it does not nest, and each half
+    // is its own sequence -- never batched with another mode.
+    try morse.syncOutput.set(w, true);
+
+    // Clear, go to the top-left, write a heading in a style. The second style
+    // call writes only what changed -- four bytes rather than a reset and a
+    // repaint of attributes that were already right.
     const heading: morse.Style = .{ .bold = true, .fg = .{ .ansi = .cyan } };
     const body: morse.Style = .{ .fg = .{ .ansi = .cyan } };
     try morse.clearScreen(w, .all);
@@ -57,6 +67,46 @@ pub fn main() !void {
     try morse.diffStyle(w, heading, body);
     try w.writeAll(" -- terminal control sequences");
     try morse.resetStyle(w);
+
+    // A rule under it, written as one glyph and a repeat count rather than
+    // as thirty glyphs.
+    try morse.cursorTo(w, 2, 1);
+    try w.writeAll("\u{2500}");
+    try morse.repeatChar(w, 29);
+
+    // A heading drawn two cells tall, and a footnote marker drawn half size
+    // at the top of its cell. Terminals without the protocol draw both at
+    // the usual size, which still reads correctly.
+    try morse.cursorTo(w, 4, 1);
+    try morse.textSize(w, .{ .scale = 2 }, "morse");
+    try morse.textSize(w, .{ .numerator = 1, .denominator = 2 }, "1");
+
+    // An image, under the text. Send the pixels, then place them: the two are
+    // separate so the picture can be moved, replaced or taken away without
+    // sending it again. `q=2` because nothing here reads the reply.
+    const pixels = [_]u8{ 0xff, 0x00, 0x00, 0xff }; // one red pixel, RGBA
+    try morse.transmitImage(w, .{
+        .image = .{ .id = 7 },
+        .width = 1,
+        .height = 1,
+        .quiet = .silent,
+    }, &pixels);
+    try morse.cursorTo(w, 6, 1);
+    try morse.placeImage(w, .{
+        .image = .{ .id = 7 },
+        .placement = .{ .id = 1, .columns = 20, .rows = 6, .z = -1, .keep_cursor = true },
+        .quiet = .silent,
+    });
+
+    // Cursors the terminal draws, at the three places an edit is happening.
+    try morse.extraCursors(w, .main, &.{.{ .cells = &.{
+        .{ .row = 8, .col = 4 },
+        .{ .row = 9, .col = 4 },
+        .{ .row = 10, .col = 4 },
+    } }});
+
+    // The frame ends here.
+    try morse.syncOutput.set(w, false);
 
     // A title, a clickable link, and a desktop notification.
     try morse.title(w, "morse");
@@ -73,6 +123,8 @@ pub fn main() !void {
     try morse.queryDeviceAttributes(w);
     try morse.queryColor(w, .background);
     try morse.queryCapability(w, "Co");
+    try morse.queryColorScheme(w);
+    try morse.queryGraphics(w, 31);
 
     // Input is one byte stream carrying keys, mouse reports and replies all
     // at once, so one parser frames it. The buffer is yours, nothing here
@@ -82,7 +134,7 @@ pub fn main() !void {
     var keys: morse.KeyParser = .init(&input);
 
     // Control and a in the kitty protocol, then an SGR mouse click.
-    var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t");
+    var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t\x1b[?997;1n");
     while (events.next()) |event| switch (event) {
         // A key, and whatever text the terminal said it produced.
         .key => |key| std.debug.print("key:        {s}{t} {s}\n", .{
@@ -98,6 +150,8 @@ pub fn main() !void {
         // A terminal asked for in-band resize says so here rather than
         // through a signal.
         .resize => |size| std.debug.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),
+        // A terminal in mode 2031 says so when the user's theme flips.
+        .color_scheme => |scheme| std.debug.print("scheme:     {t}\n", .{scheme}),
         .paste_start, .paste_end, .focus_in, .focus_out => {},
     };
 
@@ -131,13 +185,20 @@ pub fn main() !void {
     pixel.pixels = true;
     const cell = morse.toCells(pixel, 8, 16);
 
-    // On the way out, in reverse.
+    // On the way out, in reverse. The image and the extra cursors are taken
+    // away explicitly: they outlive the program that drew them.
+    try morse.extraCursorsClear(w);
+    try morse.deleteImage(w, .{
+        .target = .{ .image = .{ .id = 7 } },
+        .free = true,
+        .quiet = .silent,
+    });
+    try morse.colorScheme.set(w, false);
     try morse.win32Input.set(w, false);
     try morse.inBandResize.set(w, false);
     try morse.bracketedPaste.set(w, false);
     try morse.kittyKeyboardPop(w);
     try morse.mouseOff(w);
-    try morse.syncOutput.set(w, false);
     try morse.cursorVisible.set(w, true);
     try morse.altScreen.set(w, false);
     // --- README:usage ---

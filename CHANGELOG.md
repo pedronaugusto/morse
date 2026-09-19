@@ -6,6 +6,128 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-19
+
+Four protocols on the writing side, and the numbers to show what they cost.
+
+### Added
+
+- **The kitty graphics protocol, written as well as read.** `transmitImage`
+  sends an image — direct, from a file, from a temporary file or from a
+  shared memory object, as RGB, RGBA or PNG, deflated or not — and chunks it
+  by the protocol's own rule: 3072 bytes of payload per sequence, which is
+  exactly 4096 base64 characters, `m=1` on every sequence but the last, and
+  no `m` key at all when the whole payload fitted in one. `placeImage` shows
+  a transmitted image, with every display key the protocol has — the source
+  rectangle, the offsets inside the first cell, the columns and rows, the
+  z-index, whether the cursor moves, a virtual placement, and a parent to
+  place against. `deleteImage` takes images or placements away, with all
+  eleven targets in both spellings: the lowercase that keeps the pixels so
+  the picture can come back without being sent again, and the uppercase that
+  frees them. `queryGraphics` sends the one-pixel query that says whether the
+  terminal implements any of this. `Quiet` is the `q` key — answers, failures
+  only, or silence.
+
+  The Unicode placeholder path is here too: `placeholderRow` writes a row of
+  U+10EEEE cells with the image id in the foreground colour, the placement id
+  in the underline colour, and the row, column and top byte of the id in the
+  protocol's combining diacritics; `placeholderCell` writes one cell.
+  Together with a virtual placement they put an image on screen through a
+  program that knows nothing about graphics but passes text through.
+
+  Animation is not here. `a=f`, `a=a` and `a=c` give `c`, `r`, `z`, `X` and
+  `Y` meanings of their own, so the encoder would not be shared by them, only
+  shadowed. Neither is the lifecycle above the bytes: which ids are free,
+  what has been acknowledged, and what is on screen need state between
+  frames, and nothing here keeps any.
+
+- **The colour scheme.** `colorScheme`, mode 2031, asks the terminal to say
+  so whenever its palette turns light or dark; `queryColorScheme` writes
+  `CSI ? 996 n` to ask once. Either way the answer is `CSI ? 997 ; 1 n` or
+  `CSI ? 997 ; 2 n`, which `KeyParser` decodes into a new `Event.color_scheme`
+  and `parseColorSchemeReply` reads on its own. It is the one private report
+  a terminal sends unasked, which is why it is an event rather than a reply
+  to fetch. A program that picked its colours from the background it found on
+  startup has had no way until now to hear that the background changed.
+
+- **Text sizing, OSC 66.** `textSize` draws a piece of text at a scale, in a
+  stated number of cells, optionally at a fraction of the cell size and
+  aligned within it — headings, superscripts, subscripts. The `w` key is the
+  half that matters even to a program scaling nothing: it tells the terminal
+  how many cells the text occupies, which is the disagreement between program
+  and terminal that breaks a drawn interface. Nothing answers this sequence
+  and no query asks whether it is implemented; a terminal without it draws
+  the text at one size, which still reads correctly.
+
+- **The multiple cursors protocol.** `extraCursors` asks the terminal to draw
+  real cursors at cells or over rectangles, so an editor showing the same
+  edit in eight places stops faking seven of them out of reverse-video cells
+  that do not blink with the real one. `extraCursorsClear` takes them all
+  away, `extraCursorColor` sets the pair of colours they share.
+  `queryExtraCursorSupport`, `queryExtraCursors` and
+  `queryExtraCursorColors` ask what the terminal can do, what is set, and
+  what colour it is drawing them in; `parseExtraCursorSupport`,
+  `parseExtraCursors` and `parseExtraCursorColors` read the three answers.
+  The set-cursors reply carries an unbounded list, so it comes back as an
+  iterator over the bytes rather than an array — `ExtraCursors` yields one
+  `ExtraCursorAt` per place, flattening the blocks, and drops co-ordinates
+  that do not make up a whole cell or rectangle, as the protocol requires of
+  a terminal reading the same list.
+
+- **`repeatChar`**, REP. A run of one glyph is the only thing a terminal can
+  be told to draw in fewer bytes than the glyphs take: eighty spaces become a
+  space and five more bytes. It must follow the glyph immediately, and a
+  terminal that does not implement it draws a shorter run rather than a wrong
+  one.
+
+- **`iconName`**, OSC 1, the short label shown where a title will not fit.
+
+- **`Style.script`**, SGR 73, 74 and 75: superscript and subscript, diffed
+  like every other attribute. One field rather than two flags, because 74
+  replaces 73 rather than joining it.
+
+- **`src/bench.zig`**, which measures what the hot paths cost and asserts a
+  budget beside each number, so a change that makes one of them
+  algorithmically worse fails the build. The byte budgets are exact and the
+  same everywhere; the time ceilings are wide, because the suite runs in four
+  optimize modes on three operating systems. A megabyte of pixels costs 3,095
+  bytes of framing, 0.22% of the payload, and the number is checked against
+  the formula rather than against a recorded figure.
+
+### Changed
+
+- **Every number is written by hand rather than through the formatter.**
+  `seq.writeInt`, `writeSigned` and `writeHex` fill a stack buffer from the
+  back and write the run once. Measured on the machine this was written on,
+  the hand encoder is about twice as fast in Debug and a third faster in
+  ReleaseSmall, and level in ReleaseFast, where the optimiser inlines the
+  formatter's own fast path; Debug is where the suite and most development
+  run. The suite asserts it is never more than a quarter slower in any
+  optimize mode, and that it agrees with the formatter on every value to ten
+  thousand and at both ends of the range.
+
+- **`Event` gained a variant**, `color_scheme`. A switch over it that listed
+  every case has to be told.
+
+- **`Style` gained a field**, `script`. It is still a plain struct with no
+  padding, and a `comptime` block now pins that, so a renderer may compare
+  two of them — or two rows of cells holding them — byte for byte.
+
+- **The base64 codec moved to `src/base64.zig`**, which the clipboard and the
+  graphics transmit now share. It was spelled once and used once before; two
+  users is one too many for a copy. No public name changed.
+
+- **`syncOutput` says what it is.** Mode 2026 is a bracket around one frame,
+  not a mode to set on entry; it does not nest; and each half goes out as its
+  own eight-byte sequence, because at least one terminal matches those eight
+  bytes rather than parsing the parameter list. The README block and the
+  example now show it around the frame rather than beside `altScreen`, and
+  the suite pins both halves and asserts that no writer here ever puts two
+  modes in one sequence.
+
+- Every module's doc comment now says what the file will never hold, beside
+  what it does.
+
 ## [0.3.0] - 2026-09-14
 
 ### Added
@@ -210,7 +332,8 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
-[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.4.0
 [0.3.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.2.0
 [0.1.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.1.0
