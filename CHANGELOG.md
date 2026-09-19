@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
+- **`fromInputRecord` is gone; `ConsoleDecoder` replaces it.** Pairing the
+  halves of a character needs memory, and a function has none. A caller
+  keeps one decoder and calls `next` with each record:
+  `var records: morse.ConsoleDecoder = .{ .report_key_up = false };` then
+  `records.next(record)`. It returns the same three events on the same
+  terms, plus null while a character is still half-arrived.
+
 - **`Event` gained two variants**, `text` and `overflow`. A switch over it
   that listed every case has to be told.
 
@@ -22,6 +29,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   added anywhere but the front fails the build instead of opening a hole for
   a byte comparison to read. 0.4.0's entry claimed this; it landed one
   commit after that release, and the entry there now says so.
+
+- **The Windows console keyboard reaches what it could not.** A character
+  outside the basic plane arrives as two records carrying the halves of a
+  UTF-16 surrogate pair, and both halves used to come back as nothing; they
+  are now paired, in both shapes — `ConsoleState` is the one `?u16` it takes,
+  and `KeyParser` keeps one for mode 9001. A character composed by holding
+  Alt and typing digits on the keypad rides the Alt key **coming up**, which
+  the key-up filter dropped and mode 9001 skipped; the digits are now held
+  and the character is reported as a press, which is what it is. And AltGr
+  sets the right-Alt bit and a control bit together, which is
+  indistinguishable from control and alt except that it also produced a
+  character — so a record with right Alt, a control bit and a character of
+  its own is reported as the character, with neither modifier.
 
 - **`kittyKeyboardSet`**, `CSI = flags ; mode u`: the flags in effect
   changed without the stack. It is the only way to change them that does not

@@ -483,6 +483,11 @@ pub const KeyParser = struct {
     repeating: ?KeyEvent = null,
     /// How many more times `repeating` is still to be reported.
     repeat_left: u16 = 0,
+    /// Where a console character that takes more than one sequence is held
+    /// while the rest of it arrives: the halves of a surrogate pair, and the
+    /// keypad digits of an Alt composition. Win32 input mode only; every
+    /// other protocol spells a character in one sequence.
+    console: win32.ConsoleState = .{},
     /// The tail of a sequence too long for the buffer, still being skipped.
     skipping: ?Skipping = null,
     /// How many bytes of that sequence have been dropped so far.
@@ -571,6 +576,7 @@ pub const KeyParser = struct {
         p.end = 0;
         p.repeating = null;
         p.repeat_left = 0;
+        p.console.reset();
         p.skipping = null;
         p.dropped = 0;
     }
@@ -624,7 +630,7 @@ pub const Events = struct {
 
             if (p.start == p.end) return null;
 
-            switch (decode(p.buffer[p.start..p.end], p.report_key_up)) {
+            switch (decode(p.buffer[p.start..p.end], p.report_key_up, &p.console)) {
                 .ready => |done| {
                     p.start += done.len;
                     if (done.repeat > 1) switch (done.event) {
@@ -764,9 +770,9 @@ fn ready(event: Event, len: usize) Decoded {
 }
 
 /// Reads one event off the front of `bytes`, which is never empty.
-fn decode(bytes: []const u8, report_key_up: bool) Decoded {
+fn decode(bytes: []const u8, report_key_up: bool, console: *win32.ConsoleState) Decoded {
     std.debug.assert(bytes.len != 0);
-    if (bytes[0] == seq.esc) return decodeEscape(bytes, report_key_up);
+    if (bytes[0] == seq.esc) return decodeEscape(bytes, report_key_up, console);
     return decodeRun(bytes);
 }
 
@@ -896,13 +902,13 @@ pub fn setText(ev: *KeyEvent, bytes: []const u8) void {
 /// Reads a sequence introduced by `ESC`, which is every sequence there is —
 /// and also alt, which terminals spell by putting an `ESC` in front of the
 /// key's own bytes.
-fn decodeEscape(bytes: []const u8, report_key_up: bool) Decoded {
+fn decodeEscape(bytes: []const u8, report_key_up: bool, console: *win32.ConsoleState) Decoded {
     // A lone ESC is both the Escape key and the start of everything else.
     // Nothing in the stream resolves that, so it waits; see KeyParser.flush.
     if (bytes.len == 1) return .incomplete;
 
     return switch (bytes[1]) {
-        '[' => decodeCsi(bytes, report_key_up),
+        '[' => decodeCsi(bytes, report_key_up, console),
         'O' => decodeSs3(bytes),
         // OSC, DCS, SOS, PM and APC: a string with a terminator, framed here
         // and read by whichever parser the caller hands it to.
@@ -1011,7 +1017,7 @@ fn ss3Key(final: u8) ?Key {
 /// marker, an intermediate byte, or more parameters than this parser holds is
 /// still a sequence whose length is known, so it comes back whole as
 /// `Event.unhandled` rather than being resynchronised byte by byte.
-fn decodeCsi(bytes: []const u8, report_key_up: bool) Decoded {
+fn decodeCsi(bytes: []const u8, report_key_up: bool, console: *win32.ConsoleState) Decoded {
     var i: usize = 2;
 
     // A private marker, if there is one: `<` for a mouse report, `?` for a
@@ -1067,12 +1073,18 @@ fn decodeCsi(bytes: []const u8, report_key_up: bool) Decoded {
     // neither of which any other sequence has, so it is decoded here rather
     // than through `csiEvent`.
     if (final == '_') {
-        const report = win32Event(params) orelse return ready(.{ .unhandled = whole }, len);
-        if (report.event.kind == .release and !report_key_up) return .{ .skip = len };
+        const report = win32Event(params, console) orelse
+            return ready(.{ .unhandled = whole }, len);
+        const key_report = switch (report) {
+            .report => |r| r,
+            // Half a character: read, consumed, and not an event yet.
+            .held => return .{ .skip = len },
+        };
+        if (key_report.event.kind == .release and !report_key_up) return .{ .skip = len };
         return .{ .ready = .{
-            .event = .{ .key = report.event },
+            .event = .{ .key = key_report.event },
             .len = len,
-            .repeat = report.repeat,
+            .repeat = key_report.repeat,
         } };
     }
 
@@ -1081,17 +1093,27 @@ fn decodeCsi(bytes: []const u8, report_key_up: bool) Decoded {
 }
 
 /// One key out of a win32 input mode sequence, and how many times it happened.
-const Win32Report = struct { event: KeyEvent, repeat: u16 };
+const Win32Report = union(enum) {
+    /// A key, and how many times it happened.
+    report: struct { event: KeyEvent, repeat: u16 },
+    /// The sequence was read and produced no key: half a character, or a
+    /// keypad digit being composed with Alt. It is consumed either way.
+    held,
+};
 
 /// Reads `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`, the win32 input mode encoding
 /// of one console key record.
+///
+/// `console` is where a character that takes more than one record is held:
+/// the halves of a surrogate pair, and the keypad digits of an Alt
+/// composition. See `win32.ConsoleState`.
 ///
 /// Every field is optional and every one has a documented default: zero for
 /// the virtual key, the scan code, the character and the key-down flag, zero
 /// for the control-key state, and one for the repeat count. A field too large
 /// for the record's own type is not a record this package hands back, so the
 /// sequence comes out whole instead.
-fn win32Event(params: Params) ?Win32Report {
+fn win32Event(params: Params, console: *win32.ConsoleState) ?Win32Report {
     if (params.count > 6) return null;
 
     const vk = std.math.cast(u16, params.get(0, 0) orelse 0) orelse return null;
@@ -1103,8 +1125,12 @@ fn win32Event(params: Params) ?Win32Report {
     const state = params.get(4, 0) orelse 0;
     const repeat = std.math.cast(u16, params.get(5, 0) orelse 1) orelse return null;
 
-    const ev = win32.keyEvent(vk, uc, state, down) orelse return null;
-    return .{ .event = ev, .repeat = @max(repeat, 1) };
+    const ev = switch (console.decode(vk, uc, state, down)) {
+        .key => |ev| ev,
+        .held => return .held,
+        .unknown => return null,
+    };
+    return .{ .report = .{ .event = ev, .repeat = @max(repeat, 1) } };
 }
 
 /// The event a parameterised `CSI` with no private marker stands for, or null
@@ -2563,6 +2589,12 @@ test "win32 input mode carries every modifier combination the encoding has" {
             if (combination & 2 != 0) state |= alt;
             if (combination & 4 != 0) state |= ctrl;
 
+            // A keypad digit with Alt and nothing else is a digit of an
+            // Alt composition, and is held back rather than reported; see
+            // `win32.ConsoleState`.
+            const composing = state == alt and case.vk >= 0x60 and case.vk <= 0x69;
+            if (composing) continue;
+
             const bytes = try std.fmt.bufPrint(
                 &buffer,
                 "\x1b[{d};0;0;1;{d};1_",
@@ -2759,10 +2791,109 @@ test "a win32 sequence this parser cannot read comes back whole" {
         "\x1b[0;0;65536;1;0;1_", // a character too large for its field
         "\x1b[65;0;97;1;0;65536_", // a repeat count too large for its field
         "\x1b[65;0;97;1;0;1;1_", // a field too many
-        "\x1b[0;0;55357;1;0;1_", // half a surrogate pair, which is no codepoint
-        "\x1b[0;0;56832;1;0;1_", // the other half
     };
     for (rejected) |bytes| try expectUnhandled(bytes);
+}
+
+test "win32 input mode pairs the halves of a character outside the basic plane" {
+    // A console sends an astral character as two records, each carrying half
+    // a UTF-16 surrogate pair. Neither half is a codepoint; together they
+    // are one key.
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    var first = parser.feed("\x1b[0;0;55357;1;0;1_");
+    try std.testing.expectEqual(@as(?Event, null), first.next());
+
+    var second = parser.feed("\x1b[0;0;56898;1;0;1_");
+    const ev = second.next().?.key;
+    try std.testing.expectEqual(Key{ .char = 0x1f642 }, ev.key);
+    try std.testing.expectEqualStrings("\u{1f642}", ev.text());
+    try std.testing.expectEqual(@as(?Event, null), second.next());
+}
+
+test "win32 input mode drops a surrogate half that never found its other" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    // A high half, then an ordinary key: the half goes, the key arrives.
+    var events = parser.feed("\x1b[0;0;55357;1;0;1_\x1b[65;0;97;1;0;1_");
+    try std.testing.expectEqual(Key{ .char = 'a' }, events.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+
+    // A low half with nothing in front of it is not a key either.
+    var alone = parser.feed("\x1b[0;0;56898;1;0;1_\x1b[65;0;97;1;0;1_");
+    try std.testing.expectEqual(Key{ .char = 'a' }, alone.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), alone.next());
+}
+
+test "win32 input mode reads the character composed with Alt and the keypad" {
+    // The keypad digits carry nothing and are held; the character arrives on
+    // the Alt key coming up, and is a press, because what happened is that
+    // the user typed a character.
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    const alt = 0x0002;
+    var buffer: [128]u8 = undefined;
+    const digits = try std.fmt.bufPrint(
+        &buffer,
+        "\x1b[18;0;0;1;{d};1_\x1b[97;0;0;1;{d};1_\x1b[103;0;0;1;{d};1_",
+        .{ alt, alt, alt },
+    );
+    var held = parser.feed(digits);
+    // The Alt key going down is a keypress like any other; the two keypad
+    // digits after it are not.
+    try std.testing.expectEqual(Key.left_alt, held.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), held.next());
+
+    // `VK_MENU` coming up, carrying the composed character.
+    var composed = parser.feed("\x1b[18;0;233;0;0;1_");
+    const ev = composed.next().?.key;
+    try std.testing.expectEqual(Key{ .char = 0xe9 }, ev.key);
+    try std.testing.expectEqual(Kind.press, ev.kind);
+    try std.testing.expectEqualStrings("\u{e9}", ev.text());
+    try std.testing.expect(!ev.mods.alt);
+    try std.testing.expectEqual(@as(?Event, null), composed.next());
+}
+
+test "win32 input mode reads AltGr as the character, not as control and alt" {
+    // AltGr sets the right-Alt bit and a control bit together, which is what
+    // control and alt look like. The character is what tells them apart: a
+    // chord produces none, a layout's third level does.
+    const right_alt = 0x0001;
+    const left_ctrl = 0x0008;
+
+    var buffer: [64]u8 = undefined;
+    const altgr = try std.fmt.bufPrint(
+        &buffer,
+        "\x1b[81;0;64;1;{d};1_",
+        .{right_alt | left_ctrl},
+    );
+    const ev = oneKey(altgr).?;
+    try std.testing.expectEqual(Key{ .char = '@' }, ev.key);
+    try std.testing.expect(!ev.mods.alt and !ev.mods.ctrl);
+    try std.testing.expectEqualStrings("@", ev.text());
+
+    // The same bits with no character are still control and alt.
+    const chord = try std.fmt.bufPrint(
+        &buffer,
+        "\x1b[112;0;0;1;{d};1_",
+        .{right_alt | left_ctrl},
+    );
+    const held = oneKey(chord).?;
+    try std.testing.expectEqual(Key{ .f = 1 }, held.key);
+    try std.testing.expect(held.mods.alt and held.mods.ctrl);
+
+    // And left alt with control is control and alt however it is spelled.
+    const left_alt = 0x0002;
+    const both = try std.fmt.bufPrint(
+        &buffer,
+        "\x1b[81;0;64;1;{d};1_",
+        .{left_alt | left_ctrl},
+    );
+    const plain = oneKey(both).?;
+    try std.testing.expect(plain.mods.alt and plain.mods.ctrl);
 }
 
 test "a win32 sequence and a console record decode to the same key" {
@@ -2771,17 +2902,22 @@ test "a win32 sequence and a console record decode to the same key" {
     var buffer: [64]u8 = undefined;
     for (win32_named) |case| {
         for ([_]u32{ 0, 0x10, 0x08, 0x02, 0x1a, 0x80 }) |state| {
+            // A keypad digit with Alt alone held is a digit of a
+            // composition in both shapes, and neither reports it.
+            if (state == 0x02 and case.vk >= 0x60 and case.vk <= 0x69) continue;
+
             const bytes = try std.fmt.bufPrint(
                 &buffer,
                 "\x1b[{d};0;0;1;{d};1_",
                 .{ case.vk, state },
             );
             const from_bytes = oneKey(bytes) orelse return error.TestExpectedEqual;
-            const from_record = win32.fromInputRecord(.{ .key = .{
+            var records: win32.ConsoleDecoder = .{};
+            const from_record = records.next(.{ .key = .{
                 .key_down = true,
                 .virtual_key_code = case.vk,
                 .control_key_state = state,
-            } }, false) orelse return error.TestExpectedEqual;
+            } }) orelse return error.TestExpectedEqual;
             try std.testing.expectEqual(from_bytes, from_record.key);
         }
     }
@@ -2789,12 +2925,13 @@ test "a win32 sequence and a console record decode to the same key" {
     // And with a character in the field, where the layout has already been
     // applied and the text comes with it.
     const typed = oneKey("\x1b[65;30;97;1;0;1_").?;
-    const recorded = win32.fromInputRecord(.{ .key = .{
+    var typed_records: win32.ConsoleDecoder = .{};
+    const recorded = typed_records.next(.{ .key = .{
         .key_down = true,
         .virtual_key_code = 'A',
         .virtual_scan_code = 30,
         .unicode_char = 'a',
-    } }, false).?;
+    } }).?;
     try std.testing.expectEqual(typed, recorded.key);
 }
 

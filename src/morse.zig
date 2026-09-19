@@ -360,9 +360,12 @@ pub const ConsoleSizeRecord = win32.ConsoleSizeRecord;
 pub const ConsoleRecord = win32.ConsoleRecord;
 /// What a console record turned out to be.
 pub const ConsoleEvent = win32.ConsoleEvent;
-/// Translates one console input record into a key, a mouse report or a
-/// resize.
-pub const fromInputRecord = win32.fromInputRecord;
+/// Console input records turned into keys, mouse reports and resizes.
+pub const ConsoleDecoder = win32.ConsoleDecoder;
+/// What a console keyboard has to remember between records.
+pub const ConsoleState = win32.ConsoleState;
+/// What one console key record turned out to be.
+pub const ConsoleKey = win32.ConsoleKey;
 /// The bits of a console `dwControlKeyState`.
 pub const ControlKeyState = win32.ControlKeyState;
 
@@ -800,17 +803,27 @@ test "the root module re-exports what the README promises" {
         .virtual_key_code = 0x25,
         .control_key_state = ControlKeyState.shift,
     } };
-    const console: ConsoleEvent = fromInputRecord(record, false).?;
+    var records: ConsoleDecoder = .{};
+    const console: ConsoleEvent = records.next(record).?;
     try std.testing.expectEqual(Key.left, console.key.key);
     try std.testing.expect(console.key.mods.shift);
 
     const moved: ConsoleMouseRecord = .{ .x = 3, .y = 4, .button_state = 1 };
     const sized: ConsoleSizeRecord = .{ .cols = 80, .rows = 24 };
-    const wheel: ConsoleEvent = fromInputRecord(.{ .mouse = moved }, false).?;
-    const grown: ConsoleEvent = fromInputRecord(.{ .window_buffer_size = sized }, false).?;
+    const wheel: ConsoleEvent = records.next(.{ .mouse = moved }).?;
+    const grown: ConsoleEvent = records.next(.{ .window_buffer_size = sized }).?;
     try std.testing.expectEqual(@as(u32, 4), wheel.mouse.x);
     try std.testing.expectEqual(@as(u32, 24), grown.resize.rows);
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), fromInputRecord(.other, false));
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), records.next(.other));
+    records.reset();
+
+    var console_state: ConsoleState = .{};
+    const half: ConsoleKey = console_state.decode(0, 0xd83d, 0, true);
+    try std.testing.expect(half == .held);
+    try std.testing.expectEqual(
+        Key{ .char = 0x1f642 },
+        console_state.decode(0, 0xde42, 0, true).key.key,
+    );
 
     const erase: ClearLine = .all;
     const wipe: ClearScreen = .scrollback;

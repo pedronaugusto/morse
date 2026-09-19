@@ -163,15 +163,11 @@ pub fn keyFromVirtualKey(vk: u16) ?Key {
 /// `Modifiers.ctrl`; failing that, the control code is read the way the
 /// legacy path reads the same byte.
 ///
-/// Returns null for a key that stands for nothing — no character, no name —
-/// and for half a surrogate pair, which is not a codepoint. Pairing the
-/// halves is the caller's: a console sends a character outside the basic
-/// plane as two events, and nothing here keeps state between them.
+/// Returns null for a key that stands for nothing — no character, no name.
+/// The surrogate halves never reach here: `ConsoleState.key` pairs them
+/// first, because neither half is a codepoint on its own.
 fn keyFromFields(vk: u16, uc: u16, mods: *Modifiers) ?Key {
-    if (uc >= 0x20 and uc != 0x7f) {
-        if (uc >= 0xd800 and uc <= 0xdfff) return null;
-        return .{ .char = uc };
-    }
+    if (uc >= 0x20 and uc != 0x7f) return .{ .char = uc };
     if (keyFromVirtualKey(vk)) |named| return named;
     if (vk >= '0' and vk <= '9') return .{ .char = @intCast(vk) };
     if (vk >= 'A' and vk <= 'Z') return .{ .char = @as(u21, @intCast(vk)) + ('a' - 'A') };
@@ -179,28 +175,154 @@ fn keyFromFields(vk: u16, uc: u16, mods: *Modifiers) ?Key {
     return null;
 }
 
-/// One key event, from either shape, as a `KeyEvent`.
-///
-/// `down` chooses `Kind.press` or `Kind.release`. The text is set from the
-/// character field on the same terms as the rest of the package: what the
-/// terminal said the key produced, and nothing when a modifier other than
-/// shift means the key produced a control code rather than text.
-pub fn keyEvent(vk: u16, uc: u16, control_key_state: u32, down: bool) ?KeyEvent {
-    var mods = modifiers(control_key_state);
-    const which = keyFromFields(vk, uc, &mods) orelse return null;
-
-    var ev: KeyEvent = .{
-        .key = which,
-        .mods = mods,
-        .kind = if (down) .press else .release,
-    };
-    if (uc >= 0x20 and uc != 0x7f and uc < 0xd800) {
-        var utf8: [4]u8 = undefined;
-        const n = std.unicode.utf8Encode(@intCast(uc), &utf8) catch 0;
-        if (n != 0) key.setText(&ev, utf8[0..n]);
-    }
-    return ev;
+/// The high half of a UTF-16 surrogate pair.
+fn isHighSurrogate(unit: u16) bool {
+    return unit >= 0xd800 and unit <= 0xdbff;
 }
+
+/// The low half of a UTF-16 surrogate pair.
+fn isLowSurrogate(unit: u16) bool {
+    return unit >= 0xdc00 and unit <= 0xdfff;
+}
+
+/// A virtual key that is one of the Alt keys.
+fn isAltKey(vk: u16) bool {
+    return vk == 0x12 or vk == 0xa4 or vk == 0xa5;
+}
+
+/// What one console key record turned out to be.
+pub const ConsoleKey = union(enum) {
+    /// A key.
+    key: KeyEvent,
+    /// The record was understood and produced no key yet: half a surrogate
+    /// pair waiting for the other half, or a keypad digit being composed
+    /// into a character with Alt held.
+    held,
+    /// Not a key this package can name.
+    unknown,
+};
+
+/// What a console keyboard has to remember between records.
+///
+/// One field, and it is there because a console sends a character outside
+/// the basic multilingual plane as two records, each carrying half a UTF-16
+/// surrogate pair. Neither half is a codepoint, so neither is a key; held
+/// together they are one.
+///
+/// `KeyParser` keeps one of these for the sequences mode 9001 sends, and
+/// `ConsoleDecoder` keeps one for the records a program reads itself. Both
+/// shapes carry the same fields and both need the same memory.
+pub const ConsoleState = struct {
+    /// The high half of a surrogate pair, waiting for its low half. Dropped
+    /// the moment anything else arrives, because a pair that is not
+    /// consecutive is not a pair.
+    high_surrogate: ?u16 = null,
+
+    /// Forgets a half-arrived character. What a program calls when the
+    /// console has been reset underneath it.
+    pub fn reset(st: *ConsoleState) void {
+        st.high_surrogate = null;
+    }
+
+    /// One key event, from either shape, as a `KeyEvent`.
+    ///
+    /// `down` chooses `Kind.press` or `Kind.release`. The text is set from
+    /// the character field on the same terms as the rest of the package:
+    /// what the terminal said the key produced, and nothing when a modifier
+    /// other than shift means the key produced a control code rather than
+    /// text.
+    ///
+    /// Three things a console does that no other keyboard protocol does are
+    /// handled here. A character outside the basic plane arrives as two
+    /// records and is paired. A character composed by holding Alt and typing
+    /// digits on the keypad arrives on the Alt key **coming up**, with the
+    /// keypad digits themselves carrying nothing, so those are held and the
+    /// character is reported as a press. And AltGr sets the right-Alt bit
+    /// and a control bit together, which is indistinguishable from control
+    /// and alt except that it also produced a character — so a record with
+    /// right Alt, a control bit and a character of its own is reported as
+    /// the character, with neither modifier.
+    pub fn decode(st: *ConsoleState, vk: u16, uc: u16, control_key_state: u32, down: bool) ConsoleKey {
+        const alt_down = control_key_state &
+            (ControlKeyState.left_alt | ControlKeyState.right_alt) != 0;
+        const ctrl_down = control_key_state &
+            (ControlKeyState.left_ctrl | ControlKeyState.right_ctrl) != 0;
+
+        // The composed character, on the way up. It has to be read before
+        // the key-up half is dropped, which is the reason it was missed:
+        // nothing else a program wants arrives on a key release.
+        if (!down and isAltKey(vk) and uc != 0 and !isHighSurrogate(uc) and !isLowSurrogate(uc)) {
+            st.high_surrogate = null;
+            var ev: KeyEvent = .{ .key = .{ .char = uc }, .kind = .press };
+            var utf8: [4]u8 = undefined;
+            const n = std.unicode.utf8Encode(@intCast(uc), &utf8) catch 0;
+            if (n != 0) key.setText(&ev, utf8[0..n]);
+            return .{ .key = ev };
+        }
+
+        // A keypad digit with Alt held and nothing else is one digit of that
+        // composition, not a keypress of its own. Alt and nothing else:
+        // control or shift alongside it makes a chord, which is reported.
+        const shift_down = control_key_state & ControlKeyState.shift != 0;
+        if (down and alt_down and !ctrl_down and !shift_down and
+            vk >= 0x60 and vk <= 0x69 and uc == 0)
+        {
+            return .held;
+        }
+
+        var unit = uc;
+        if (isHighSurrogate(unit)) {
+            st.high_surrogate = unit;
+            return .held;
+        }
+        if (isLowSurrogate(unit)) {
+            const high = st.high_surrogate orelse return .held;
+            st.high_surrogate = null;
+            const cp = 0x10000 +
+                ((@as(u21, high) - 0xd800) << 10) +
+                (@as(u21, unit) - 0xdc00);
+            var ev: KeyEvent = .{
+                .key = .{ .char = cp },
+                .mods = modifiers(control_key_state),
+                .kind = if (down) .press else .release,
+            };
+            var utf8: [4]u8 = undefined;
+            const n = std.unicode.utf8Encode(cp, &utf8) catch 0;
+            if (n != 0) key.setText(&ev, utf8[0..n]);
+            return .{ .key = ev };
+        }
+        // Anything that is not a low surrogate ends a pair that never
+        // finished.
+        st.high_surrogate = null;
+
+        var mods = modifiers(control_key_state);
+
+        // AltGr, which the console cannot spell any other way. The codepoint
+        // is what tells it from control and alt: a chord produces no
+        // character, and a layout's third level does.
+        if (control_key_state & ControlKeyState.right_alt != 0 and ctrl_down and
+            unit >= 0x20 and unit != 0x7f)
+        {
+            mods.alt = false;
+            mods.ctrl = false;
+        }
+
+        const which = keyFromFields(vk, unit, &mods) orelse return .unknown;
+        unit = uc;
+
+        var ev: KeyEvent = .{
+            .key = which,
+            .mods = mods,
+            .kind = if (down) .press else .release,
+        };
+        if (unit >= 0x20 and unit != 0x7f) {
+            var utf8: [4]u8 = undefined;
+            const n = std.unicode.utf8Encode(@intCast(unit), &utf8) catch 0;
+            if (n != 0) key.setText(&ev, utf8[0..n]);
+        }
+        return .{ .key = ev };
+    }
+};
 
 //=========================================================================
 // Console input records.
@@ -299,40 +421,68 @@ pub const ConsoleEvent = union(enum) {
     resize: Resize,
 };
 
-/// Translates one console input record.
+/// Console input records turned into events, one at a time.
 ///
-/// A pure function over the fields: no allocation, no state, and no call into
-/// an operating system. Read the records with `ReadConsoleInputW` or whatever
-/// wrapper you prefer, copy each one into a `ConsoleRecord`, and hand it
-/// here.
+/// It keeps the little state a console keyboard needs — see `ConsoleState` —
+/// which is why it is a value and not a function: a character outside the
+/// basic plane and a character composed with Alt and the keypad each arrive
+/// as more than one record, and nothing can pair them without remembering
+/// the first.
 ///
-/// Returns null for a record that stands for nothing a program acts on: a
-/// menu or focus record, a key event that names no key, and the key-up half
-/// of every keystroke unless `key_up` is true — the console reports both, and
-/// a program that wants only what was typed wants only the downs.
-///
-/// `repeat_count` is not expanded here. One record can stand for several
-/// keypresses, and the field is on the record for a caller to read.
-pub fn fromInputRecord(record: ConsoleRecord, key_up: bool) ?ConsoleEvent {
-    switch (record) {
-        .key => |r| {
-            if (!r.key_down and !key_up) return null;
-            const ev = keyEvent(
-                r.virtual_key_code,
-                r.unicode_char,
-                r.control_key_state,
-                r.key_down,
-            ) orelse return null;
-            return .{ .key = ev };
-        },
-        .mouse => |r| return .{ .mouse = mouseEvent(r) },
-        .window_buffer_size => |r| return .{ .resize = .{
-            .rows = r.rows,
-            .cols = r.cols,
-        } },
-        .other => return null,
+/// No allocation, no call into an operating system, and no console handle.
+/// Read the records with `ReadConsoleInputW` or whatever wrapper you prefer,
+/// copy each one into a `ConsoleRecord`, and hand it to `next`.
+pub const ConsoleDecoder = struct {
+    /// What a half-arrived character is held in.
+    state: ConsoleState = .{},
+    /// Report the key coming up as well as going down. The console reports
+    /// both, and a program that wants only what was typed wants only the
+    /// downs.
+    ///
+    /// The character composed with Alt and the keypad is reported either
+    /// way: it rides a key-up record, but what it is is a keypress, so it
+    /// comes out as one.
+    report_key_up: bool = false,
+
+    /// Forgets a half-arrived character. What a program calls after the
+    /// console has been reset underneath it.
+    pub fn reset(d: *ConsoleDecoder) void {
+        d.state.reset();
     }
-}
+
+    /// The event one record stands for, or null.
+    ///
+    /// Null for a record that stands for nothing a program acts on: a menu
+    /// or focus record, a key event that names no key, half of a character
+    /// still waiting for the rest of itself, and the key coming up unless
+    /// `report_key_up` is set.
+    ///
+    /// `repeat_count` is not expanded here. One record can stand for several
+    /// keypresses, and the field is on the record for a caller to read.
+    pub fn next(d: *ConsoleDecoder, record: ConsoleRecord) ?ConsoleEvent {
+        switch (record) {
+            .key => |r| {
+                const ev = switch (d.state.decode(
+                    r.virtual_key_code,
+                    r.unicode_char,
+                    r.control_key_state,
+                    r.key_down,
+                )) {
+                    .key => |ev| ev,
+                    .held, .unknown => return null,
+                };
+                if (ev.kind == .release and !d.report_key_up) return null;
+                return .{ .key = ev };
+            },
+            .mouse => |r| return .{ .mouse = mouseEvent(r) },
+            .window_buffer_size => |r| return .{ .resize = .{
+                .rows = r.rows,
+                .cols = r.cols,
+            } },
+            .other => return null,
+        }
+    }
+};
 
 /// The mouse report a `MOUSE_EVENT_RECORD` stands for.
 ///
@@ -386,13 +536,21 @@ fn mouseEvent(r: ConsoleMouseRecord) MouseEvent {
     return ev;
 }
 
+/// One record through a decoder of its own, for a test about a single
+/// record. A character that takes two records needs a decoder that lives
+/// across both, and those tests make one.
+fn oneRecord(record: ConsoleRecord, key_up: bool) ?ConsoleEvent {
+    var decoder: ConsoleDecoder = .{ .report_key_up = key_up };
+    return decoder.next(record);
+}
+
 test "a key record comes through as the key it names" {
     const record: ConsoleRecord = .{ .key = .{
         .key_down = true,
         .virtual_key_code = 0x25,
         .virtual_scan_code = 0x4b,
     } };
-    const event = fromInputRecord(record, false).?;
+    const event = oneRecord(record, false).?;
     try std.testing.expectEqual(Key.left, event.key.key);
     try std.testing.expectEqual(key.Kind.press, event.key.kind);
     try std.testing.expectEqual(Modifiers{}, event.key.mods);
@@ -400,7 +558,7 @@ test "a key record comes through as the key it names" {
 }
 
 test "a key record carries the character the layout produced" {
-    const lower = fromInputRecord(.{ .key = .{
+    const lower = oneRecord(.{ .key = .{
         .key_down = true,
         .virtual_key_code = 'A',
         .unicode_char = 'a',
@@ -408,7 +566,7 @@ test "a key record carries the character the layout produced" {
     try std.testing.expectEqual(Key{ .char = 'a' }, lower.key.key);
     try std.testing.expectEqualStrings("a", lower.key.text());
 
-    const upper = fromInputRecord(.{ .key = .{
+    const upper = oneRecord(.{ .key = .{
         .key_down = true,
         .virtual_key_code = 'A',
         .unicode_char = 'A',
@@ -420,7 +578,7 @@ test "a key record carries the character the layout produced" {
 
     // Control and A: the console folds the modifier into the character, and
     // the key comes back as the letter with the modifier beside it.
-    const control = fromInputRecord(.{ .key = .{
+    const control = oneRecord(.{ .key = .{
         .key_down = true,
         .virtual_key_code = 'A',
         .unicode_char = 1,
@@ -436,9 +594,9 @@ test "a key record coming up is dropped unless it is asked for" {
         .key_down = false,
         .virtual_key_code = 0x25,
     } };
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), fromInputRecord(up, false));
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), oneRecord(up, false));
 
-    const seen = fromInputRecord(up, true).?;
+    const seen = oneRecord(up, true).?;
     try std.testing.expectEqual(Key.left, seen.key.key);
     try std.testing.expectEqual(key.Kind.release, seen.key.kind);
 }
@@ -446,16 +604,16 @@ test "a key record coming up is dropped unless it is asked for" {
 test "a key record that names no key at all is null" {
     // A record with no virtual key and no character: what a console sends
     // when a modifier is released on some keyboards.
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), fromInputRecord(.{ .key = .{
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), oneRecord(.{ .key = .{
         .key_down = true,
     } }, false));
 
     // Half a surrogate pair is not a codepoint, and pairing is the caller's.
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), fromInputRecord(.{ .key = .{
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), oneRecord(.{ .key = .{
         .key_down = true,
         .unicode_char = 0xd83d,
     } }, false));
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), fromInputRecord(.{ .key = .{
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), oneRecord(.{ .key = .{
         .key_down = true,
         .unicode_char = 0xde00,
     } }, false));
@@ -469,7 +627,7 @@ test "a record keeps its repeat count for the caller to read" {
         .repeat_count = 4,
     };
     // The translation is per record, so the count is left where it was.
-    const event = fromInputRecord(.{ .key = record }, false).?;
+    const event = oneRecord(.{ .key = record }, false).?;
     try std.testing.expectEqual(Key{ .char = 'a' }, event.key.key);
     try std.testing.expectEqual(@as(u16, 4), record.repeat_count);
 }
@@ -506,7 +664,7 @@ test "the sided modifier bits collapse, and the locks come through" {
 }
 
 test "a mouse record counts from one, as every other report here does" {
-    const press = fromInputRecord(.{ .mouse = .{
+    const press = oneRecord(.{ .mouse = .{
         .x = 0,
         .y = 0,
         .button_state = ConsoleMouseRecord.button_1,
@@ -517,7 +675,7 @@ test "a mouse record counts from one, as every other report here does" {
     try std.testing.expect(press.mouse.press and !press.mouse.motion);
     try std.testing.expect(!press.mouse.pixels);
 
-    const far = fromInputRecord(.{ .mouse = .{ .x = 65535, .y = 65535 } }, false).?;
+    const far = oneRecord(.{ .mouse = .{ .x = 65535, .y = 65535 } }, false).?;
     try std.testing.expectEqual(@as(u32, 65536), far.mouse.x);
     try std.testing.expectEqual(@as(u32, 65536), far.mouse.y);
 }
@@ -531,27 +689,27 @@ test "a mouse record names the button that is down, and none on a release" {
         .{ .state = ConsoleMouseRecord.button_5, .button = .button_9 },
     };
     for (cases) |case| {
-        const event = fromInputRecord(.{ .mouse = .{ .button_state = case.state } }, false).?;
+        const event = oneRecord(.{ .mouse = .{ .button_state = case.state } }, false).?;
         try std.testing.expectEqual(case.button, event.mouse.button);
         try std.testing.expect(event.mouse.press);
     }
 
     // Nothing down is a release, which -- as in the oldest wire encoding --
     // cannot say which button came up.
-    const release = fromInputRecord(.{ .mouse = .{} }, false).?;
+    const release = oneRecord(.{ .mouse = .{} }, false).?;
     try std.testing.expectEqual(mouse.Button.none, release.mouse.button);
     try std.testing.expect(!release.mouse.press);
 }
 
 test "a mouse record says when the pointer moved" {
-    const drag = fromInputRecord(.{ .mouse = .{
+    const drag = oneRecord(.{ .mouse = .{
         .button_state = ConsoleMouseRecord.button_1,
         .event_flags = ConsoleMouseRecord.moved,
     } }, false).?;
     try std.testing.expect(drag.mouse.motion and drag.mouse.press);
     try std.testing.expectEqual(mouse.Button.left, drag.mouse.button);
 
-    const hover = fromInputRecord(.{ .mouse = .{
+    const hover = oneRecord(.{ .mouse = .{
         .event_flags = ConsoleMouseRecord.moved,
     } }, false).?;
     try std.testing.expect(hover.mouse.motion and !hover.mouse.press);
@@ -561,26 +719,26 @@ test "a mouse record says when the pointer moved" {
 test "a mouse record turns the wheel distance into a direction" {
     // The distance is signed and lives in the high word: 120 away from the
     // user, -120 towards.
-    const up = fromInputRecord(.{ .mouse = .{
+    const up = oneRecord(.{ .mouse = .{
         .button_state = 0x0078_0000,
         .event_flags = ConsoleMouseRecord.wheeled,
     } }, false).?;
     try std.testing.expectEqual(mouse.Button.wheel_up, up.mouse.button);
     try std.testing.expect(up.mouse.press);
 
-    const down = fromInputRecord(.{ .mouse = .{
+    const down = oneRecord(.{ .mouse = .{
         .button_state = 0xff88_0000,
         .event_flags = ConsoleMouseRecord.wheeled,
     } }, false).?;
     try std.testing.expectEqual(mouse.Button.wheel_down, down.mouse.button);
 
-    const right = fromInputRecord(.{ .mouse = .{
+    const right = oneRecord(.{ .mouse = .{
         .button_state = 0x0078_0000,
         .event_flags = ConsoleMouseRecord.hwheeled,
     } }, false).?;
     try std.testing.expectEqual(mouse.Button.wheel_right, right.mouse.button);
 
-    const left = fromInputRecord(.{ .mouse = .{
+    const left = oneRecord(.{ .mouse = .{
         .button_state = 0xff88_0000,
         .event_flags = ConsoleMouseRecord.hwheeled,
     } }, false).?;
@@ -588,7 +746,7 @@ test "a mouse record turns the wheel distance into a direction" {
 }
 
 test "a mouse record carries the modifiers that were held" {
-    const event = fromInputRecord(.{ .mouse = .{
+    const event = oneRecord(.{ .mouse = .{
         .button_state = ConsoleMouseRecord.button_1,
         .control_key_state = ControlKeyState.shift | ControlKeyState.left_ctrl,
     } }, false).?;
@@ -596,7 +754,7 @@ test "a mouse record carries the modifiers that were held" {
 }
 
 test "a window buffer size record is a resize in characters" {
-    const event = fromInputRecord(.{ .window_buffer_size = .{
+    const event = oneRecord(.{ .window_buffer_size = .{
         .cols = 80,
         .rows = 24,
     } }, false).?;
@@ -608,8 +766,8 @@ test "a window buffer size record is a resize in characters" {
 }
 
 test "a record that stands for nothing a program acts on is null" {
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), fromInputRecord(.other, false));
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), fromInputRecord(.other, true));
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), oneRecord(.other, false));
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), oneRecord(.other, true));
 }
 
 test "every virtual key this package names maps to one key and back" {
@@ -631,10 +789,118 @@ test "every virtual key this package names maps to one key and back" {
     try std.testing.expectEqual(@as(?Key, null), keyFromVirtualKey(0xffff));
 }
 
-test "fuzz fromInputRecord" {
+test "a record pairs the halves of a character outside the basic plane" {
+    var decoder: ConsoleDecoder = .{};
+
+    // The high half alone is not a codepoint and not a key.
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+        .key_down = true,
+        .unicode_char = 0xd83d,
+    } }));
+
+    const paired = decoder.next(.{ .key = .{
+        .key_down = true,
+        .unicode_char = 0xde42,
+    } }).?;
+    try std.testing.expectEqual(Key{ .char = 0x1f642 }, paired.key.key);
+    try std.testing.expectEqualStrings("\u{1f642}", paired.key.text());
+
+    // A half that never finds its other is dropped when anything else
+    // arrives, rather than joining the next character.
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+        .key_down = true,
+        .unicode_char = 0xd83d,
+    } }));
+    const after = decoder.next(.{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 'A',
+        .unicode_char = 'a',
+    } }).?;
+    try std.testing.expectEqual(Key{ .char = 'a' }, after.key.key);
+
+    // And a low half with nothing in front of it is nothing.
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+        .key_down = true,
+        .unicode_char = 0xde42,
+    } }));
+
+    // `reset` forgets a half-arrived character.
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+        .key_down = true,
+        .unicode_char = 0xd83d,
+    } }));
+    decoder.reset();
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+        .key_down = true,
+        .unicode_char = 0xde42,
+    } }));
+}
+
+test "a record reads the character composed with Alt and the keypad" {
+    var decoder: ConsoleDecoder = .{};
+
+    // Alt down is a keypress; the keypad digits under it are not.
+    const alt_down = decoder.next(.{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 0x12,
+        .control_key_state = ControlKeyState.left_alt,
+    } }).?;
+    try std.testing.expectEqual(Key.left_alt, alt_down.key.key);
+
+    for ([_]u16{ 0x61, 0x67 }) |digit| {
+        try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+            .key_down = true,
+            .virtual_key_code = digit,
+            .control_key_state = ControlKeyState.left_alt,
+        } }));
+    }
+
+    // The character rides the Alt key coming up, and it is a press.
+    const composed = decoder.next(.{ .key = .{
+        .key_down = false,
+        .virtual_key_code = 0x12,
+        .unicode_char = 0xe9,
+    } }).?;
+    try std.testing.expectEqual(Key{ .char = 0xe9 }, composed.key.key);
+    try std.testing.expectEqual(key.Kind.press, composed.key.kind);
+    try std.testing.expectEqualStrings("\u{e9}", composed.key.text());
+
+    // A keypad digit with Alt and something else is a chord, and reported.
+    const chord = decoder.next(.{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 0x61,
+        .control_key_state = ControlKeyState.left_alt | ControlKeyState.left_ctrl,
+    } }).?;
+    try std.testing.expectEqual(Key.kp_1, chord.key.key);
+    try std.testing.expect(chord.key.mods.alt and chord.key.mods.ctrl);
+}
+
+test "a record reads AltGr as the character, not as control and alt" {
+    const altgr = oneRecord(.{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 'Q',
+        .unicode_char = '@',
+        .control_key_state = ControlKeyState.right_alt | ControlKeyState.left_ctrl,
+    } }, false).?;
+    try std.testing.expectEqual(Key{ .char = '@' }, altgr.key.key);
+    try std.testing.expect(!altgr.key.mods.alt and !altgr.key.mods.ctrl);
+    try std.testing.expectEqualStrings("@", altgr.key.text());
+
+    // Right alt and control with no character is the chord it looks like.
+    const chord = oneRecord(.{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 0x70,
+        .control_key_state = ControlKeyState.right_alt | ControlKeyState.left_ctrl,
+    } }, false).?;
+    try std.testing.expectEqual(Key{ .f = 1 }, chord.key.key);
+    try std.testing.expect(chord.key.mods.alt and chord.key.mods.ctrl);
+}
+
+test "fuzz ConsoleDecoder" {
     // The property: no field value panics or overflows, a key that comes back
     // carries valid UTF-8 and never a surrogate, a mouse report is inside the
-    // coordinate space, and the same record translates the same way twice.
+    // coordinate space, and the same record translates the same way twice
+    // through a decoder that has seen nothing else.
     try std.testing.fuzz({}, struct {
         fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var input: [16]u8 = undefined;
@@ -668,8 +934,8 @@ test "fuzz fromInputRecord" {
             };
 
             for (records) |record| for ([_]bool{ false, true }) |key_up| {
-                const event = fromInputRecord(record, key_up) orelse continue;
-                try std.testing.expectEqual(event, fromInputRecord(record, key_up).?);
+                const event = oneRecord(record, key_up) orelse continue;
+                try std.testing.expectEqual(event, oneRecord(record, key_up).?);
                 switch (event) {
                     .key => |ev| {
                         try std.testing.expect(std.unicode.utf8ValidateSlice(ev.text()));
@@ -699,5 +965,44 @@ test "fuzz fromInputRecord" {
         corpus.seed("\x00\xd8\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00"),
         corpus.seed("\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"),
         corpus.seed("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"),
+    } });
+}
+
+test "fuzz a run of records through one decoder" {
+    // The property: a decoder that keeps state across records never panics,
+    // never overflows, and never hands back a surrogate half as a key --
+    // whatever order the halves and the Alt compositions arrive in.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            var decoder: ConsoleDecoder = .{ .report_key_up = bytes.len % 2 == 0 };
+            var rest = bytes;
+            while (rest.len >= 8) : (rest = rest[8..]) {
+                const record: ConsoleRecord = .{ .key = .{
+                    .key_down = rest[0] & 1 != 0,
+                    .virtual_key_code = std.mem.readInt(u16, rest[1..3], .little),
+                    .unicode_char = std.mem.readInt(u16, rest[3..5], .little),
+                    .control_key_state = std.mem.readInt(u16, rest[5..7], .little),
+                } };
+                const event = decoder.next(record) orelse continue;
+                switch (event) {
+                    .key => |ev| {
+                        try std.testing.expect(std.unicode.utf8ValidateSlice(ev.text()));
+                        switch (ev.key) {
+                            .char => |cp| try std.testing.expect(cp < 0xd800 or cp > 0xdfff),
+                            else => {},
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x01\x00\x00\x00\xd8\x00\x00\x00\x01\x00\x00\x42\xde\x00\x00\x00"),
+        corpus.seed("\x01\x12\x00\x00\x00\x02\x00\x00\x00\x12\x00\xe9\x00\x00\x00\x00"),
+        corpus.seed("\x01\x51\x00\x40\x00\x09\x00\x00"),
+        corpus.seed("\x00\x00\x00\x00\x00\x00\x00\x00"),
     } });
 }
