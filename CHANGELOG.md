@@ -112,12 +112,12 @@ package yet, so they are fixed now rather than carried.
   program that knows nothing about graphics but passes text through.
 
   Animation is a writer family of its own, because `a=f`, `a=a` and `a=c`
-  give `c`, `r`, `z`, `X` and `Y` meanings of their own: one encoder for all
-  of them would not be shared, it would be shadowed. `transmitFrame` sends a
+  give `c`, `r`, `z`, `X` and `Y` meanings of their own, so one encoder for
+  all of them would be shadowed rather than shared. `transmitFrame` sends a
   frame — which frame to edit, which frame's pixels to build it on, the
-  composition mode, the gap in milliseconds, the background colour, and
-  where in the frame the rectangle lands — through the same chunker as an
-  image, with the `a=f` the protocol asks for on every chunk of a frame.
+  composition mode, the gap in milliseconds, the background colour, and where
+  in the frame the rectangle lands — through the same chunker as an image,
+  with the `a=f` the protocol asks for on every chunk of a frame.
   `animateImage` names the current frame, sets a frame's gap and the loop
   count, and stops, runs or loads. `composeFrames` copies a rectangle from
   one frame onto another, which changes a frame without sending pixels
