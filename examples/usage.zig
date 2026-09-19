@@ -152,6 +152,9 @@ pub fn main() !void {
         .resize => |size| std.debug.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),
         // A terminal in mode 2031 says so when the user's theme flips.
         .color_scheme => |scheme| std.debug.print("scheme:     {t}\n", .{scheme}),
+        // A reply longer than the buffer: said, never turned into the keys
+        // its bytes look like. Size the buffer for the answers you ask for.
+        .overflow => |bytes| std.debug.print("dropped:    {d} bytes\n", .{bytes}),
         .paste_start, .paste_end, .focus_in, .focus_out => {},
     };
 

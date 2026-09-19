@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- **`Event` gained a variant**, `overflow`. A switch over it that listed
+  every case has to be told.
+
+### Added
+
+- **A sequence longer than the buffer is reported rather than let through.**
+  `Event.overflow` carries how many bytes went, and the parser skips to the
+  end of that sequence before reading anything else — so what comes next is
+  the next sequence, not the middle of the one that did not fit. Before
+  this, a 412-byte OSC 52 reply against a 64-byte buffer became 347
+  keypresses: the parser cleared its buffer and started reading base64 as
+  input. `KeyParser.flush` reports an over-long sequence whose end never
+  arrived, and `KeyParser.min_buffer` now says plainly that it covers keys
+  and that the replies a program asks for are its own to size for.
+
 ### Changed
 
 - **`KeyParser` tops up its buffer when the buffer empties, not once per

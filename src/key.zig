@@ -384,6 +384,22 @@ pub const Event = union(enum) {
     /// to `Events.next`, `KeyParser.feed` or `KeyParser.flush`. Copy it if it
     /// has to outlive that.
     unhandled: []const u8,
+    /// A sequence longer than the caller's buffer arrived, and this many
+    /// bytes of it were dropped.
+    ///
+    /// The parser holds one sequence at a time, so a sequence that does not
+    /// fit cannot be handed back whole. What it can do is say so, and pick
+    /// the stream up at the end of that sequence rather than in the middle
+    /// of it — the bytes inside an OSC 52 reply are base64, and read as
+    /// input they are keypresses the user did not type.
+    ///
+    /// It is reported once, when the end of the sequence has gone by, and
+    /// the count is every byte of it. A stream that stops before that end
+    /// reports on `KeyParser.flush` instead.
+    ///
+    /// The cure is a bigger buffer: `KeyParser.min_buffer` covers keys, and
+    /// a program that asks the terminal questions has to cover the answers.
+    overflow: usize,
 };
 
 //=========================================================================
@@ -404,8 +420,28 @@ pub const Event = union(enum) {
 /// `ESC` needs — see `flush`.
 pub const KeyParser = struct {
     /// The smallest buffer this parser accepts. Enough for every sequence a
-    /// terminal sends for a key, with room to spare.
+    /// terminal sends for a key, with room to spare — and only for those.
+    ///
+    /// The same parser frames the replies that arrive on the same stream,
+    /// and an OSC, DCS or APC reply is as long as whatever it carries: a
+    /// clipboard reply is as long as what was copied, a capability reply as
+    /// long as the capability. A sequence longer than the buffer cannot be
+    /// handed back, and is refused by name — `Event.overflow`, saying how
+    /// many bytes went — rather than being let through as the keypresses
+    /// its bytes look like. Size the buffer for the questions the program
+    /// asks.
     pub const min_buffer = 64;
+
+    /// What a sequence too long for the buffer is still waiting for, while
+    /// the rest of it is skipped past.
+    const Skipping = enum {
+        /// A control string: `OSC`, `DCS`, `SOS`, `PM` or `APC`. It ends at
+        /// `BEL`, or at the `ESC` that either opens its `ST` or begins the
+        /// next sequence.
+        string,
+        /// Anything else, which ends at its final byte.
+        sequence,
+    };
 
     /// The caller's buffer. Bytes between `start` and `end` are what has
     /// arrived and not yet been read.
@@ -427,6 +463,10 @@ pub const KeyParser = struct {
     repeating: ?KeyEvent = null,
     /// How many more times `repeating` is still to be reported.
     repeat_left: u16 = 0,
+    /// The tail of a sequence too long for the buffer, still being skipped.
+    skipping: ?Skipping = null,
+    /// How many bytes of that sequence have been dropped so far.
+    dropped: usize = 0,
 
     /// A parser over `buffer`, which must be at least `min_buffer` bytes.
     pub fn init(buffer: []u8) KeyParser {
@@ -487,6 +527,14 @@ pub const KeyParser = struct {
             p.start = 0;
             p.end = 0;
         }
+        // A sequence too long for the buffer whose end never arrived. The
+        // bytes are already gone; what is owed is the count.
+        if (p.skipping != null) {
+            p.skipping = null;
+            const dropped = p.dropped;
+            p.dropped = 0;
+            return .{ .overflow = dropped };
+        }
         if (held.len == 0 or held[0] != seq.esc) return null;
         if (held.len == 1) return .{ .key = .{ .key = .escape } };
         if (held.len == 2 and (held[1] == '[' or held[1] == 'O')) {
@@ -503,6 +551,8 @@ pub const KeyParser = struct {
         p.end = 0;
         p.repeating = null;
         p.repeat_left = 0;
+        p.skipping = null;
+        p.dropped = 0;
     }
 
     /// Moves the unread bytes to the front, making room at the end.
@@ -539,6 +589,10 @@ pub const Events = struct {
         }
 
         while (true) {
+            // The tail of a sequence that did not fit comes before anything
+            // else: the stream is picked up at its end, not in its middle.
+            if (p.skipping != null) return it.skipOverflow();
+
             // Topping up here rather than in `feed` is what lets one feed of
             // many kilobytes drain through a buffer of a few dozen bytes.
             // Only when the buffer has run dry, though: a top-up moves the
@@ -571,11 +625,15 @@ pub const Events = struct {
                     // of this feed may finish it; nothing else can.
                     if (it.fresh.len != 0 and it.fill() != 0) continue;
 
-                    // A full buffer that is still the start of something is a
-                    // sequence longer than the caller sized for. Nothing more
-                    // can arrive to complete it, so it goes; this is the only
-                    // place bytes are dropped.
+                    // A full buffer that is still the start of something is
+                    // a sequence longer than the caller sized for. Nothing
+                    // more can arrive to complete it, so what is here goes
+                    // and the rest of it is skipped to its end -- which is
+                    // the only place this parser drops bytes, and the one
+                    // thing it reports rather than decodes.
                     if (p.end - p.start == p.buffer.len) {
+                        p.skipping = overflowKind(p.buffer[p.start..p.end]);
+                        p.dropped = p.buffer.len;
                         p.start = 0;
                         p.end = 0;
                         continue;
@@ -584,6 +642,55 @@ pub const Events = struct {
                 },
             }
         }
+    }
+
+    /// Skips what is left of a sequence too long for the buffer, and reports
+    /// it once its end has gone by.
+    ///
+    /// Null means the feed ran out first: the parser stays in this state and
+    /// the next feed goes on skipping, so the sequence is left behind at its
+    /// own end however many reads it spans.
+    fn skipOverflow(it: *Events) ?Event {
+        const p = it.parser;
+        const kind = p.skipping.?;
+        outer: while (true) {
+            while (p.start < p.end) {
+                const b = p.buffer[p.start];
+                switch (kind) {
+                    .string => {
+                        if (b == seq.bel) {
+                            p.start += 1;
+                            p.dropped += 1;
+                            break :outer;
+                        }
+                        if (b == seq.esc) {
+                            // `ST` ends the string; a bare `ESC` is the next
+                            // sequence and is left where it is.
+                            if (p.end - p.start < 2) break;
+                            if (p.buffer[p.start + 1] == '\\') {
+                                p.start += 2;
+                                p.dropped += 2;
+                            }
+                            break :outer;
+                        }
+                    },
+                    .sequence => if (b >= 0x40 and b <= 0x7e) {
+                        p.start += 1;
+                        p.dropped += 1;
+                        break :outer;
+                    },
+                }
+                p.start += 1;
+                p.dropped += 1;
+            }
+            if (it.fresh.len == 0) return null;
+            _ = it.fill();
+        }
+
+        p.skipping = null;
+        const dropped = p.dropped;
+        p.dropped = 0;
+        return .{ .overflow = dropped };
     }
 
     /// Moves as much of the unread input into the parser's buffer as will
@@ -605,6 +712,18 @@ pub const Events = struct {
 //=========================================================================
 // Decoding one sequence off the front of a byte string.
 //=========================================================================
+
+/// Which terminator the tail of an over-long sequence is being skipped to.
+///
+/// Read off the two bytes that introduced it, which are still at the front of
+/// the buffer when the overflow is noticed.
+fn overflowKind(bytes: []const u8) KeyParser.Skipping {
+    if (bytes.len < 2 or bytes[0] != seq.esc) return .sequence;
+    return switch (bytes[1]) {
+        ']', 'P', 'X', '^', '_' => .string,
+        else => .sequence,
+    };
+}
 
 /// What the decoder made of the bytes in front of it.
 const Decoded = union(enum) {
@@ -1854,20 +1973,127 @@ test "reset forgets a half-arrived sequence" {
     try std.testing.expectEqual(Key{ .char = 'a' }, again.next().?.key.key);
 }
 
-test "a sequence longer than the buffer is dropped, and the stream recovers" {
+test "a sequence longer than the buffer is reported, and the stream resumes at its end" {
     var storage: [KeyParser.min_buffer]u8 = undefined;
     var parser: KeyParser = .init(&storage);
 
-    // A CSI whose parameters do not fit anywhere. Nothing can complete it.
-    var long: [KeyParser.min_buffer]u8 = @splat('1');
+    // A CSI whose parameters do not fit anywhere, and its final byte well
+    // past the end of the buffer.
+    var long: [KeyParser.min_buffer * 3]u8 = @splat('1');
     long[0] = seq.esc;
     long[1] = '[';
+    long[long.len - 1] = 'm';
 
     var events = parser.feed(&long);
+    try std.testing.expectEqual(@as(usize, long.len), events.next().?.overflow);
     try std.testing.expectEqual(@as(?Event, null), events.next());
+    try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
 
     var after = parser.feed("a");
     try std.testing.expectEqual(Key{ .char = 'a' }, after.next().?.key.key);
+}
+
+test "an over-long reply is one overflow, not three hundred keypresses" {
+    // The case this exists for. An OSC 52 reply is as long as whatever was
+    // copied, and its payload is base64 -- so a parser that cleared its
+    // buffer and started again in the middle of one handed the caller a few
+    // hundred keys the user never typed.
+    const head = seq.osc ++ "52;c;";
+    const tail = seq.st;
+    var reply: [412]u8 = @splat('A');
+    @memcpy(reply[0..head.len], head);
+    @memcpy(reply[reply.len - tail.len ..], tail);
+
+    for ([_]usize{ 1, 13, 64, 200, reply.len }) |read| {
+        var storage: [KeyParser.min_buffer]u8 = undefined;
+        var parser: KeyParser = .init(&storage);
+
+        var overflows: usize = 0;
+        var others: usize = 0;
+        var offset: usize = 0;
+        while (offset < reply.len) {
+            const end = @min(offset + read, reply.len);
+            var events = parser.feed(reply[offset..end]);
+            while (events.next()) |event| switch (event) {
+                .overflow => |n| {
+                    overflows += 1;
+                    try std.testing.expectEqual(@as(usize, reply.len), n);
+                },
+                else => others += 1,
+            };
+            offset = end;
+        }
+        try std.testing.expectEqual(@as(usize, 1), overflows);
+        try std.testing.expectEqual(@as(usize, 0), others);
+
+        // And the key behind it is the next thing out.
+        var after = parser.feed("a");
+        try std.testing.expectEqual(Key{ .char = 'a' }, after.next().?.key.key);
+    }
+}
+
+test "a reply that fits needs no overflow at all" {
+    // The same reply against a buffer sized for it: one sequence, whole.
+    const head = seq.osc ++ "52;c;";
+    var reply: [412]u8 = @splat('A');
+    @memcpy(reply[0..head.len], head);
+    @memcpy(reply[reply.len - seq.st.len ..], seq.st);
+
+    var storage: [1024]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+    var events = parser.feed(&reply);
+    try std.testing.expectEqualStrings(&reply, events.next().?.unhandled);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+}
+
+test "an over-long sequence whose end never arrives is reported by flush" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    var long: [KeyParser.min_buffer * 2]u8 = @splat('x');
+    long[0] = seq.esc;
+    long[1] = ']';
+
+    var events = parser.feed(&long);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+    try std.testing.expectEqual(@as(usize, long.len), parser.flush().?.overflow);
+    try std.testing.expectEqual(@as(?Event, null), parser.flush());
+}
+
+test "an over-long control string ends at the ESC that starts the next one" {
+    // An abandoned string does not swallow what follows it, whether or not
+    // it fitted in the buffer.
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    var input: [KeyParser.min_buffer * 2 + 3]u8 = @splat('x');
+    input[0] = seq.esc;
+    input[1] = ']';
+    input[input.len - 3] = seq.esc;
+    input[input.len - 2] = '[';
+    input[input.len - 1] = 'A';
+
+    var events = parser.feed(&input);
+    try std.testing.expectEqual(@as(usize, input.len - 3), events.next().?.overflow);
+    try std.testing.expectEqual(Key.up, events.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+}
+
+test "reset forgets a sequence that was being skipped past" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    var long: [KeyParser.min_buffer * 2]u8 = @splat('x');
+    long[0] = seq.esc;
+    long[1] = ']';
+
+    var events = parser.feed(&long);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+    parser.reset();
+    try std.testing.expectEqual(@as(?Event, null), parser.flush());
+
+    var again = parser.feed("a");
+    try std.testing.expectEqual(Key{ .char = 'a' }, again.next().?.key.key);
 }
 
 test "a malformed UTF-8 byte is dropped rather than becoming a key" {

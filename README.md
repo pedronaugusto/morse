@@ -153,6 +153,9 @@ while (events.next()) |event| switch (event) {
     .resize => |size| std.debug.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),
     // A terminal in mode 2031 says so when the user's theme flips.
     .color_scheme => |scheme| std.debug.print("scheme:     {t}\n", .{scheme}),
+    // A reply longer than the buffer: said, never turned into the keys
+    // its bytes look like. Size the buffer for the answers you ask for.
+    .overflow => |bytes| std.debug.print("dropped:    {d} bytes\n", .{bytes}),
     .paste_start, .paste_end, .focus_in, .focus_out => {},
 };
 
@@ -320,7 +323,11 @@ decides where each sequence ends, decodes the keys, and hands everything else
 back whole as `Event.unhandled` for `parseMouse`, `parseColorReply` or
 whichever parser reads it, so an unrecognised reply never resynchronises the
 stream a byte at a time. You own the buffer: `min_buffer` covers keys, but an
-OSC 52 reply is as long as whatever was copied.
+OSC 52 reply is as long as whatever was copied. A sequence longer than the
+buffer is the one thing the parser cannot hand back, and it says so —
+`Event.overflow` with the count of bytes it dropped, and the stream picked up
+at the end of that sequence rather than in the middle of it, where a base64
+payload reads as a few hundred keys nobody typed.
 
 **The Windows console arrives in two shapes, and both come out as `Key`.** A
 terminal in win32 input mode (`win32Input`, mode 9001) sends every key as
