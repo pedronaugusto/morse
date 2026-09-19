@@ -56,7 +56,7 @@ pub fn main() !void {
     try morse.syncOutput.set(w, true);
 
     // Clear, go to the top-left, write a heading in a style. The second style
-    // call writes only what changed -- four bytes rather than a reset and a
+    // call writes only what changed -- five bytes rather than a reset and a
     // repaint of attributes that were already right.
     const heading: morse.Style = .{ .bold = true, .fg = .ansi(.cyan) };
     const body: morse.Style = .{ .fg = .ansi(.cyan) };

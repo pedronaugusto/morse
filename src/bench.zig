@@ -69,7 +69,7 @@ fn report(name: []const u8, value: f64, unit: []const u8, budget: f64) void {
     std.debug.print("bench: {s:<34} {d:>10.2} {s} (budget {d:.2})\n", .{ name, value, unit, budget });
 }
 
-test "bench: a style diff is four bytes and a few dozen nanoseconds" {
+test "bench: a style diff is five bytes and a few dozen nanoseconds" {
     // The frame this stands for: a syntax-highlighted line, where the style
     // changes at every token and almost nothing about it changes at once.
     const from: style.Style = .{ .bold = true, .fg = .ansi(.cyan) };
@@ -79,8 +79,8 @@ test "bench: a style diff is four bytes and a few dozen nanoseconds" {
     var out: Writer = .fixed(&buffer);
     try style.diffStyle(&out, from, to);
 
-    // Four bytes: `CSI 22 m`. A full `setStyle` of `to` would be six, and a
-    // reset and a repaint would be eleven.
+    // Five bytes: `CSI 22 m`. A full `setStyle` of `to` would be seven, and
+    // a reset and a repaint would be twelve.
     try std.testing.expectEqualStrings("\x1b[22m", out.buffered());
     try std.testing.expectEqual(@as(usize, 5), out.buffered().len);
 

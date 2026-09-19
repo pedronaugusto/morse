@@ -256,22 +256,17 @@ package yet, so they are fixed now rather than carried.
 - **`zig build conformance`: the writers, fed to a terminal.** Byte-exact
   tests say morse writes what the specifications say; they cannot say a
   terminal accepts them. The new step builds a terminal emulator from source,
-  feeds it what the writers produce, and asserts on the state the emulator
-  ends up in — the cursor where each movement said, every named mode set and
-  reset as DECRQM reports it, the current style after every attribute and
-  every colour form and after all 676 style diffs, the screen after each
-  erase, insert, delete and scroll, the title, the cell under a hyperlink,
-  the keyboard flags pushed, set and popped, the image and its placement in
-  the emulator's own storage. Then the other direction: DA1, DA2, DECRQM,
-  CPR, XTVERSION, the keyboard query, the colour and palette queries, the
-  size reports and XTGETTCAP all come back through the parsers here, and the
-  probe's seventeen questions go out in one call and are routed by
+  feeds it every writer, and asserts on the state the emulator ends up in —
+  the cursor, the modes as DECRQM reports them, the style after all 676
+  diffs, the screen after each erase and scroll, the title, the cell under a
+  hyperlink, the keyboard flags, the image and its placement. Then the other
+  direction: the emulator's own replies come back through the parsers here,
+  and the probe's seventeen questions go out in one call and are routed by
   `probeMatches`. 1,031 assertions, and two named skips — this emulator has
-  no superscript or subscript on its style and no multiple cursors protocol.
-  The emulator is a lazy dependency pinned to a commit and asked for only
-  when morse is the root package, so a program that depends on morse fetches
-  nothing and links nothing new. CI runs the step as its own job on Linux and
-  macOS.
+  neither superscript nor a multiple cursors protocol. The emulator is a lazy
+  dependency pinned to a commit and asked for only when morse is the root
+  package, so a program that depends on morse fetches nothing. CI runs the
+  step on Linux and macOS.
 
 ### Changed
 
@@ -392,8 +387,7 @@ package yet, so they are fixed now rather than carried.
   that asked both questions can tell the two answers apart — which is why
   this is a second parser rather than a wider first one. A terminal emulator
   has one page and answers 1; the field is reported rather than dropped,
-  because a parser that discarded it could not claim to have read the whole
-  report.
+  because a parser that discarded it would not have read the whole report.
 - **`Mouse.rxvt`**, mode 1015, beside the other six mouse modes `mouse`
   switches. `parseMouseRxvt` has read that encoding since 0.2.0, and nothing
   here could ask for it or, more to the point, say `l` for it: a terminal left
@@ -475,7 +469,7 @@ Everything a program needs below a TUI framework, on both sides of the wire.
   characters says which of them the user typed, so a terminal cannot scroll
   by command, fold one, or mark a failure in the margin unless the program
   tells it. `commandEnd` takes an optional exit code, because a program that
-  does not have one should not claim a zero.
+  does not have one should not report a zero.
 - **Progress, OSC 9;4.** `progress` tells the terminal what fraction of the
   work is done, so it can draw it in the tab or on the taskbar: `Progress` is
   `percent`, `failed`, `warning`, `indeterminate` and `none`, with a value
@@ -537,21 +531,19 @@ Everything a program needs below a TUI framework, on both sides of the wire.
   `eraseChars` (ECH) and `cursorRow` (VPA) — the row's counterparts to the
   line-level sequences already here.
 
+### Changed
+
+- Renamed from `zosc`: the package and module are `morse`; the import in a
+  consumer's build.zig changes with it.
+- X10 mouse reports are read, and 8-bit C1 introducers are not. Both are
+  written down now, with the reason for the second.
+
 ### Fixed
 
 - `KeyParser` framed an X10 mouse report as the three bytes `CSI M` and
   delivered the report's button and coordinates as three separate keypresses.
   The report is now framed by its length, so the key stream survives a
   terminal that was left in mode 1000 by something earlier.
-
-### Changed
-
-- Renamed from `zosc`: the package and module are `morse`; the import in a
-  consumer's build.zig changes with it.
-- The README says why there is no terminfo here, and what morse does instead.
-- "What morse does not do" no longer claims morse reads no legacy mouse
-  encoding — it reads X10 — and now says why 8-bit C1 introducers are not
-  read on the input side.
 
 ## [0.1.0] - 2026-09-13
 

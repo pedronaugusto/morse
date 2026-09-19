@@ -57,7 +57,7 @@ try morse.win32Input.set(w, true);
 try morse.syncOutput.set(w, true);
 
 // Clear, go to the top-left, write a heading in a style. The second style
-// call writes only what changed -- four bytes rather than a reset and a
+// call writes only what changed -- five bytes rather than a reset and a
 // repaint of attributes that were already right.
 const heading: morse.Style = .{ .bold = true, .fg = .ansi(.cyan) };
 const body: morse.Style = .{ .fg = .ansi(.cyan) };
@@ -364,14 +364,12 @@ record into a `ConsoleRecord` and hand it to a `ConsoleDecoder`, which reads
 it through the same virtual-key table and gives back a key, a mouse report or
 a resize. Neither path calls an operating system API.
 
-Three things a console does that nothing else does are handled in both: a
-character outside the basic plane arrives as two records carrying the halves
-of a UTF-16 surrogate pair and is paired; a character composed by holding Alt
-and typing digits on the keypad arrives on the Alt key *coming up*, so the
-digits are held and the character is reported as a press; and AltGr, which
-sets the right-Alt bit and a control bit together, is reported as the
-character it produced rather than as control and alt. That is the one piece
-of state either path keeps, and `reset` forgets it.
+Three things a console does that nothing else does are handled in both: the
+halves of a UTF-16 surrogate pair are paired into one character; a character
+composed on the keypad, which rides the Alt key *coming up*, is held and
+reported as a press; and AltGr, which sets the right-Alt bit and a control bit
+together, is reported as the character it produced. That is the one piece of
+state either path keeps, and `reset` forgets it.
 
 **A lone `ESC` is settled by you.** It is both the Escape key and the first
 byte of every sequence, so `KeyParser` holds it, `pending()` shows it, and
@@ -407,10 +405,10 @@ which zeroes the channels its kind does not use, so `Color.eql` and a byte
 comparison are the same comparison; read one by switching on `kind`. A
 `comptime` block pins `Style` at 22 bytes, aligned to one, with no padding,
 so a field added in the wrong place fails the build rather than quietly
-making that comparison read the holes. `MouseEvent`,
-`Resize`, `CursorPosition`, `ExtendedCursorPosition`, `Rgb`, `Rgb16`,
-`CursorCell`, `CursorRect`, `Placement` and `GraphicsRect` are `extern` for
-the same reason.
+making that comparison read the holes. `CursorColor`, `MouseEvent`, `Resize`,
+`CursorPosition`, `ExtendedCursorPosition`, `Rgb`, `Rgb16`, `CursorCell`,
+`CursorRect`, `Placement` and `GraphicsRect` are `extern` for the same
+reason.
 
 **Styles are written as a diff.** `diffStyle(w, from, to)` writes the shortest
 `CSI ... m` between two styles, and nothing when they are equal. Off codes go
@@ -470,14 +468,14 @@ parser has already established the payload is well-formed base64;
 
 | Platform | Tested |
 | --- | --- |
-| Linux | `ubuntu-latest` in CI, four optimize modes; also in Docker with [`ci/linux.sh`](ci/linux.sh) |
+| Linux | `ubuntu-latest` in CI, four optimize modes |
 | macOS | `macos-latest` in CI, four optimize modes |
 | Windows | `windows-latest` in CI, four optimize modes |
 
 morse calls no operating system API, so the same source builds everywhere Zig
-does. CI cross-compiles it for `x86_64-linux-gnu`, `aarch64-linux-gnu`,
-`x86_64-windows-gnu`, `aarch64-windows-gnu`, `x86_64-macos` and
-`aarch64-macos` on every push.
+does, and the three rows above are what has actually been run.
+[`ci/linux.sh`](ci/linux.sh) runs the Linux half in Docker from a machine
+that is not Linux; it is a local script and no CI job calls it.
 
 ## Testing
 
@@ -500,25 +498,19 @@ against a second framer written from the same grammar as a state machine —
 two implementations that share no line, and a disagreement about where a
 sequence ends fails the build. `zig build test --fuzz` keeps searching from
 those seeds: thirty-one targets, a corpus each, and the same invariants the
-fixed run asserts. [`ci/linux.sh`](ci/linux.sh) runs the Linux half in Docker
-from a machine that is not Linux.
+fixed run asserts.
 
 `zig build conformance` is the other half of the question. Byte-exact tests
 say morse writes what the specifications say; they cannot say a terminal
-agrees. This step builds a terminal emulator from source, feeds it what the
-writers produce, and asks the emulator what it did: where the cursor is, which
-modes DECRQM now reports, what its current style is after every attribute and
-every colour form, what the screen holds after each erase, insert, delete and
-scroll, what its image storage holds, what is on the cell under a hyperlink.
-It runs the other way too — the emulator's answers to DA1, DA2, DECRQM, CPR,
-XTVERSION, the keyboard query, the colour queries and the size queries come
-back through the parsers here, and the startup probe's seventeen questions go
-out in one call and are routed by `probeMatches`. 1,031 assertions, and two
-named skips: this emulator has no superscript or subscript on its style and no
-multiple cursors protocol, so `Style.script` and `extraCursors` stand on their
-byte-exact tests alone. The emulator is a lazy dependency, pinned to a commit
-and reached by this step alone — a program that depends on morse never fetches
-it — and CI runs the step on Linux and macOS.
+agrees. This step builds a terminal emulator from source, feeds it every
+writer, and asks the emulator what it did — the cursor, the modes, the style,
+the screen after each erase and scroll, the image storage, the cell under a
+hyperlink — then sends the emulator's own replies back through the parsers
+here. 1,031 assertions, and two named skips: this emulator has neither
+superscript nor a multiple cursors protocol, so `Style.script` and
+`extraCursors` stand on their byte-exact tests alone. The emulator is a lazy
+dependency, pinned to a commit and reached by this step alone, so a program
+that depends on morse never fetches it. CI runs the step on Linux and macOS.
 
 ## Requirements
 

@@ -292,7 +292,7 @@ pub const Style = extern struct {
 };
 
 /// The longest `CSI ... m` either spelling of a style change can produce:
-/// `CSI`, the eleven off codes or a `0`, every on code, three colours in
+/// `CSI`, the twelve off codes or a `0`, every on code, three colours in
 /// their widest forms, and the `m`.
 ///
 /// Used to size the buffer `diffStyle` prices a sequence into, so the
