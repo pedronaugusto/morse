@@ -35,7 +35,7 @@ jobs:
           version: ${{ env.ZIG_VERSION }}
 
       - name: Formatting
-        run: zig fmt --check build.zig build.zig.zon src examples
+        run: zig fmt --check build.zig build.zig.zon src examples conformance
 
       # Four optimize modes, because the suite asserts on arithmetic that
       # behaves differently under each: safety-checked overflow in Debug and
@@ -55,6 +55,32 @@ jobs:
       # Built AND run, against the module a consumer gets.
       - name: Examples
         run: zig build examples
+
+  # The writers, fed to a terminal emulator built from source, and its
+  # replies read back through this package's parsers. Its own job because it
+  # is the only thing here that fetches anything, and because a failure in it
+  # says something different from a failure above: the bytes are what the
+  # specification says and a terminal still did not do what was asked.
+  #
+  # Windows is missing because the emulator's own supported hosts are the two
+  # here; the bytes it is fed do not vary by host.
+  conformance:
+    name: conformance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Conformance
+        run: zig build conformance
 
   # README.md's Usage block is a region of examples/usage.zig, which the job
   # above runs. This is what keeps the two the same thing. No Zig needed.

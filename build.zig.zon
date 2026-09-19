@@ -7,11 +7,25 @@
         "build.zig",
         "build.zig.zon",
         "ci",
+        "conformance",
         "examples",
         ".github",
         "src",
         "CHANGELOG.md",
         "LICENSE",
         "README.md",
+    },
+
+    // The emulator the conformance step feeds. Lazy, so nothing is fetched
+    // by a build that does not run that step: the module a consumer imports
+    // has no dependencies and this changes nothing about it. Pinned to a
+    // commit rather than to a tag, because the step is a claim about the
+    // bytes one revision of one emulator accepted.
+    .dependencies = .{
+        .emulator = .{
+            .url = "git+https://github.com/ghostty-org/ghostty#b32f20f3e8d25bb925ec545c54498e93518e7ced",
+            .hash = "ghostty-1.3.2-dev-5UdBC464cgX-VbPn16E1sGGBjQa8BRM9Eprp1xin7uVV",
+            .lazy = true,
+        },
     },
 }

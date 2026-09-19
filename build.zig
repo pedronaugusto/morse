@@ -63,6 +63,58 @@ pub fn build(b: *std.Build) void {
         examples_step.dependOn(&b.addRunArtifact(example).step);
     }
     test_step.dependOn(examples_step);
+
+    //=====================================================================
+    // Conformance
+    //
+    // The suite above pins every writer to its exact bytes, which says morse
+    // writes what the specifications say. It cannot say a terminal agrees.
+    // This step builds a terminal emulator from source, feeds it what the
+    // writers produce, and asserts on the state the emulator ends up in --
+    // then reads its replies back through this package's parsers.
+    //
+    // The dependency is lazy and pinned to a commit, because the step is a
+    // claim about what one revision of one emulator accepted. It is also
+    // asked for only when morse is the root package: `lazyDependency` marks
+    // a dependency needed for the whole invocation rather than for the step
+    // that called it, and a program that merely depends on morse must not
+    // fetch a terminal emulator to build.
+    //=====================================================================
+
+    const conformance_step = b.step("conformance", "Run the writers through a terminal emulator");
+    if (b.pkg_hash.len != 0) {
+        conformance_step.dependOn(&b.addFail(
+            "the conformance step runs in morse's own tree, not from a package that depends on it",
+        ).step);
+    } else if (b.lazyDependency("emulator", .{
+        .target = target,
+        .optimize = optimize,
+        // The emulator's SIMD paths are vendored C and C++, and nothing
+        // under test here goes through them. morse's own promise is that
+        // building it involves no C toolchain; the step that checks morse
+        // should not quietly need one.
+        .simd = false,
+    })) |emulator| {
+        const conformance = b.addTest(.{
+            .name = "morse-conformance",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("conformance/main.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "morse", .module = module },
+                    .{ .name = "vt", .module = emulator.module("ghostty-vt") },
+                },
+            }),
+        });
+        conformance_step.dependOn(&b.addRunArtifact(conformance).step);
+    } else {
+        // Reached only where the fetch cannot happen at all. A step that
+        // quietly does nothing would report a pass it did not earn.
+        conformance_step.dependOn(&b.addFail(
+            "the conformance step needs its emulator dependency, and it was not fetched",
+        ).step);
+    }
 }
 
 /// Every example, listed rather than globbed: a build graph that scans a

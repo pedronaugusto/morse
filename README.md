@@ -495,9 +495,25 @@ split lands anywhere a real read could have, and its framing is checked
 against a second framer written from the same grammar as a state machine —
 two implementations that share no line, and a disagreement about where a
 sequence ends fails the build. `zig build test --fuzz` keeps searching from
-those seeds, a corpus per property;
-[`ci/linux.sh`](ci/linux.sh) runs the Linux half in Docker from a machine that
-is not Linux.
+those seeds, a corpus per property; [`ci/linux.sh`](ci/linux.sh) runs the
+Linux half in Docker from a machine that is not Linux.
+
+`zig build conformance` is the other half of the question. Byte-exact tests
+say morse writes what the specifications say; they cannot say a terminal
+agrees. This step builds a terminal emulator from source, feeds it what the
+writers produce, and asks the emulator what it did: where the cursor is, which
+modes DECRQM now reports, what its current style is after every attribute and
+every colour form, what the screen holds after each erase, insert, delete and
+scroll, what its image storage holds, what is on the cell under a hyperlink.
+It runs the other way too — the emulator's answers to DA1, DA2, DECRQM, CPR,
+XTVERSION, the keyboard query, the colour queries and the size queries come
+back through the parsers here, and the startup probe's seventeen questions go
+out in one call and are routed by `probeMatches`. 1,031 assertions, and two
+named skips: this emulator has no superscript or subscript on its style and no
+multiple cursors protocol, so `Style.script` and `extraCursors` stand on their
+byte-exact tests alone. The emulator is a lazy dependency, pinned to a commit
+and reached by this step alone — a program that depends on morse never fetches
+it — and CI runs the step on Linux and macOS.
 
 ## Requirements
 
