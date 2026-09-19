@@ -97,7 +97,7 @@ pub const GraphicsImage = union(enum) {
 
 /// A rectangle of the source image, in pixels: the `x`, `y`, `w` and `h`
 /// keys. All zero shows the whole image.
-pub const GraphicsRect = struct {
+pub const GraphicsRect = extern struct {
     /// The left edge.
     x: u32 = 0,
     /// The top edge.
@@ -112,7 +112,7 @@ pub const GraphicsRect = struct {
 ///
 /// A placement is drawn from the cursor's cell, so the caller writes a
 /// `cursorTo` before the command; nothing here says where the cursor is.
-pub const Placement = struct {
+pub const Placement = extern struct {
     /// The `p` key, from 1 to 4294967295. A placement id makes the placement
     /// addressable: sending the same image id and placement id again
     /// replaces it, which is how a picture moves without flickering. Zero is
@@ -650,6 +650,88 @@ comptime {
     std.debug.assert(diacritics[1] == 0x30d);
     std.debug.assert(diacritics[2] == 0x30e);
     std.debug.assert(diacritics.len == 297);
+}
+
+//=========================================================================
+// The kitty graphics response.
+//=========================================================================
+
+/// What a terminal says about a kitty graphics command it was sent.
+pub const GraphicsResponse = struct {
+    /// The image id the response is about, the `i=` key, as the command that
+    /// prompted it gave. Null when the command carried none.
+    id: ?u32 = null,
+    /// The client-chosen image number, the `I=` key, which a program uses
+    /// when it wants the terminal to assign the id. Null when absent.
+    number: ?u32 = null,
+    /// The placement id, the `p=` key, naming which of an image's placements
+    /// the response is about. Null when absent.
+    placement: ?u32 = null,
+    /// What the terminal said: `OK`, or an error beginning with its name,
+    /// such as `ENOENT:` or `EBADF:`. A sub-slice of the bytes handed to the
+    /// parser, borrowed rather than owned: valid for exactly as long as they
+    /// are.
+    message: []const u8,
+
+    /// Whether the terminal accepted the command. Anything other than exactly
+    /// `OK` is a refusal, and `message` says which.
+    pub fn ok(response: GraphicsResponse) bool {
+        return std.mem.eql(u8, response.message, "OK");
+    }
+};
+
+/// Reads a kitty graphics response: `APC G key=value,... ; message ST`.
+///
+/// This package writes no graphics commands: transmitting an image is a
+/// protocol with chunking, formats and placement rules of its own, and it is
+/// not bytes this package can usefully name. The response is parsed because a
+/// program that does write one needs to know whether it worked, and because a
+/// response arriving on the input stream has to be told apart from a key.
+///
+/// Keys other than `i`, `I` and `p` are read past rather than refused, since
+/// the protocol adds them; a key repeated within one response is refused,
+/// because there is no sensible rule for which of two values wins. A response
+/// with no keys at all is valid, and so is an empty message. Returns null for
+/// anything else. `bytes` must be exactly the sequence, with nothing before
+/// or after it.
+pub fn parseGraphicsResponse(bytes: []const u8) ?GraphicsResponse {
+    if (!std.mem.startsWith(u8, bytes, seq.apc)) return null;
+    var rest = bytes[seq.apc.len..];
+    if (rest.len == 0 or rest[0] != 'G') return null;
+    rest = rest[1..];
+
+    var response: GraphicsResponse = .{ .message = "" };
+    var seen: u64 = 0;
+    while (rest.len != 0 and rest[0] != ';') {
+        const bit = letterBit(rest[0]) orelse return null;
+        if (seen & bit != 0) return null;
+        seen |= bit;
+        const key = rest[0];
+        rest = rest[1..];
+
+        if (rest.len == 0 or rest[0] != '=') return null;
+        rest = rest[1..];
+        const value = seq.scanInt(u32, rest) orelse return null;
+        rest = rest[value.len..];
+
+        switch (key) {
+            'i' => response.id = value.value,
+            'I' => response.number = value.value,
+            'p' => response.placement = value.value,
+            else => {},
+        }
+
+        if (rest.len == 0 or rest[0] != ',') break;
+        rest = rest[1..];
+        // A comma promises another key. Ending the list on one is malformed
+        // rather than a list with an empty tail, and the loop condition alone
+        // would let it through.
+        if (rest.len == 0 or rest[0] == ';') return null;
+    }
+
+    if (rest.len == 0 or rest[0] != ';') return null;
+    response.message = seq.stripStringTerminator(rest[1..]) orelse return null;
+    return response;
 }
 
 //=========================================================================
@@ -1380,4 +1462,130 @@ fn borrows(outer: []const u8, inner: []const u8) bool {
     const start = @intFromPtr(outer.ptr);
     const at = @intFromPtr(inner.ptr);
     return at >= start and at + inner.len <= start + outer.len;
+}
+
+test "parseGraphicsResponse reads an acknowledgement and a refusal" {
+    const accepted = parseGraphicsResponse("\x1b_Gi=31;OK\x1b\\").?;
+    try std.testing.expectEqual(@as(?u32, 31), accepted.id);
+    try std.testing.expectEqual(@as(?u32, null), accepted.number);
+    try std.testing.expectEqual(@as(?u32, null), accepted.placement);
+    try std.testing.expectEqualStrings("OK", accepted.message);
+    try std.testing.expect(accepted.ok());
+
+    const refused = parseGraphicsResponse("\x1b_Gi=31;ENOENT:No such file\x1b\\").?;
+    try std.testing.expectEqual(@as(?u32, 31), refused.id);
+    try std.testing.expectEqualStrings("ENOENT:No such file", refused.message);
+    try std.testing.expect(!refused.ok());
+}
+
+test "parseGraphicsResponse reads every key it names" {
+    const response = parseGraphicsResponse("\x1b_Gi=1,I=2,p=3;OK\x1b\\").?;
+    try std.testing.expectEqual(@as(?u32, 1), response.id);
+    try std.testing.expectEqual(@as(?u32, 2), response.number);
+    try std.testing.expectEqual(@as(?u32, 3), response.placement);
+}
+
+test "parseGraphicsResponse reads past keys it does not name" {
+    // The protocol adds keys; a response carrying one is still a response.
+    const response = parseGraphicsResponse("\x1b_Gi=31,q=2,z=0,p=7;OK\x1b\\").?;
+    try std.testing.expectEqual(@as(?u32, 31), response.id);
+    try std.testing.expectEqual(@as(?u32, 7), response.placement);
+    try std.testing.expectEqual(@as(?u32, null), response.number);
+}
+
+test "parseGraphicsResponse reads a response with no keys and one with no message" {
+    const keyless = parseGraphicsResponse("\x1b_G;OK\x1b\\").?;
+    try std.testing.expectEqual(@as(?u32, null), keyless.id);
+    try std.testing.expectEqualStrings("OK", keyless.message);
+    try std.testing.expect(keyless.ok());
+
+    const silent = parseGraphicsResponse("\x1b_Gi=31;\x1b\\").?;
+    try std.testing.expectEqual(@as(usize, 0), silent.message.len);
+    try std.testing.expect(!silent.ok());
+}
+
+test "parseGraphicsResponse accepts BEL where a terminal uses it instead of ST" {
+    const response = parseGraphicsResponse("\x1b_GI=99;EBADF:bad file descriptor\x07").?;
+    try std.testing.expectEqual(@as(?u32, 99), response.number);
+    try std.testing.expectEqualStrings("EBADF:bad file descriptor", response.message);
+}
+
+test "parseGraphicsResponse borrows the message from the bytes it was given" {
+    const bytes = "\x1b_Gi=31;OK\x1b\\";
+    const response = parseGraphicsResponse(bytes).?;
+    try std.testing.expect(borrows(bytes, response.message));
+    try std.testing.expectEqual(bytes.ptr + 8, response.message.ptr);
+}
+
+test "parseGraphicsResponse returns null on anything it does not recognise" {
+    const rejected = [_][]const u8{
+        "", // nothing at all
+        "\x1b_Gi=31;OK", // no terminator
+        "\x1b_Gi=31;OK\x1b", // a terminator cut in half
+        "\x1b_G", // the introducer alone
+        "\x1b_Gi=31", // no message and no terminator
+        "\x1b_i=31;OK\x1b\\", // no `G`
+        "\x1bPGi=31;OK\x1b\\", // DCS, not APC
+        "\x1b[Gi=31;OK\x1b\\", // CSI, not APC
+        "\x1b]Gi=31;OK\x1b\\", // OSC, not APC
+        " \x1b_Gi=31;OK\x1b\\", // leading rubbish
+        "\x1b_Gi=31;OK\x1b\\x", // trailing rubbish
+        "\x1b_Gi=31OK\x1b\\", // no `;` before the message
+        "\x1b_Gii=31;OK\x1b\\", // a key of more than one letter
+        "\x1b_G1=31;OK\x1b\\", // a key that is not a letter
+        "\x1b_Gi31;OK\x1b\\", // no `=`
+        "\x1b_Gi=;OK\x1b\\", // no value
+        "\x1b_Gi=x;OK\x1b\\", // a value that is not digits
+        "\x1b_Gi=1,;OK\x1b\\", // a trailing comma with no key after it
+        "\x1b_Gi=1,,p=2;OK\x1b\\", // an empty key
+        "\x1b_Gi=1,i=2;OK\x1b\\", // a duplicated key
+        "\x1b_Gq=1,q=2;OK\x1b\\", // a duplicated key this package does not name
+        "\x1b_Gi=4294967296;OK\x1b\\", // an id too large for its field
+    };
+    for (rejected) |bytes| {
+        try std.testing.expect(parseGraphicsResponse(bytes) == null);
+    }
+}
+
+test "parseGraphicsResponse survives a number long enough to overflow" {
+    try std.testing.expect(parseGraphicsResponse("\x1b_Gi=99999999999999999999;OK\x1b\\") == null);
+    try std.testing.expect(parseGraphicsResponse("\x1b_GI=99999999999999999999;OK\x1b\\") == null);
+    try std.testing.expect(parseGraphicsResponse("\x1b_Gp=99999999999999999999;OK\x1b\\") == null);
+}
+
+test "fuzz parseGraphicsResponse" {
+    // The property: no input panics or overflows, the message is always a
+    // sub-slice of the bytes it was read from, and the same bytes parse the
+    // same way twice. The message is free-form and this package writes no
+    // graphics commands, so there is no renderer to round trip through.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const response = parseGraphicsResponse(bytes) orelse return;
+            try std.testing.expect(borrows(bytes, response.message));
+            try std.testing.expect(response.message.len <= bytes.len);
+
+            const again = parseGraphicsResponse(bytes).?;
+            try std.testing.expectEqual(response.id, again.id);
+            try std.testing.expectEqual(response.number, again.number);
+            try std.testing.expectEqual(response.placement, again.placement);
+            try std.testing.expectEqualStrings(response.message, again.message);
+            try std.testing.expectEqual(response.ok(), again.ok());
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b_Gi=31;OK\x1b\\"),
+        corpus.seed("\x1b_Gi=1,I=2,p=3;OK\x1b\\"),
+        corpus.seed("\x1b_Gi=31;ENOENT:No such file\x1b\\"),
+        corpus.seed("\x1b_GI=99;EBADF:bad\x07"),
+        corpus.seed("\x1b_G;OK\x1b\\"),
+        corpus.seed("\x1b_Gi=31;\x1b\\"),
+        corpus.seed("\x1b_Gi=31,q=2,z=0,p=7;OK\x1b\\"),
+        corpus.seed("\x1b_Gi=1,i=2;OK\x1b\\"),
+        corpus.seed("\x1b_Gi=4294967296;OK\x1b\\"),
+        corpus.seed("\x1b_Gii=31;OK\x1b\\"),
+        corpus.seed("\x1b_Gi=1,;OK\x1b\\"),
+        corpus.seed("\x1b_Gi=31;OK"),
+    } });
 }

@@ -64,7 +64,7 @@ pub const ExtraCursorShape = enum(u8) {
 
 /// A cell, counting from one at the top-left. The wire order is `row:col`,
 /// which is why the protocol calls them `y` and `x`.
-pub const CursorCell = struct {
+pub const CursorCell = extern struct {
     /// The row, where the topmost row is 1.
     row: u32,
     /// The column, where the leftmost column is 1.
@@ -72,7 +72,7 @@ pub const CursorCell = struct {
 };
 
 /// A rectangle of cells, both corners included, counting from one.
-pub const CursorRect = struct {
+pub const CursorRect = extern struct {
     /// The topmost row.
     top: u32,
     /// The leftmost column.
@@ -106,19 +106,65 @@ pub const CursorColorTarget = enum(u8) {
 };
 
 /// A colour for the extra cursors, in the forms this protocol spells.
-pub const CursorColor = union(enum) {
-    /// Space 0: the main cursor's own colour, whatever that is. If the main
-    /// cursor is drawn in reverse video, so are these — with the main
-    /// cursor's colours, not the colours of the cells they sit on.
-    unset,
-    /// Space 1: reverse video. On `.cursor` it means the cursor takes the
-    /// cell's foreground and the glyph takes its background, and the `.text`
-    /// colour is then ignored entirely.
-    special,
-    /// Space 2: a colour given directly.
-    rgb: Rgb,
-    /// Space 5: an entry of the palette.
-    indexed: u8,
+///
+/// The same shape as `Color` in `style.zig`, and for the same reason: a tag
+/// and three channel bytes in an `extern struct`, so it can be stored
+/// wherever a cell or a record can. The tag's values are the protocol's own
+/// `COLOR_SPACE` numbers, which is why they run 0, 1, 2, 5.
+///
+/// Write one with `.unset`, `.special`, `.rgb(255, 0, 0)` or `.indexed(9)`;
+/// read one by switching on `space`.
+pub const CursorColor = extern struct {
+    /// Which form a colour is in, numbered as the protocol numbers it.
+    pub const Space = enum(u8) {
+        /// The main cursor's own colour, whatever that is. If the main
+        /// cursor is drawn in reverse video, so are these — with the main
+        /// cursor's colours, not the colours of the cells they sit on.
+        unset = 0,
+        /// Reverse video. On `.cursor` it means the cursor takes the cell's
+        /// foreground and the glyph takes its background, and the `.text`
+        /// colour is then ignored entirely.
+        special = 1,
+        /// A colour given directly, three channels.
+        rgb = 2,
+        /// An entry of the palette, in `r`.
+        indexed = 5,
+    };
+
+    /// Which form this is.
+    space: Space = .unset,
+    /// Red for `.rgb`, the palette entry for `.indexed`, zero otherwise.
+    r: u8 = 0,
+    /// Green for `.rgb`, zero otherwise.
+    g: u8 = 0,
+    /// Blue for `.rgb`, zero otherwise.
+    b: u8 = 0,
+
+    /// The main cursor's colour.
+    pub const unset: CursorColor = .{};
+
+    /// The reverse-video effect.
+    pub const special: CursorColor = .{ .space = .special };
+
+    /// A colour given directly.
+    pub fn rgb(red: u8, green: u8, blue: u8) CursorColor {
+        return .{ .space = .rgb, .r = red, .g = green, .b = blue };
+    }
+
+    /// One entry of the palette.
+    pub fn indexed(entry: u8) CursorColor {
+        return .{ .space = .indexed, .r = entry };
+    }
+
+    /// The palette entry of an `.indexed` colour.
+    pub fn index(color: CursorColor) u8 {
+        return color.r;
+    }
+
+    /// The three channels of an `.rgb` colour.
+    pub fn toRgb(color: CursorColor) Rgb {
+        return .{ .r = color.r, .g = color.g, .b = color.b };
+    }
 };
 
 //=========================================================================
@@ -187,20 +233,19 @@ pub fn extraCursorColor(
     try w.writeAll(introducer);
     try seq.writeInt(w, @intFromEnum(which));
     try w.writeByte(';');
-    switch (color) {
-        .unset => try w.writeByte('0'),
-        .special => try w.writeByte('1'),
-        .rgb => |c| {
+    switch (color.space) {
+        .unset, .special => try seq.writeInt(w, @intFromEnum(color.space)),
+        .rgb => {
             try w.writeAll("2:");
-            try seq.writeInt(w, c.r);
+            try seq.writeInt(w, color.r);
             try w.writeByte(':');
-            try seq.writeInt(w, c.g);
+            try seq.writeInt(w, color.g);
             try w.writeByte(':');
-            try seq.writeInt(w, c.b);
+            try seq.writeInt(w, color.b);
         },
-        .indexed => |n| {
+        .indexed => {
             try w.writeAll("5:");
-            try seq.writeInt(w, n);
+            try seq.writeInt(w, color.r);
         },
     }
     try w.writeAll(trailer);
@@ -515,12 +560,12 @@ fn scanColor(block: []const u8, which: u8) ?CursorColor {
             const g = scanChannel(&rest) orelse return null;
             const b = scanChannel(&rest) orelse return null;
             if (rest.len != 0) return null;
-            return .{ .rgb = .{ .r = r, .g = g, .b = b } };
+            return .rgb(r, g, b);
         },
         5 => {
             const n = scanChannel(&rest) orelse return null;
             if (rest.len != 0) return null;
-            return .{ .indexed = n };
+            return .indexed(n);
         },
         else => return null,
     }
@@ -617,8 +662,8 @@ test "every colour space writes its own parameters" {
     const cases = [_]struct { color: CursorColor, bytes: []const u8 }{
         .{ .color = .unset, .bytes = "\x1b[>40;0 q" },
         .{ .color = .special, .bytes = "\x1b[>40;1 q" },
-        .{ .color = .{ .rgb = .{ .r = 255, .g = 0, .b = 128 } }, .bytes = "\x1b[>40;2:255:0:128 q" },
-        .{ .color = .{ .indexed = 9 }, .bytes = "\x1b[>40;5:9 q" },
+        .{ .color = .rgb(255, 0, 128), .bytes = "\x1b[>40;2:255:0:128 q" },
+        .{ .color = .indexed(9), .bytes = "\x1b[>40;5:9 q" },
     };
     for (cases) |case| {
         var out: Writer.Allocating = .init(std.testing.allocator);
@@ -633,7 +678,7 @@ test "the text colour is 30 and the cursor colour is 40" {
     defer out.deinit();
 
     try extraCursorColor(&out.writer, .text, .special);
-    try extraCursorColor(&out.writer, .cursor, .{ .indexed = 4 });
+    try extraCursorColor(&out.writer, .cursor, .indexed(4));
     try std.testing.expectEqualStrings("\x1b[>30;1 q\x1b[>40;5:4 q", out.written());
 }
 
@@ -803,22 +848,26 @@ test "the writer and the reader agree on the order of every co-ordinate" {
 
 test "parseExtraCursorColors reads both halves of the pair" {
     const colors = parseExtraCursorColors("\x1b[>101;30:2:255:0:0;40:5:9 q").?;
-    try std.testing.expectEqual(Rgb{ .r = 255, .g = 0, .b = 0 }, colors.text.rgb);
-    try std.testing.expectEqual(@as(u8, 9), colors.cursor.indexed);
+    try std.testing.expectEqual(CursorColor.Space.rgb, colors.text.space);
+    try std.testing.expectEqual(Rgb{ .r = 255, .g = 0, .b = 0 }, colors.text.toRgb());
+    try std.testing.expectEqual(CursorColor.Space.indexed, colors.cursor.space);
+    try std.testing.expectEqual(@as(u8, 9), colors.cursor.index());
 }
 
 test "parseExtraCursorColors reads the spaces that carry no parameters" {
     const colors = parseExtraCursorColors("\x1b[>101;30:0;40:1 q").?;
     try std.testing.expectEqual(CursorColor.unset, colors.text);
     try std.testing.expectEqual(CursorColor.special, colors.cursor);
+    try std.testing.expectEqual(CursorColor.Space.unset, colors.text.space);
+    try std.testing.expectEqual(CursorColor.Space.special, colors.cursor.space);
 }
 
 test "every colour the writer can spell, the colour parser reads back" {
     const colors = [_]CursorColor{
         .unset,
         .special,
-        .{ .rgb = .{ .r = 0, .g = 128, .b = 255 } },
-        .{ .indexed = 255 },
+        .rgb(0, 128, 255),
+        .indexed(255),
     };
     for (colors) |text| {
         for (colors) |cursor| {
@@ -994,20 +1043,40 @@ fn writeReplyBlock(w: *Writer, shape: ExtraCursorShape, span: CursorSpan) Writer
 fn writeReplyColor(w: *Writer, which: CursorColorTarget, color: CursorColor) Writer.Error!void {
     try w.writeByte(';');
     try seq.writeInt(w, @intFromEnum(which));
-    switch (color) {
-        .unset => try w.writeAll(":0"),
-        .special => try w.writeAll(":1"),
-        .rgb => |c| {
-            try w.writeAll(":2:");
-            try seq.writeInt(w, c.r);
+    try w.writeByte(':');
+    switch (color.space) {
+        .unset, .special => try seq.writeInt(w, @intFromEnum(color.space)),
+        .rgb => {
+            try w.writeAll("2:");
+            try seq.writeInt(w, color.r);
             try w.writeByte(':');
-            try seq.writeInt(w, c.g);
+            try seq.writeInt(w, color.g);
             try w.writeByte(':');
-            try seq.writeInt(w, c.b);
+            try seq.writeInt(w, color.b);
         },
-        .indexed => |n| {
-            try w.writeAll(":5:");
-            try seq.writeInt(w, n);
+        .indexed => {
+            try w.writeAll("5:");
+            try seq.writeInt(w, color.r);
         },
     }
+}
+
+test "a cursor colour is four bytes, and its tag is the protocol's number" {
+    try std.testing.expectEqual(@as(usize, 4), @sizeOf(CursorColor));
+    try std.testing.expectEqual(@as(usize, 1), @alignOf(CursorColor));
+
+    const cases = [_]struct { color: CursorColor, bytes: [4]u8 }{
+        .{ .color = .unset, .bytes = .{ 0, 0, 0, 0 } },
+        .{ .color = .special, .bytes = .{ 1, 0, 0, 0 } },
+        .{ .color = .rgb(255, 0, 128), .bytes = .{ 2, 255, 0, 128 } },
+        .{ .color = .indexed(9), .bytes = .{ 5, 9, 0, 0 } },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqualSlices(u8, &case.bytes, std.mem.asBytes(&case.color));
+        // The first byte is the COLOR_SPACE the protocol names.
+        try std.testing.expectEqual(case.bytes[0], @intFromEnum(case.color.space));
+    }
+
+    try std.testing.expectEqual(@as(u8, 9), CursorColor.indexed(9).index());
+    try std.testing.expectEqual(Rgb{ .r = 255, .g = 0, .b = 128 }, CursorColor.rgb(255, 0, 128).toRgb());
 }

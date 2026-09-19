@@ -336,7 +336,7 @@ pub const KeyEvent = struct {
 /// terminal that does not know its own pixel size, which is every terminal
 /// that is not drawing the glyphs itself -- a multiplexer, most obviously --
 /// so a program that divides by them must check first.
-pub const Resize = struct {
+pub const Resize = extern struct {
     /// Rows of text.
     rows: u32,
     /// Columns of text.

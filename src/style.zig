@@ -78,7 +78,7 @@ pub const Ansi = enum(u8) {
 
 /// A colour given directly, eight bits a channel, in the order SGR writes
 /// them.
-pub const Rgb = struct {
+pub const Rgb = extern struct {
     /// Red, 0 to 255.
     r: u8,
     /// Green, 0 to 255.
@@ -94,21 +94,107 @@ pub const Rgb = struct {
 /// 256-colour palette and which every terminal understands; `.palette` writes
 /// `38;5;n`, which a terminal without 256-colour support drops on the floor.
 /// For those sixteen, `.ansi` is the form to send.
-pub const Color = union(enum) {
-    /// The terminal's own colour for whichever side this is used on:
-    /// foreground, background, or underline.
-    default,
-    /// One of the sixteen theme colours, written with its own short code.
-    ansi: Ansi,
-    /// An entry in the 256-colour palette: the sixteen theme colours at 0-15,
-    /// a 6x6x6 colour cube at 16-231, and 24 greys at 232-255. Written
-    /// `38;5;n`.
-    palette: u8,
-    /// A colour the terminal does not get to reinterpret, written
-    /// `38;2;r;g;b`. A terminal without direct colour support approximates it
-    /// from its palette, so this is never wrong to send, only sometimes
-    /// rounded.
-    rgb: Rgb,
+///
+/// An `extern struct` with a tag and three channel bytes, rather than the
+/// tagged union the shape asks for, because `Style` holds three of these and
+/// a renderer holds a `Style` inside its cell. Zig gives an auto-layout union
+/// no guaranteed representation and will not put one in an `extern struct`,
+/// so a union here would stop a cell being `extern` and stop a row of cells
+/// being compared with `memcmp` -- which is the comparison a renderer makes
+/// most. Four bytes and no padding, the same size the union was.
+///
+/// Write one with `Color.default`, `Color.ansi`, `Color.palette` or
+/// `Color.rgb`, which in a typed position spell themselves `.default`,
+/// `.ansi(.red)`, `.palette(196)` and `.rgb(255, 128, 0)`. Read one by
+/// switching on `kind` and taking `index`, `toAnsi` or `toRgb`. The fields
+/// are public so a comptime table of colours can be written out directly,
+/// but nothing has to touch them.
+pub const Color = extern struct {
+    /// Which of the four forms a colour is in.
+    pub const Kind = enum(u8) {
+        /// The terminal's own colour for whichever side this is used on:
+        /// foreground, background, or underline.
+        default = 0,
+        /// One of the sixteen theme colours, written with its own short
+        /// code. `r` holds the `Ansi` slot.
+        ansi = 1,
+        /// An entry in the 256-colour palette: the sixteen theme colours at
+        /// 0-15, a 6x6x6 colour cube at 16-231, and 24 greys at 232-255.
+        /// Written `38;5;n`; `r` holds the index.
+        palette = 2,
+        /// A colour the terminal does not get to reinterpret, written
+        /// `38;2;r;g;b`. A terminal without direct colour support
+        /// approximates it from its palette, so this is never wrong to send,
+        /// only sometimes rounded.
+        rgb = 3,
+    };
+
+    /// Which form this is.
+    kind: Kind = .default,
+    /// Red for `.rgb`; the slot or index for `.ansi` and `.palette`; zero
+    /// for `.default`.
+    r: u8 = 0,
+    /// Green for `.rgb`, zero otherwise.
+    g: u8 = 0,
+    /// Blue for `.rgb`, zero otherwise.
+    b: u8 = 0,
+
+    /// The terminal's own colour. All three of `Style{}`'s colours are this.
+    pub const default: Color = .{};
+
+    /// One of the sixteen theme colours.
+    pub fn ansi(which: Ansi) Color {
+        return .{ .kind = .ansi, .r = @intFromEnum(which) };
+    }
+
+    /// One entry of the 256-colour palette.
+    pub fn palette(entry: u8) Color {
+        return .{ .kind = .palette, .r = entry };
+    }
+
+    /// A colour given directly, three channels.
+    pub fn rgb(red: u8, green: u8, blue: u8) Color {
+        return .{ .kind = .rgb, .r = red, .g = green, .b = blue };
+    }
+
+    /// The same, from an `Rgb` -- which is what `Rgb16.to8` gives back, so
+    /// this is how a colour the terminal reported becomes one to draw with.
+    pub fn fromRgb(color: Rgb) Color {
+        return .{ .kind = .rgb, .r = color.r, .g = color.g, .b = color.b };
+    }
+
+    /// The slot or index of an `.ansi` or `.palette` colour, and zero for
+    /// the other two.
+    pub fn index(color: Color) u8 {
+        return color.r;
+    }
+
+    /// The theme slot of an `.ansi` colour. Meaningful only when `kind` is
+    /// `.ansi`.
+    pub fn toAnsi(color: Color) Ansi {
+        return @enumFromInt(color.r);
+    }
+
+    /// The three channels of an `.rgb` colour. Meaningful only when `kind`
+    /// is `.rgb`.
+    pub fn toRgb(color: Color) Rgb {
+        return .{ .r = color.r, .g = color.g, .b = color.b };
+    }
+
+    /// Whether two colours would write the same bytes.
+    ///
+    /// Field by field rather than over the four bytes, because the channels
+    /// of anything but an `.rgb` colour are not part of its meaning: a
+    /// hand-written `.{ .kind = .default, .r = 9 }` is still the default
+    /// colour, and `diffStyle` must not write a sequence for it.
+    pub fn eql(a: Color, b: Color) bool {
+        if (a.kind != b.kind) return false;
+        return switch (a.kind) {
+            .default => true,
+            .ansi, .palette => a.r == b.r,
+            .rgb => a.r == b.r and a.g == b.g and a.b == b.b,
+        };
+    }
 };
 
 /// Whether a cell's glyphs are raised, lowered, or neither: SGR 73, 74 and
@@ -152,7 +238,14 @@ pub const Underline = enum(u8) {
 ///
 /// The defaults are what a terminal is in after `resetStyle`, which is what
 /// makes `Style{}` the right `from` for a program that has just reset.
-pub const Style = struct {
+///
+/// `extern`, and deliberately: a renderer keeps one of these in every cell,
+/// and a cell that is `extern` is a row that can be compared with `memcmp`
+/// and a screen that can be diffed a row at a time rather than a field at a
+/// time. The `comptime` block below pins the two things that makes true --
+/// no padding and an alignment of one -- so a field added in the wrong place
+/// fails the build instead of quietly making that comparison read the holes.
+pub const Style = extern struct {
     /// The colour of the glyphs.
     fg: Color = .default,
     /// The colour of the cell behind them.
@@ -268,23 +361,23 @@ fn writeFgBg(
     bright_base: u8,
     extended: u8,
 ) Writer.Error!void {
-    switch (color) {
+    switch (color.kind) {
         .default => try p.code(default_code),
-        .ansi => |a| {
-            const index = @intFromEnum(a);
-            try p.code(if (index < 8) base + index else bright_base + (index - 8));
+        .ansi => {
+            const slot = color.index();
+            try p.code(if (slot < 8) base + slot else bright_base + (slot - 8));
         },
-        .palette => |n| {
+        .palette => {
             try p.code(extended);
             try p.w.writeAll(";5;");
-            try seq.writeInt(p.w, n);
+            try seq.writeInt(p.w, color.index());
         },
-        .rgb => |c| {
+        .rgb => {
             try p.code(extended);
             try p.w.writeAll(";2;");
-            try seq.writeInt(p.w, c.r);
-            try p.field(c.g);
-            try p.field(c.b);
+            try seq.writeInt(p.w, color.r);
+            try p.field(color.g);
+            try p.field(color.b);
         },
     }
 }
@@ -301,23 +394,37 @@ fn writeFgBg(
 /// short codes for the sixteen — the palette index is its only spelling for
 /// them.
 fn writeUnderlineColor(p: *Params, color: Color) Writer.Error!void {
-    switch (color) {
+    switch (color.kind) {
         .default => try p.code(59),
-        .ansi => |a| {
+        .ansi, .palette => {
             try p.compound("58:5:");
-            try seq.writeInt(p.w, @intFromEnum(a));
+            try seq.writeInt(p.w, color.index());
         },
-        .palette => |n| {
-            try p.compound("58:5:");
-            try seq.writeInt(p.w, n);
-        },
-        .rgb => |c| {
+        .rgb => {
             try p.compound("58:2::");
-            try seq.writeInt(p.w, c.r);
-            try p.subfield(c.g);
-            try p.subfield(c.b);
+            try seq.writeInt(p.w, color.r);
+            try p.subfield(color.g);
+            try p.subfield(color.b);
         },
     }
+}
+
+comptime {
+    // What a renderer may rely on: `Style` is `extern`, so its layout is the
+    // one written above and stays put; it has no padding, so two of them
+    // compare byte for byte with no indeterminate bytes in between; and it
+    // aligns to one, so it drops into a cell at any offset. A row of cells
+    // carrying one therefore compares with `memcmp`.
+    //
+    // Pinned rather than assumed: a field of a type wider than a byte, added
+    // anywhere but the front, would open a hole and quietly make that
+    // comparison read it.
+    var total: usize = 0;
+    for (@typeInfo(Style).@"struct".fields) |field| total += @sizeOf(field.type);
+    std.debug.assert(total == @sizeOf(Style));
+    std.debug.assert(@alignOf(Style) == 1);
+    std.debug.assert(@sizeOf(Color) == 4);
+    std.debug.assert(@alignOf(Color) == 1);
 }
 
 /// Resets every attribute and both colours: `CSI 0 m`.
@@ -383,9 +490,9 @@ pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
         try params.code(@intFromEnum(to.script));
     }
 
-    if (!std.meta.eql(from.fg, to.fg)) try writeFgBg(&params, to.fg, 39, 30, 90, 38);
-    if (!std.meta.eql(from.bg, to.bg)) try writeFgBg(&params, to.bg, 49, 40, 100, 48);
-    if (!std.meta.eql(from.underline_color, to.underline_color)) {
+    if (!from.fg.eql(to.fg)) try writeFgBg(&params, to.fg, 39, 30, 90, 38);
+    if (!from.bg.eql(to.bg)) try writeFgBg(&params, to.bg, 49, 40, 100, 48);
+    if (!from.underline_color.eql(to.underline_color)) {
         try writeUnderlineColor(&params, to.underline_color);
     }
 
@@ -474,27 +581,27 @@ test "every ansi colour writes its own foreground and background code" {
     for (cases) |case| {
         var fg: Writer.Allocating = .init(std.testing.allocator);
         defer fg.deinit();
-        try setStyle(&fg.writer, .{ .fg = .{ .ansi = case.color } });
+        try setStyle(&fg.writer, .{ .fg = .ansi(case.color) });
         try std.testing.expectEqualStrings(case.fg, fg.written());
 
         var bg: Writer.Allocating = .init(std.testing.allocator);
         defer bg.deinit();
-        try setStyle(&bg.writer, .{ .bg = .{ .ansi = case.color } });
+        try setStyle(&bg.writer, .{ .bg = .ansi(case.color) });
         try std.testing.expectEqualStrings(case.bg, bg.written());
     }
 }
 
 test "a palette colour writes the indexed form on all three sides" {
     const cases = [_]struct { style: Style, bytes: []const u8 }{
-        .{ .style = .{ .fg = .{ .palette = 0 } }, .bytes = "\x1b[38;5;0m" },
-        .{ .style = .{ .fg = .{ .palette = 196 } }, .bytes = "\x1b[38;5;196m" },
-        .{ .style = .{ .fg = .{ .palette = 255 } }, .bytes = "\x1b[38;5;255m" },
-        .{ .style = .{ .bg = .{ .palette = 17 } }, .bytes = "\x1b[48;5;17m" },
-        .{ .style = .{ .bg = .{ .palette = 255 } }, .bytes = "\x1b[48;5;255m" },
+        .{ .style = .{ .fg = .palette(0) }, .bytes = "\x1b[38;5;0m" },
+        .{ .style = .{ .fg = .palette(196) }, .bytes = "\x1b[38;5;196m" },
+        .{ .style = .{ .fg = .palette(255) }, .bytes = "\x1b[38;5;255m" },
+        .{ .style = .{ .bg = .palette(17) }, .bytes = "\x1b[48;5;17m" },
+        .{ .style = .{ .bg = .palette(255) }, .bytes = "\x1b[48;5;255m" },
         // The underline colour has no short codes, so its sixteen are written
         // as palette entries like any other index.
-        .{ .style = .{ .underline_color = .{ .palette = 3 } }, .bytes = "\x1b[58:5:3m" },
-        .{ .style = .{ .underline_color = .{ .palette = 231 } }, .bytes = "\x1b[58:5:231m" },
+        .{ .style = .{ .underline_color = .palette(3) }, .bytes = "\x1b[58:5:3m" },
+        .{ .style = .{ .underline_color = .palette(231) }, .bytes = "\x1b[58:5:231m" },
     };
     for (cases) |case| {
         var out: Writer.Allocating = .init(std.testing.allocator);
@@ -508,27 +615,27 @@ test "a palette colour writes the indexed form on all three sides" {
 test "an ansi underline colour writes the same bytes as its palette entry" {
     var named: Writer.Allocating = .init(std.testing.allocator);
     defer named.deinit();
-    try setStyle(&named.writer, .{ .underline_color = .{ .ansi = .bright_magenta } });
+    try setStyle(&named.writer, .{ .underline_color = .ansi(.bright_magenta) });
     try std.testing.expectEqualStrings("\x1b[58:5:13m", named.written());
 
     var indexed: Writer.Allocating = .init(std.testing.allocator);
     defer indexed.deinit();
-    try setStyle(&indexed.writer, .{ .underline_color = .{ .palette = 13 } });
+    try setStyle(&indexed.writer, .{ .underline_color = .palette(13) });
     try std.testing.expectEqualStrings(named.written(), indexed.written());
 }
 
 test "a direct colour writes semicolons for fg and bg and colons for the underline" {
     const cases = [_]struct { style: Style, bytes: []const u8 }{
-        .{ .style = .{ .fg = .{ .rgb = .{ .r = 0, .g = 0, .b = 0 } } }, .bytes = "\x1b[38;2;0;0;0m" },
-        .{ .style = .{ .fg = .{ .rgb = .{ .r = 255, .g = 128, .b = 1 } } }, .bytes = "\x1b[38;2;255;128;1m" },
-        .{ .style = .{ .bg = .{ .rgb = .{ .r = 17, .g = 34, .b = 51 } } }, .bytes = "\x1b[48;2;17;34;51m" },
-        .{ .style = .{ .bg = .{ .rgb = .{ .r = 255, .g = 255, .b = 255 } } }, .bytes = "\x1b[48;2;255;255;255m" },
+        .{ .style = .{ .fg = .rgb(0, 0, 0) }, .bytes = "\x1b[38;2;0;0;0m" },
+        .{ .style = .{ .fg = .rgb(255, 128, 1) }, .bytes = "\x1b[38;2;255;128;1m" },
+        .{ .style = .{ .bg = .rgb(17, 34, 51) }, .bytes = "\x1b[48;2;17;34;51m" },
+        .{ .style = .{ .bg = .rgb(255, 255, 255) }, .bytes = "\x1b[48;2;255;255;255m" },
         .{
-            .style = .{ .underline_color = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } } },
+            .style = .{ .underline_color = .rgb(255, 0, 0) },
             .bytes = "\x1b[58:2::255:0:0m",
         },
         .{
-            .style = .{ .underline_color = .{ .rgb = .{ .r = 1, .g = 2, .b = 3 } } },
+            .style = .{ .underline_color = .rgb(1, 2, 3) },
             .bytes = "\x1b[58:2::1:2:3m",
         },
     };
@@ -546,9 +653,9 @@ test "a combined style is one sequence in the documented order" {
     defer out.deinit();
 
     try setStyle(&out.writer, .{
-        .fg = .{ .rgb = .{ .r = 10, .g = 20, .b = 30 } },
-        .bg = .{ .palette = 200 },
-        .underline_color = .{ .rgb = .{ .r = 1, .g = 2, .b = 3 } },
+        .fg = .rgb(10, 20, 30),
+        .bg = .palette(200),
+        .underline_color = .rgb(1, 2, 3),
         .bold = true,
         .italic = true,
         .underline = .curly,
@@ -599,8 +706,8 @@ test "a colour change beside an off code keeps the passes in order" {
 
     try diffStyle(
         &out.writer,
-        .{ .bold = true, .blink = true, .fg = .{ .ansi = .red } },
-        .{ .italic = true, .fg = .{ .palette = 33 }, .bg = .{ .ansi = .bright_black } },
+        .{ .bold = true, .blink = true, .fg = .ansi(.red) },
+        .{ .italic = true, .fg = .palette(33), .bg = .ansi(.bright_black) },
     );
     try std.testing.expectEqualStrings("\x1b[22;25;3;38;5;33;100m", out.written());
 }
@@ -623,10 +730,10 @@ test "changing one underline to another writes only the new one" {
 
 test "a colour going back to default writes the default code for its side" {
     const cases = [_]struct { from: Style, bytes: []const u8 }{
-        .{ .from = .{ .fg = .{ .ansi = .red } }, .bytes = "\x1b[39m" },
-        .{ .from = .{ .fg = .{ .rgb = .{ .r = 1, .g = 2, .b = 3 } } }, .bytes = "\x1b[39m" },
-        .{ .from = .{ .bg = .{ .palette = 200 } }, .bytes = "\x1b[49m" },
-        .{ .from = .{ .underline_color = .{ .rgb = .{ .r = 9, .g = 9, .b = 9 } } }, .bytes = "\x1b[59m" },
+        .{ .from = .{ .fg = .ansi(.red) }, .bytes = "\x1b[39m" },
+        .{ .from = .{ .fg = .rgb(1, 2, 3) }, .bytes = "\x1b[39m" },
+        .{ .from = .{ .bg = .palette(200) }, .bytes = "\x1b[49m" },
+        .{ .from = .{ .underline_color = .rgb(9, 9, 9) }, .bytes = "\x1b[59m" },
     };
     for (cases) |case| {
         var out: Writer.Allocating = .init(std.testing.allocator);
@@ -642,9 +749,9 @@ test "all three colours going back to default land in one sequence" {
     defer out.deinit();
 
     try diffStyle(&out.writer, .{
-        .fg = .{ .ansi = .red },
-        .bg = .{ .palette = 200 },
-        .underline_color = .{ .rgb = .{ .r = 1, .g = 2, .b = 3 } },
+        .fg = .ansi(.red),
+        .bg = .palette(200),
+        .underline_color = .rgb(1, 2, 3),
     }, .{});
     try std.testing.expectEqualStrings("\x1b[39;49;59m", out.written());
 }
@@ -655,7 +762,7 @@ test "the same sixteen colours in their two spellings are not the same colour" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try diffStyle(&out.writer, .{ .fg = .{ .ansi = .red } }, .{ .fg = .{ .palette = 1 } });
+    try diffStyle(&out.writer, .{ .fg = .ansi(.red) }, .{ .fg = .palette(1) });
     try std.testing.expectEqualStrings("\x1b[38;5;1m", out.written());
 }
 
@@ -669,16 +776,16 @@ test "a style diffed against itself writes nothing" {
         .{ .underline = .single },
         .{ .underline = .curly },
         .{ .blink = true, .reverse = true, .hidden = true },
-        .{ .fg = .{ .ansi = .bright_cyan } },
-        .{ .bg = .{ .ansi = .black } },
-        .{ .fg = .{ .palette = 231 }, .bg = .{ .palette = 16 } },
-        .{ .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 127 } } },
-        .{ .underline_color = .{ .rgb = .{ .r = 0, .g = 255, .b = 0 } } },
-        .{ .underline_color = .{ .ansi = .yellow } },
+        .{ .fg = .ansi(.bright_cyan) },
+        .{ .bg = .ansi(.black) },
+        .{ .fg = .palette(231), .bg = .palette(16) },
+        .{ .fg = .rgb(255, 0, 127) },
+        .{ .underline_color = .rgb(0, 255, 0) },
+        .{ .underline_color = .ansi(.yellow) },
         .{
-            .fg = .{ .rgb = .{ .r = 1, .g = 2, .b = 3 } },
-            .bg = .{ .palette = 8 },
-            .underline_color = .{ .palette = 9 },
+            .fg = .rgb(1, 2, 3),
+            .bg = .palette(8),
+            .underline_color = .palette(9),
             .bold = true,
             .dim = true,
             .italic = true,
@@ -700,9 +807,9 @@ test "a style diffed against itself writes nothing" {
 
 test "everything on and everything off again, in both directions" {
     const everything = Style{
-        .fg = .{ .ansi = .red },
-        .bg = .{ .ansi = .bright_blue },
-        .underline_color = .{ .ansi = .green },
+        .fg = .ansi(.red),
+        .bg = .ansi(.bright_blue),
+        .underline_color = .ansi(.green),
         .bold = true,
         .dim = true,
         .italic = true,
@@ -728,8 +835,8 @@ test "everything on and everything off again, in both directions" {
 test "setStyle is the diff from the default style" {
     const styles = [_]Style{
         .{ .bold = true, .underline = .double },
-        .{ .fg = .{ .palette = 42 }, .reverse = true },
-        .{ .underline_color = .{ .rgb = .{ .r = 7, .g = 8, .b = 9 } }, .underline = .curly },
+        .{ .fg = .palette(42), .reverse = true },
+        .{ .underline_color = .rgb(7, 8, 9), .underline = .curly },
     };
     for (styles) |style| {
         var direct: Writer.Allocating = .init(std.testing.allocator);
@@ -748,7 +855,7 @@ test "a writer with no room left reports the failure" {
     var buffer: [4]u8 = undefined;
     var w: Writer = .fixed(&buffer);
     try std.testing.expectError(error.WriteFailed, setStyle(&w, .{
-        .fg = .{ .rgb = .{ .r = 255, .g = 255, .b = 255 } },
+        .fg = .rgb(255, 255, 255),
         .bold = true,
         .italic = true,
         .underline = .curly,
@@ -845,13 +952,94 @@ test "a style has no padding, so two of them compare byte for byte" {
     // The comptime block above asserts it; this says what it buys, which is
     // that a renderer may compare styles -- and rows of cells holding them --
     // without walking the fields.
-    const a: Style = .{ .bold = true, .fg = .{ .ansi = .red } };
+    const a: Style = .{ .bold = true, .fg = .ansi(.red) };
     var b: Style = undefined;
     @memset(std.mem.asBytes(&b), 0xaa);
     b = a;
     try std.testing.expectEqualSlices(u8, std.mem.asBytes(&a), std.mem.asBytes(&b));
 
-    const c: Style = .{ .bold = true, .fg = .{ .ansi = .blue } };
+    const c: Style = .{ .bold = true, .fg = .ansi(.blue) };
     try std.testing.expect(!std.mem.eql(u8, std.mem.asBytes(&a), std.mem.asBytes(&c)));
     try std.testing.expectEqual(@as(usize, 1), @alignOf(Style));
+}
+
+test "a colour is four bytes in every form, and no form has padding" {
+    try std.testing.expectEqual(@as(usize, 4), @sizeOf(Color));
+    try std.testing.expectEqual(@as(usize, 1), @alignOf(Color));
+    try std.testing.expectEqual(@as(usize, 22), @sizeOf(Style));
+    try std.testing.expectEqual(@as(usize, 1), @alignOf(Style));
+
+    // Three colours and ten one-byte fields, with nothing in between.
+    var total: usize = 0;
+    inline for (@typeInfo(Style).@"struct".fields) |field| total += @sizeOf(field.type);
+    try std.testing.expectEqual(@sizeOf(Style), total);
+}
+
+test "every constructor writes the fields its kind uses and no others" {
+    const cases = [_]struct { color: Color, kind: Color.Kind, bytes: [4]u8 }{
+        .{ .color = .default, .kind = .default, .bytes = .{ 0, 0, 0, 0 } },
+        .{ .color = .ansi(.red), .kind = .ansi, .bytes = .{ 1, 1, 0, 0 } },
+        .{ .color = .ansi(.bright_white), .kind = .ansi, .bytes = .{ 1, 15, 0, 0 } },
+        .{ .color = .palette(196), .kind = .palette, .bytes = .{ 2, 196, 0, 0 } },
+        .{ .color = .rgb(255, 128, 1), .kind = .rgb, .bytes = .{ 3, 255, 128, 1 } },
+        .{ .color = .fromRgb(.{ .r = 1, .g = 2, .b = 3 }), .kind = .rgb, .bytes = .{ 3, 1, 2, 3 } },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqual(case.kind, case.color.kind);
+        try std.testing.expectEqualSlices(u8, &case.bytes, std.mem.asBytes(&case.color));
+    }
+
+    try std.testing.expectEqual(Ansi.red, Color.ansi(.red).toAnsi());
+    try std.testing.expectEqual(@as(u8, 196), Color.palette(196).index());
+    try std.testing.expectEqual(Rgb{ .r = 255, .g = 128, .b = 1 }, Color.rgb(255, 128, 1).toRgb());
+}
+
+test "every Ansi slot round trips through a colour" {
+    for (0..16) |i| {
+        const slot: Ansi = @enumFromInt(i);
+        const color: Color = .ansi(slot);
+        try std.testing.expectEqual(slot, color.toAnsi());
+        try std.testing.expectEqual(@as(u8, @intCast(i)), color.index());
+    }
+}
+
+test "eql ignores the channels a kind does not use" {
+    // A colour built by hand with rubbish in the unused bytes is still the
+    // colour its kind says it is, and `diffStyle` must write nothing for it.
+    const clean: Color = .default;
+    const dirty: Color = .{ .kind = .default, .r = 9, .g = 9, .b = 9 };
+    try std.testing.expect(clean.eql(dirty));
+    try std.testing.expect(!std.mem.eql(u8, std.mem.asBytes(&clean), std.mem.asBytes(&dirty)));
+
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try diffStyle(&out.writer, .{ .fg = clean }, .{ .fg = dirty });
+    try std.testing.expectEqualStrings("", out.written());
+
+    // And two colours of different kinds that share a first byte are not
+    // equal.
+    try std.testing.expect(!Color.ansi(.red).eql(Color.palette(1)));
+    try std.testing.expect(Color.rgb(1, 2, 3).eql(Color.rgb(1, 2, 3)));
+    try std.testing.expect(!Color.rgb(1, 2, 3).eql(Color.rgb(1, 2, 4)));
+}
+
+test "a row of cells holding a style compares with memcmp" {
+    // The comparison a renderer makes on every frame, and what `extern`
+    // bought: a cell with a style in it, in an array, compared in one call.
+    const Cell = extern struct {
+        codepoint: u32 = ' ',
+        style: Style = .{},
+        pad: [6]u8 = @splat(0),
+    };
+    comptime std.debug.assert(@sizeOf(Cell) == 32);
+
+    var a: [80]Cell = @splat(.{});
+    var b: [80]Cell = @splat(.{});
+    try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(&a), std.mem.sliceAsBytes(&b));
+
+    b[40].style.fg = .ansi(.cyan);
+    try std.testing.expect(!std.mem.eql(u8, std.mem.sliceAsBytes(&a), std.mem.sliceAsBytes(&b)));
+
+    a[40].style.fg = .ansi(.cyan);
+    try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(&a), std.mem.sliceAsBytes(&b));
 }

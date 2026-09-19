@@ -60,8 +60,8 @@ fn report(name: []const u8, value: f64, unit: []const u8, budget: f64) void {
 test "bench: a style diff is four bytes and a few dozen nanoseconds" {
     // The frame this stands for: a syntax-highlighted line, where the style
     // changes at every token and almost nothing about it changes at once.
-    const from: style.Style = .{ .bold = true, .fg = .{ .ansi = .cyan } };
-    const to: style.Style = .{ .fg = .{ .ansi = .cyan } };
+    const from: style.Style = .{ .bold = true, .fg = .ansi(.cyan) };
+    const to: style.Style = .{ .fg = .ansi(.cyan) };
 
     var buffer: [64]u8 = undefined;
     var out: Writer = .fixed(&buffer);
@@ -80,10 +80,14 @@ test "bench: a style diff is four bytes and a few dozen nanoseconds" {
 
     const Case = struct {
         buffer: []u8,
+        // The two styles again, as declarations, because a nested function
+        // cannot reach a local of the test it sits in.
+        const lit: style.Style = .{ .bold = true, .fg = .ansi(.cyan) };
+        const plain: style.Style = .{ .fg = .ansi(.cyan) };
         fn one(c: @This()) !void {
             var w: Writer = .fixed(c.buffer);
-            try style.diffStyle(&w, from, to);
-            try style.diffStyle(&w, to, from);
+            try style.diffStyle(&w, lit, plain);
+            try style.diffStyle(&w, plain, lit);
             std.mem.doNotOptimizeAway(w.buffered().len);
         }
     };
@@ -106,9 +110,9 @@ test "bench: the worst style diff there is stays one sequence" {
         .strikethrough = true,
         .overline = true,
         .script = .superscript,
-        .fg = .{ .rgb = .{ .r = 1, .g = 2, .b = 3 } },
-        .bg = .{ .rgb = .{ .r = 4, .g = 5, .b = 6 } },
-        .underline_color = .{ .rgb = .{ .r = 7, .g = 8, .b = 9 } },
+        .fg = .rgb(1, 2, 3),
+        .bg = .rgb(4, 5, 6),
+        .underline_color = .rgb(7, 8, 9),
     };
     var buffer: [128]u8 = undefined;
     var out: Writer = .fixed(&buffer);

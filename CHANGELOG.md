@@ -8,7 +8,68 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.0] - 2026-09-19
 
-Four protocols on the writing side, and the numbers to show what they cost.
+Four protocols on the writing side, the numbers to show what they cost, and
+a layout a renderer can put in a cell.
+
+### Breaking
+
+Every one of these is a name or a shape that changed. Nothing depends on this
+package yet, so they are fixed now rather than carried.
+
+- **`Color` is an `extern struct`, not a tagged union.** It is a `kind` tag
+  and three channel bytes — four bytes, exactly what the union was — because
+  `Style` holds three of them and a renderer holds a `Style` in every cell,
+  and Zig will not put an auto-layout union inside an `extern struct`. A
+  union there would stop a cell being `extern`, which would stop a row of
+  cells being compared with `memcmp`, which is the comparison a renderer
+  makes most.
+
+  Writing one is shorter than it was, not longer:
+
+  | before | now |
+  | --- | --- |
+  | `.default` | `.default` |
+  | `.{ .ansi = .red }` | `.ansi(.red)` |
+  | `.{ .palette = 196 }` | `.palette(196)` |
+  | `.{ .rgb = .{ .r = 255, .g = 128, .b = 0 } }` | `.rgb(255, 128, 0)` |
+
+  Reading one changed: `switch (color)` becomes `switch (color.kind)`, and
+  the payload comes out through `index()`, `toAnsi()` or `toRgb()`.
+  `Color.fromRgb` builds one from what `Rgb16.to8` gives back, and
+  `Color.eql` compares two the way the protocol does — the channels of
+  anything but an `.rgb` colour are not part of its meaning, so a hand-built
+  `.{ .kind = .default, .r = 9 }` is still the default colour and `diffStyle`
+  writes nothing for it.
+
+- **`Style` is an `extern struct`**, 22 bytes, aligned to one, with no
+  padding. A `comptime` block pins all three, so a field of a wider type
+  added anywhere but the front fails the build instead of opening a hole for
+  a byte comparison to read. A cell holding one is `extern`; a row of those
+  compares in one call.
+
+- **`CursorColor` has the same shape**, for the same reason and with the same
+  spelling: `.unset`, `.special`, `.rgb(255, 0, 0)`, `.indexed(9)`, read by
+  switching on `space`. Its tag values are the protocol's own `COLOR_SPACE`
+  numbers, which is why they run 0, 1, 2, 5.
+
+- **Every other record in the package is `extern`** so it can be stored
+  wherever a cell or a log entry can: `Rgb`, `Rgb16`, `MouseEvent`, `Resize`,
+  `CursorPosition`, `ExtendedCursorPosition`, `CursorCell`, `CursorRect`,
+  `Placement` and `GraphicsRect`. No field name or type changed; only the
+  layout is now the declared one.
+
+- **`Event` gained a variant**, `color_scheme`. A switch over it that listed
+  every case has to be told.
+
+- **`Style` gained a field**, `script`, SGR 73/74/75.
+
+- **`GraphicsResponse` and `parseGraphicsResponse` moved** from `device.zig`
+  to `graphics.zig`, beside the commands that provoke them. The names
+  `morse.GraphicsResponse` and `morse.parseGraphicsResponse` are unchanged;
+  only the file is.
+
+- **`win32.keyFromFields` is no longer public.** Nothing outside its own file
+  ever called it.
 
 ### Added
 
@@ -105,13 +166,6 @@ Four protocols on the writing side, and the numbers to show what they cost.
   run. The suite asserts it is never more than a quarter slower in any
   optimize mode, and that it agrees with the formatter on every value to ten
   thousand and at both ends of the range.
-
-- **`Event` gained a variant**, `color_scheme`. A switch over it that listed
-  every case has to be told.
-
-- **`Style` gained a field**, `script`. It is still a plain struct with no
-  padding, and a `comptime` block now pins that, so a renderer may compare
-  two of them — or two rows of cells holding them — byte for byte.
 
 - **The base64 codec moved to `src/base64.zig`**, which the clipboard and the
   graphics transmit now share. It was spelled once and used once before; two

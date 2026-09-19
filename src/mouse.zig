@@ -72,7 +72,7 @@ pub const Button = enum(u8) {
 /// One mouse report.
 ///
 /// `x` and `y` count from 1 at the top-left, in cells unless `pixels` is set.
-pub const MouseEvent = struct {
+pub const MouseEvent = extern struct {
     /// Which button the report is about.
     button: Button,
     /// The column, or the pixel offset from the left edge when `pixels`.

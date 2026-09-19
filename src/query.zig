@@ -86,7 +86,7 @@ pub fn requestCursorPosition(w: *Writer) Writer.Error!void {
 }
 
 /// A cursor position, in cells, counting from one at the top-left.
-pub const CursorPosition = struct {
+pub const CursorPosition = extern struct {
     /// The row, where the topmost row is 1.
     row: u32,
     /// The column, where the leftmost column is 1.
@@ -128,7 +128,7 @@ pub fn requestExtendedCursorPosition(w: *Writer) Writer.Error!void {
 }
 
 /// A cursor position with the page it is on, as DECXCPR reports it.
-pub const ExtendedCursorPosition = struct {
+pub const ExtendedCursorPosition = extern struct {
     /// The row, where the topmost row is 1.
     row: u32,
     /// The column, where the leftmost column is 1.

@@ -399,10 +399,6 @@ pub const resetPalette = device.resetPalette;
 pub const PaletteReport = device.PaletteReport;
 /// Reads a reply to `queryPaletteColor`, or null.
 pub const parsePaletteReply = device.parsePaletteReply;
-/// What a terminal says about a kitty graphics command.
-pub const GraphicsResponse = device.GraphicsResponse;
-/// Reads a kitty graphics response, or null.
-pub const parseGraphicsResponse = device.parseGraphicsResponse;
 /// Which size a program is asking the terminal for.
 pub const SizeQuery = device.SizeQuery;
 /// Asks the terminal how big something is, XTWINOPS.
@@ -430,6 +426,10 @@ pub const parseCapabilityReply = tcap.parseCapabilityReply;
 // The kitty graphics protocol.
 //=========================================================================
 
+/// What a terminal says about a kitty graphics command.
+pub const GraphicsResponse = graphics.GraphicsResponse;
+/// Reads a kitty graphics response, or null.
+pub const parseGraphicsResponse = graphics.parseGraphicsResponse;
 /// The shape of the pixels being sent: RGB, RGBA or PNG.
 pub const GraphicsFormat = graphics.GraphicsFormat;
 /// Where the terminal reads the pixels from: the escape code, a file, a
@@ -622,7 +622,7 @@ test "the root module re-exports what the README promises" {
     try eraseChars(w, 1);
 
     try resetStyle(w);
-    try setStyle(w, .{ .bold = true, .fg = .{ .ansi = .red } });
+    try setStyle(w, .{ .bold = true, .fg = .ansi(.red) });
     try diffStyle(w, .{ .bold = true }, .{ .italic = true });
 
     try queryDeviceAttributes(w);
@@ -653,7 +653,7 @@ test "the root module re-exports what the README promises" {
 
     try extraCursors(w, .main, &.{.{ .cells = &.{.{ .row = 1, .col = 1 }} }});
     try extraCursorsClear(w);
-    try extraCursorColor(w, .cursor, .{ .indexed = 4 });
+    try extraCursorColor(w, .cursor, .indexed(4));
     try queryExtraCursorSupport(w);
     try queryExtraCursors(w);
     try queryExtraCursorColors(w);
@@ -721,6 +721,7 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(CursorCell{ .row = 7, .col = 1 }, at.where.cell);
     const pair: ExtraCursorColors = parseExtraCursorColors("\x1b[>101;30:0;40:1 q").?;
     try std.testing.expectEqual(CursorColor.unset, pair.text);
+    try std.testing.expectEqual(CursorColor.Space.special, pair.cursor.space);
 
     const span: CursorSpan = .main_cursor;
     const box: CursorRect = .{ .top = 1, .left = 1, .bottom = 2, .right = 2 };
@@ -789,12 +790,18 @@ test "the root module re-exports what the README promises" {
     const wipe: ClearScreen = .scrollback;
     try std.testing.expect(erase == .all and wipe == .scrollback);
 
-    const colour: Color = .{ .rgb = .{ .r = 1, .g = 2, .b = 3 } };
+    const colour: Color = .rgb(1, 2, 3);
+    const named: Color = .ansi(.bright_blue);
+    const cube: Color = .palette(196);
     const solid: Rgb = .{ .r = 255, .g = 0, .b = 0 };
     const line: Underline = .curly;
     const shade: Ansi = .bright_blue;
     const attrs: Style = .{ .overline = true };
-    try std.testing.expect(colour == .rgb and line == .curly and shade == .bright_blue);
+    try std.testing.expect(colour.kind == .rgb and line == .curly and shade == .bright_blue);
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, colour.toRgb());
+    try std.testing.expectEqual(Ansi.bright_blue, named.toAnsi());
+    try std.testing.expectEqual(@as(u8, 196), cube.index());
+    try std.testing.expect(Color.default.kind == .default);
     try std.testing.expect(!attrs.bold and attrs.overline and solid.r == 255);
 
     const wide: Rgb16 = .{ .r = 0xffff, .g = 0, .b = 0 };

@@ -59,8 +59,8 @@ try morse.syncOutput.set(w, true);
 // Clear, go to the top-left, write a heading in a style. The second style
 // call writes only what changed -- four bytes rather than a reset and a
 // repaint of attributes that were already right.
-const heading: morse.Style = .{ .bold = true, .fg = .{ .ansi = .cyan } };
-const body: morse.Style = .{ .fg = .{ .ansi = .cyan } };
+const heading: morse.Style = .{ .bold = true, .fg = .ansi(.cyan) };
+const body: morse.Style = .{ .fg = .ansi(.cyan) };
 try morse.clearScreen(w, .all);
 try morse.cursorTo(w, 1, 1);
 try morse.setStyle(w, heading);
@@ -227,8 +227,10 @@ No dependencies: nothing to link, and no C toolchain involved.
 `ConsoleMouseRecord`, `ConsoleSizeRecord`, `ConsoleEvent`, `ControlKeyState`,
 `fromInputRecord`.
 
-**Styles and colour.** `Style`, `Color`, `Ansi`, `Rgb`, `Underline`,
-`Script`, `setStyle`, `diffStyle`, `resetStyle`.
+**Styles and colour.** `Style`, `Color` (with `Color.Kind`, `Color.default`,
+`Color.ansi`, `Color.palette`, `Color.rgb`, `Color.fromRgb`, `index`,
+`toAnsi`, `toRgb`, `eql`), `Ansi`, `Rgb`, `Underline`, `Script`, `setStyle`,
+`diffStyle`, `resetStyle`.
 
 **Cursor and screen.** `cursorTo`, `cursorUp`, `cursorDown`, `cursorRight`,
 `cursorLeft`, `cursorNextLine`, `cursorPrevLine`, `cursorColumn`, `cursorRow`,
@@ -340,6 +342,20 @@ is really implemented; `queryDeviceAttributes`, `queryVersion`, `queryColor`,
 an answer if you pair the question with one always answered, usually
 `queryDeviceAttributes`. What to do with it is yours: no timeout, no cache, no
 fallback.
+
+**`Style` is an `extern struct`, and so is every record in this package.**
+A renderer keeps a style in every cell, and a cell that is `extern` is a row
+that compares with `memcmp` and a screen that diffs a row at a time. That is
+why `Color` is a tagged four-byte struct rather than the tagged union its
+shape asks for: Zig gives an auto-layout union no guaranteed representation
+and will not put one inside an `extern struct`. Write a colour with
+`.default`, `.ansi(.red)`, `.palette(196)` or `.rgb(255, 128, 0)`; read one by
+switching on `kind`. A `comptime` block pins `Style` at 22 bytes, aligned to
+one, with no padding, so a field added in the wrong place fails the build
+rather than quietly making that comparison read the holes. `MouseEvent`,
+`Resize`, `CursorPosition`, `ExtendedCursorPosition`, `Rgb`, `Rgb16`,
+`CursorCell`, `CursorRect`, `Placement` and `GraphicsRect` are `extern` for
+the same reason.
 
 **Styles are written as a diff.** `diffStyle(w, from, to)` writes the shortest
 `CSI ... m` between two styles, and nothing when they are equal. Off codes go
