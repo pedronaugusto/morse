@@ -39,6 +39,14 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run the morse tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
+    // Compiling without running is what a target this host cannot execute can
+    // still be held to, and it is also the default step: a module on its own
+    // installs nothing, so `zig build -Dtarget=...` would otherwise compile
+    // nothing at all and report a pass it did not earn.
+    const check_step = b.step("check", "Compile the tests and the examples without running them");
+    check_step.dependOn(&tests.step);
+    b.getInstallStep().dependOn(check_step);
+
     //=====================================================================
     // Examples
     //
@@ -61,6 +69,7 @@ pub fn build(b: *std.Build) void {
             }),
         });
         examples_step.dependOn(&b.addRunArtifact(example).step);
+        check_step.dependOn(&example.step);
     }
     test_step.dependOn(examples_step);
 

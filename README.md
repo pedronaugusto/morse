@@ -473,7 +473,12 @@ parser has already established the payload is well-formed base64;
 | Windows | `windows-latest` in CI, four optimize modes |
 
 morse calls no operating system API, so the same source builds everywhere Zig
-does, and the three rows above are what has actually been run.
+does, and the three rows above are what has actually been run. CI also
+compiles the suite and the examples without running them for
+`x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-windows-gnu`,
+`aarch64-windows-gnu`, `x86_64-macos` and `aarch64-macos` — `zig build check
+-Dtarget=...`, which fails on a compile error for that target and nothing
+else.
 [`ci/linux.sh`](ci/linux.sh) runs the Linux half in Docker from a machine
 that is not Linux; it is a local script and no CI job calls it.
 

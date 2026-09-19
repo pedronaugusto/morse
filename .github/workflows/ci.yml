@@ -58,31 +58,29 @@ jobs:
 
   # morse calls no operating system API, so the same source builds wherever
   # Zig goes. One host is enough to say so, and it is the claim the README
-  # makes.
+  # makes. `check` is what makes the claim mean something: it compiles the
+  # suite and the examples for the target and runs neither, where a bare
+  # `zig build` would have installed nothing and compiled nothing.
   cross:
-    name: cross-compilation
+    name: cross (${{ matrix.target }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-gnu
+          - aarch64-linux-gnu
+          - x86_64-windows-gnu
+          - aarch64-windows-gnu
+          - x86_64-macos
+          - aarch64-macos
     steps:
       - uses: actions/checkout@v4
-
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-
-      - name: Cross-compilation
-        run: |
-          for target in \
-            x86_64-linux-gnu \
-            aarch64-linux-gnu \
-            x86_64-windows-gnu \
-            aarch64-windows-gnu \
-            x86_64-macos \
-            aarch64-macos
-          do
-            echo "== $target"
-            zig build -Dtarget="$target"
-          done
+      - run: zig build check -Dtarget=${{ matrix.target }}
 
   # The writers, fed to a terminal emulator built from source, and its
   # replies read back through this package's parsers. Its own job because it
