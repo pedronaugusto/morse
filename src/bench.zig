@@ -154,12 +154,12 @@ test "bench: the hand integer encoder against the formatter" {
     // come out of memory the compiler cannot fold, or ReleaseFast would
     // measure two constants instead of two encoders.
     //
-    // Measured on the machine this was written on: about twice as fast in
-    // Debug and a third faster in ReleaseSmall, and level in ReleaseFast,
-    // where the optimiser inlines the formatter's own fast path. Debug is
-    // where the suite and most development run, so that is the half that is
-    // paid daily; the rest of the reason is that a writer with no comptime
-    // format machinery in it is a smaller one.
+    // Measured on the machine this was written on: 2.24x in Debug, 1.31x in
+    // ReleaseSmall, and 0.92x and 0.94x in ReleaseSafe and ReleaseFast --
+    // slower there, because the optimiser inlines the formatter's own fast
+    // path. Debug and ReleaseSmall are where the suite and most development
+    // run, and a writer with no comptime format machinery in it is a
+    // smaller one; that is the whole of the case for it.
     var buffer: [32]u8 = undefined;
     var numbers = [_]u64{ 4294967295, 7, 1, 65535, 200, 300, 0, 128 };
     std.mem.doNotOptimizeAway(&numbers);
@@ -197,12 +197,12 @@ test "bench: the hand integer encoder against the formatter" {
     std.debug.print("bench: {s:<34} {d:>10.2}x\n", .{ "writeInt against the formatter", theirs / mine });
 
     try std.testing.expect(mine < 8000);
-    // Not slower by more than a quarter, in any optimize mode. The margin is
-    // there because ReleaseFast has them level and because the formatter is
-    // not this package's code; a change that made the hand encoder genuinely
-    // worse shows up as a ratio well under one in Debug, where the gap is
-    // widest.
-    try std.testing.expect(mine <= theirs * 1.25);
+    // Not slower by more than half again, in any optimize mode. The margin
+    // is that wide because the optimizing modes measure 0.92x and 0.94x
+    // before any noise, and because the formatter is not this package's
+    // code; a change that made the hand encoder genuinely worse shows up as
+    // a ratio well under one in Debug, where the gap is widest.
+    try std.testing.expect(mine <= theirs * 1.5);
 }
 
 test "bench: a megabyte of pixels costs a quarter of a percent in framing" {

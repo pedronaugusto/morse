@@ -17,6 +17,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A `comptime` block pins `Style`'s layout** — no padding, an alignment of
+  one, and `Color` four bytes aligned to one — so a field of a wider type
+  added anywhere but the front fails the build instead of opening a hole for
+  a byte comparison to read. 0.4.0's entry claimed this; it landed one
+  commit after that release, and the entry there now says so.
+
 - **A run of printable text is one event.** `Event.text` hands the run back
   as a slice of the parser's buffer, the way `Event.unhandled` hands back a
   sequence, so a paste costs one event and no copying rather than a
@@ -93,10 +99,9 @@ package yet, so they are fixed now rather than carried.
   writes nothing for it.
 
 - **`Style` is an `extern struct`**, 22 bytes, aligned to one, with no
-  padding. A `comptime` block pins all three, so a field of a wider type
-  added anywhere but the front fails the build instead of opening a hole for
-  a byte comparison to read. A cell holding one is `extern`; a row of those
-  compares in one call.
+  padding. A cell holding one is `extern`; a row of those compares in one
+  call. (The `comptime` block that pins those three numbers is not in this
+  release; it landed after it, and is in Unreleased above.)
 
 - **`CursorColor` has the same shape**, for the same reason and with the same
   spelling: `.unset`, `.special`, `.rgb(255, 0, 0)`, `.indexed(9)`, read by
@@ -211,10 +216,12 @@ package yet, so they are fixed now rather than carried.
 - **Every number is written by hand rather than through the formatter.**
   `seq.writeInt`, `writeSigned` and `writeHex` fill a stack buffer from the
   back and write the run once. Measured on the machine this was written on,
-  the hand encoder is about twice as fast in Debug and a third faster in
-  ReleaseSmall, and level in ReleaseFast, where the optimiser inlines the
-  formatter's own fast path; Debug is where the suite and most development
-  run. The suite asserts it is never more than a quarter slower in any
+  the hand encoder is 2.24x in Debug and 1.31x in ReleaseSmall, and **0.92x
+  in ReleaseSafe and 0.94x in ReleaseFast — slower**, because the optimiser
+  inlines the formatter's own fast path there. Debug and ReleaseSmall are
+  where the suite and most development run, and a writer with no comptime
+  format machinery in it is a smaller one; that is the whole of the case.
+  The suite asserts it stays within half again of the formatter in any
   optimize mode, and that it agrees with the formatter on every value to ten
   thousand and at both ends of the range.
 
