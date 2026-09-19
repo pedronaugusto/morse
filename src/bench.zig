@@ -226,10 +226,11 @@ test "bench: the hand integer encoder against the formatter" {
     //
     // Measured on the machine this was written on: 2.24x in Debug, 1.31x in
     // ReleaseSmall, and 0.92x and 0.94x in ReleaseSafe and ReleaseFast --
-    // slower there, because the optimiser inlines the formatter's own fast
-    // path. Debug and ReleaseSmall are where the suite and most development
-    // run, and a writer with no comptime format machinery in it is a
-    // smaller one; that is the whole of the case for it.
+    // slower in the optimizing modes, because the optimiser inlines the
+    // formatter's own fast path. Debug and ReleaseSmall are where the suite
+    // and most development run, and a writer with no comptime format
+    // machinery in it is a smaller one; that is the whole of the case for
+    // it.
     var buffer: [32]u8 = undefined;
     var numbers = [_]u64{ 4294967295, 7, 1, 65535, 200, 300, 0, 128 };
     std.mem.doNotOptimizeAway(&numbers);
@@ -267,12 +268,14 @@ test "bench: the hand integer encoder against the formatter" {
     std.debug.print("bench: {s:<34} {d:>10.2}x\n", .{ "writeInt against the formatter", theirs / mine });
 
     try std.testing.expect(mine < 8000);
-    // Not slower by more than half again, in any optimize mode. The margin
-    // is that wide because the optimizing modes measure 0.92x and 0.94x
-    // before any noise, and because the formatter is not this package's
-    // code; a change that made the hand encoder genuinely worse shows up as
-    // a ratio well under one in Debug, where the gap is widest.
-    try std.testing.expect(mine <= theirs * 1.5);
+    // The budget above is the assertion. The ratio is printed and not
+    // asserted: two timing loops measured against each other are at the
+    // mercy of whichever core the scheduler hands them, and repeated runs
+    // of this test on one machine span 0.72x to 10.34x in Debug alone,
+    // with x86-64 Windows reading 0.65x in ReleaseFast. A threshold on
+    // that number reports the machine, not this package. What `writeInt`
+    // owes is checked in seq.zig, which spells every value the sequences
+    // carry and agrees with the formatter on every value to ten thousand.
 }
 
 test "bench: a megabyte of pixels costs a quarter of a percent in framing" {
