@@ -417,7 +417,12 @@ test "bench: what the parser costs does not depend on the caller's buffer" {
     // large buffer slower than a small one and a large read slower than a
     // small one -- exactly backwards, and exactly what the README's advice
     // to size for an OSC 52 reply steers a caller into.
-    const block = 256 * 1024;
+    const block = 128 * 1024;
+    // The best of three per cell, not the mean. What this grid catches is a
+    // tilt -- one cell orders of magnitude worse than its neighbours -- and
+    // a tilt is in every run, where a machine shared with other work puts
+    // noise in some of them.
+    const rounds = 3;
     const mixed = try mixedInput(std.testing.allocator, block);
     defer std.testing.allocator.free(mixed);
     const text = try plainInput(std.testing.allocator, block);
@@ -436,21 +441,23 @@ test "bench: what the parser costs does not depend on the caller's buffer" {
         for (buffers) |size| {
             var line: [4]f64 = @splat(0);
             for (reads, 0..) |read, i| {
-                var parser: key.KeyParser = .init(storage[0..size]);
-                const start = nowNanos();
-                var offset: usize = 0;
-                while (offset < stream.bytes.len) {
-                    const end = @min(offset + read, stream.bytes.len);
-                    var batch = parser.feed(stream.bytes[offset..end]);
-                    while (batch.next()) |_| {}
-                    offset = end;
+                var best: f64 = std.math.floatMax(f64);
+                for (0..rounds) |_| {
+                    var parser: key.KeyParser = .init(storage[0..size]);
+                    const start = nowNanos();
+                    var offset: usize = 0;
+                    while (offset < stream.bytes.len) {
+                        const end = @min(offset + read, stream.bytes.len);
+                        var batch = parser.feed(stream.bytes[offset..end]);
+                        while (batch.next()) |_| {}
+                        offset = end;
+                    }
+                    const elapsed = nowNanos() - start;
+                    best = @min(best, @as(f64, @floatFromInt(elapsed)) /
+                        @as(f64, @floatFromInt(stream.bytes.len)));
                 }
-                const elapsed = nowNanos() - start;
-                const ns_per_byte = @as(f64, @floatFromInt(elapsed)) /
-                    @as(f64, @floatFromInt(stream.bytes.len));
-                line[i] = @as(f64, @floatFromInt(stream.bytes.len)) /
-                    @as(f64, @floatFromInt(elapsed)) * 1000;
-                worst = @max(worst, ns_per_byte);
+                line[i] = 1000 / best;
+                worst = @max(worst, best);
             }
             std.debug.print(
                 "bench: KeyParser {s:<6} {d:>5} B buffer  {d:>7.1} {d:>7.1} {d:>7.1} {d:>7.1} MB/s\n",
@@ -460,9 +467,11 @@ test "bench: what the parser costs does not depend on the caller's buffer" {
     }
 
     // One ceiling for every cell of the grid, because the defect this
-    // catches is a whole grid tilting rather than one number moving.
-    report("KeyParser, worst of the grid", worst, "ns", 200);
-    try std.testing.expect(worst < 200);
+    // catches is a whole grid tilting rather than one number moving. Wide:
+    // the slowest cell here measures under 40 ns a byte in Debug, and the
+    // tilt it is here to catch measured 2,272.
+    report("KeyParser, worst of the grid", worst, "ns", 400);
+    try std.testing.expect(worst < 400);
 }
 
 test "bench: nothing here needed an allocator" {
