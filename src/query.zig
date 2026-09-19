@@ -54,6 +54,10 @@ pub const ModeReport = struct {
 /// the `?`, answers a different question about a different set of modes and
 /// is not recognised here.
 ///
+/// An omitted parameter is its default, zero — so `CSI ? 2026 ; $ y` is a
+/// terminal saying it does not recognise mode 2026, which is what a zero
+/// there means whether the digit is written or left out.
+///
 /// Returns null for anything else, an unknown state value included. `bytes`
 /// must be exactly the sequence, with nothing before or after it.
 pub fn parseModeReply(bytes: []const u8) ?ModeReport {
@@ -61,12 +65,12 @@ pub fn parseModeReply(bytes: []const u8) ?ModeReport {
     if (!std.mem.startsWith(u8, bytes, prefix)) return null;
     var rest = bytes[prefix.len..];
 
-    const mode = seq.scanInt(u16, rest) orelse return null;
+    const mode = seq.scanParam(u16, rest, 0) orelse return null;
     rest = rest[mode.len..];
     if (rest.len == 0 or rest[0] != ';') return null;
     rest = rest[1..];
 
-    const state = seq.scanInt(u8, rest) orelse return null;
+    const state = seq.scanParam(u8, rest, 0) orelse return null;
     rest = rest[state.len..];
     if (!std.mem.eql(u8, rest, "$y")) return null;
     if (state.value > @intFromEnum(ModeState.permanently_reset)) return null;
@@ -98,17 +102,18 @@ pub const CursorPosition = extern struct {
 /// This is the plain report, the answer to `CSI 6 n`. The DEC extended form
 /// carries a page number as well and is marked private; it is a different
 /// sequence, read by `parseExtendedCursorPosition`, and is not recognised
-/// here. Returns null for anything else.
+/// here. An omitted parameter is its default, and CPR's default is one, not
+/// zero: `CSI ; R` is the top-left cell. Returns null for anything else.
 pub fn parseCursorPosition(bytes: []const u8) ?CursorPosition {
     if (!std.mem.startsWith(u8, bytes, seq.csi)) return null;
     var rest = bytes[seq.csi.len..];
 
-    const row = seq.scanInt(u32, rest) orelse return null;
+    const row = seq.scanParam(u32, rest, 1) orelse return null;
     rest = rest[row.len..];
     if (rest.len == 0 or rest[0] != ';') return null;
     rest = rest[1..];
 
-    const col = seq.scanInt(u32, rest) orelse return null;
+    const col = seq.scanParam(u32, rest, 1) orelse return null;
     rest = rest[col.len..];
     if (!std.mem.eql(u8, rest, "R")) return null;
 
@@ -150,24 +155,25 @@ pub const ExtendedCursorPosition = extern struct {
 /// `parseCursorPosition`'s, and each of the two returns null for the other's
 /// form, so a program that asked both questions can tell the answers apart.
 ///
-/// Returns null for anything else. `bytes` must be exactly the sequence, with
-/// nothing before or after it.
+/// An omitted parameter is its default, which here is one, as it is for the
+/// plain report. Returns null for anything else. `bytes` must be exactly the
+/// sequence, with nothing before or after it.
 pub fn parseExtendedCursorPosition(bytes: []const u8) ?ExtendedCursorPosition {
     const prefix = seq.csi ++ "?";
     if (!std.mem.startsWith(u8, bytes, prefix)) return null;
     var rest = bytes[prefix.len..];
 
-    const row = seq.scanInt(u32, rest) orelse return null;
+    const row = seq.scanParam(u32, rest, 1) orelse return null;
     rest = rest[row.len..];
     if (rest.len == 0 or rest[0] != ';') return null;
     rest = rest[1..];
 
-    const col = seq.scanInt(u32, rest) orelse return null;
+    const col = seq.scanParam(u32, rest, 1) orelse return null;
     rest = rest[col.len..];
     if (rest.len == 0 or rest[0] != ';') return null;
     rest = rest[1..];
 
-    const page = seq.scanInt(u32, rest) orelse return null;
+    const page = seq.scanParam(u32, rest, 1) orelse return null;
     rest = rest[page.len..];
     if (!std.mem.eql(u8, rest, "R")) return null;
 
@@ -221,7 +227,7 @@ pub fn parseColorSchemeReply(bytes: []const u8) ?ColorScheme {
     if (!std.mem.startsWith(u8, bytes, prefix)) return null;
     var rest = bytes[prefix.len..];
 
-    const value = seq.scanInt(u8, rest) orelse return null;
+    const value = seq.scanParam(u8, rest, 0) orelse return null;
     rest = rest[value.len..];
     if (!std.mem.eql(u8, rest, "n")) return null;
 
@@ -263,7 +269,6 @@ test "parseModeReply returns null on anything it does not recognise" {
         "\x1b[?2026;1", // no final byte
         "\x1b[?2026;", // no state
         "\x1b[?2026", // no separator
-        "\x1b[?;1$y", // no mode
         "\x1b[2026;1$y", // not a private mode
         "\x1b]?2026;1$y", // OSC, not CSI
         "\x1b[?2026;1$p", // the request's final byte
@@ -276,6 +281,16 @@ test "parseModeReply returns null on anything it does not recognise" {
     for (rejected) |bytes| {
         try std.testing.expect(parseModeReply(bytes) == null);
     }
+}
+
+test "parseModeReply reads an omitted parameter as its default" {
+    const no_mode = parseModeReply("\x1b[?;1$y").?;
+    try std.testing.expectEqual(@as(u16, 0), no_mode.mode);
+    try std.testing.expectEqual(ModeState.set, no_mode.state);
+
+    const no_state = parseModeReply("\x1b[?2026;$y").?;
+    try std.testing.expectEqual(@as(u16, 2026), no_state.mode);
+    try std.testing.expectEqual(ModeState.not_recognized, no_state.state);
 }
 
 test "parseModeReply survives a number long enough to overflow" {
@@ -311,7 +326,6 @@ test "parseCursorPosition returns null on anything it does not recognise" {
         "\x1b[12;40", // no final byte
         "\x1b[12;", // no column
         "\x1b[12R", // no separator
-        "\x1b[;40R", // no row
         "\x1b[12;40n", // the request's final byte
         "\x1b[?12;40R", // the DEC extended report, a different sequence
         "\x1b]12;40R", // OSC, not CSI
@@ -324,6 +338,13 @@ test "parseCursorPosition returns null on anything it does not recognise" {
     for (rejected) |bytes| {
         try std.testing.expect(parseCursorPosition(bytes) == null);
     }
+}
+
+test "parseCursorPosition reads an omitted parameter as one, not zero" {
+    // CPR counts from one, so one is what an omitted parameter means.
+    try std.testing.expectEqual(CursorPosition{ .row = 1, .col = 40 }, parseCursorPosition("\x1b[;40R").?);
+    try std.testing.expectEqual(CursorPosition{ .row = 12, .col = 1 }, parseCursorPosition("\x1b[12;R").?);
+    try std.testing.expectEqual(CursorPosition{ .row = 1, .col = 1 }, parseCursorPosition("\x1b[;R").?);
 }
 
 test "requestExtendedCursorPosition asks with DECXCPR" {
@@ -367,8 +388,6 @@ test "parseExtendedCursorPosition returns null on anything it does not recognise
         "\x1b[?12;40;1", // no final byte
         "\x1b[?12;40;", // no page
         "\x1b[?12;40R", // the plain report, wearing a private marker
-        "\x1b[?12;;1R", // no column
-        "\x1b[?;40;1R", // no row
         "\x1b[?12;40;1n", // the request's final byte
         "\x1b]?12;40;1R", // OSC, not CSI
         "\x1b[?12;40;1RR", // trailing rubbish
@@ -381,6 +400,21 @@ test "parseExtendedCursorPosition returns null on anything it does not recognise
     for (rejected) |bytes| {
         try std.testing.expect(parseExtendedCursorPosition(bytes) == null);
     }
+}
+
+test "parseExtendedCursorPosition reads an omitted parameter as one" {
+    try std.testing.expectEqual(
+        ExtendedCursorPosition{ .row = 12, .col = 1, .page = 1 },
+        parseExtendedCursorPosition("\x1b[?12;;1R").?,
+    );
+    try std.testing.expectEqual(
+        ExtendedCursorPosition{ .row = 1, .col = 40, .page = 1 },
+        parseExtendedCursorPosition("\x1b[?;40;1R").?,
+    );
+    try std.testing.expectEqual(
+        ExtendedCursorPosition{ .row = 1, .col = 1, .page = 1 },
+        parseExtendedCursorPosition("\x1b[?;;R").?,
+    );
 }
 
 test "each cursor position parser refuses the other's report" {

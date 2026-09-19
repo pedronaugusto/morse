@@ -112,6 +112,25 @@ pub fn scanInt(comptime T: type, bytes: []const u8) ?Scan(T) {
     return .{ .value = value, .len = len };
 }
 
+/// Reads a parameter that the terminal was allowed to leave out.
+///
+/// ECMA-48 says an omitted parameter takes its default value, and terminals
+/// use that: a real DA1 reply is `CSI ? 62 ; 52 ; c`, three parameters with
+/// the last of them omitted, and a parser that insists on digits there
+/// refuses the one reply every startup probe ends on. Strictness is right
+/// for a writer, which chooses what it sends, and wrong for a parser of
+/// somebody else's output.
+///
+/// Returns a zero-length scan carrying `default` when there are no digits,
+/// and null only when there are digits that do not fit in `T` — a reply
+/// carrying a forty-digit number is still not a number this package hands
+/// back. The separators stay compulsory: an empty parameter is a parameter,
+/// and a missing `;` is a reply of a different shape.
+pub fn scanParam(comptime T: type, bytes: []const u8, default: T) ?Scan(T) {
+    if (bytes.len != 0 and bytes[0] >= '0' and bytes[0] <= '9') return scanInt(T, bytes);
+    return .{ .value = default, .len = 0 };
+}
+
 /// Removes the string terminator from the end of an OSC sequence: `ST`
 /// (`ESC \`) or the legacy `BEL`.
 ///
@@ -207,6 +226,23 @@ test "scanInt refuses a string that does not start with a digit" {
     try std.testing.expectEqual(@as(?Scan(u32), null), scanInt(u32, ""));
     try std.testing.expectEqual(@as(?Scan(u32), null), scanInt(u32, ";1"));
     try std.testing.expectEqual(@as(?Scan(u32), null), scanInt(u32, "-1"));
+}
+
+test "scanParam takes the default where the terminal left the digits out" {
+    const absent = scanParam(u16, ";1c", 0).?;
+    try std.testing.expectEqual(@as(u16, 0), absent.value);
+    try std.testing.expectEqual(@as(usize, 0), absent.len);
+
+    const end = scanParam(u16, "", 1).?;
+    try std.testing.expectEqual(@as(u16, 1), end.value);
+    try std.testing.expectEqual(@as(usize, 0), end.len);
+
+    const present = scanParam(u16, "62;", 0).?;
+    try std.testing.expectEqual(@as(u16, 62), present.value);
+    try std.testing.expectEqual(@as(usize, 2), present.len);
+
+    // Digits that do not fit are still a reject, not a default.
+    try std.testing.expectEqual(@as(?Scan(u16), null), scanParam(u16, "65536", 0));
 }
 
 test "stripStringTerminator accepts ST and BEL and nothing else" {

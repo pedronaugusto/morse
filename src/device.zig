@@ -97,22 +97,26 @@ pub const DeviceAttributes = struct {
 /// Reads a DA1 reply: `CSI ? class ; attributes... c`.
 ///
 /// The attribute list may be empty, which is a terminal claiming a class and
-/// no extensions. Returns null for anything else — a reply carrying more than
-/// `DeviceAttributes.max_attributes` attributes, an empty parameter, a trailing `;`, or a
-/// number too large for its field included. `bytes` must be exactly the
-/// sequence, with nothing before or after it.
+/// no extensions. An omitted parameter is its default, zero, so the trailing
+/// `;` that real terminals send — `CSI ? 62 ; 52 ; c` — is a third attribute
+/// of zero rather than a reject.
+///
+/// Returns null for anything else: a reply carrying more than
+/// `DeviceAttributes.max_attributes` attributes, or a number too large for
+/// its field. `bytes` must be exactly the sequence, with nothing before or
+/// after it.
 pub fn parseDeviceAttributes(bytes: []const u8) ?DeviceAttributes {
     const prefix = seq.csi ++ "?";
     if (!std.mem.startsWith(u8, bytes, prefix)) return null;
     var rest = bytes[prefix.len..];
 
-    const class = seq.scanInt(u16, rest) orelse return null;
+    const class = seq.scanParam(u16, rest, 0) orelse return null;
     rest = rest[class.len..];
 
     var da: DeviceAttributes = .{ .class = class.value };
     while (rest.len != 0 and rest[0] == ';') {
         rest = rest[1..];
-        const attribute = seq.scanInt(u16, rest) orelse return null;
+        const attribute = seq.scanParam(u16, rest, 0) orelse return null;
         rest = rest[attribute.len..];
         if (da.attribute_count == DeviceAttributes.max_attributes) return null;
         da.attribute_storage[da.attribute_count] = attribute.value;
@@ -155,25 +159,27 @@ pub const SecondaryDeviceAttributes = struct {
 ///
 /// The third parameter is optional, because terminals do omit it; when it is
 /// absent `keyboard` is zero, which is what every terminal that sends it
-/// sends. Returns null for anything else. `bytes` must be exactly the
-/// sequence, with nothing before or after it.
+/// sends. Any of the three may also be present and empty, which is the same
+/// zero — an omitted parameter is its default. Returns null for anything
+/// else. `bytes` must be exactly the sequence, with nothing before or after
+/// it.
 pub fn parseSecondaryDeviceAttributes(bytes: []const u8) ?SecondaryDeviceAttributes {
     const prefix = seq.csi ++ ">";
     if (!std.mem.startsWith(u8, bytes, prefix)) return null;
     var rest = bytes[prefix.len..];
 
-    const terminal_type = seq.scanInt(u16, rest) orelse return null;
+    const terminal_type = seq.scanParam(u16, rest, 0) orelse return null;
     rest = rest[terminal_type.len..];
     if (rest.len == 0 or rest[0] != ';') return null;
     rest = rest[1..];
 
-    const version = seq.scanInt(u32, rest) orelse return null;
+    const version = seq.scanParam(u32, rest, 0) orelse return null;
     rest = rest[version.len..];
 
     var keyboard: u16 = 0;
     if (rest.len != 0 and rest[0] == ';') {
         rest = rest[1..];
-        const scan = seq.scanInt(u16, rest) orelse return null;
+        const scan = seq.scanParam(u16, rest, 0) orelse return null;
         rest = rest[scan.len..];
         keyboard = scan.value;
     }
@@ -228,14 +234,15 @@ pub fn parseVersion(bytes: []const u8) ?[]const u8 {
 /// terminal sends back.
 ///
 /// The protocol defines five bits, so a value above 31 is not flags this
-/// package hands back and returns null rather than a truncated set. `bytes`
-/// must be exactly the sequence, with nothing before or after it.
+/// package hands back and returns null rather than a truncated set. An
+/// omitted parameter is its default, so `CSI ? u` is no flags set at all.
+/// `bytes` must be exactly the sequence, with nothing before or after it.
 pub fn parseKittyKeyboardReply(bytes: []const u8) ?KittyFlags {
     const prefix = seq.csi ++ "?";
     if (!std.mem.startsWith(u8, bytes, prefix)) return null;
     var rest = bytes[prefix.len..];
 
-    const flags = seq.scanInt(u8, rest) orelse return null;
+    const flags = seq.scanParam(u8, rest, 0) orelse return null;
     rest = rest[flags.len..];
     if (!std.mem.eql(u8, rest, "u")) return null;
     if (flags.value > 31) return null;
@@ -640,12 +647,12 @@ pub fn parseWindowSize(bytes: []const u8) ?WindowSize {
     if (rest.len == 0 or rest[0] != ';') return null;
     rest = rest[1..];
 
-    const height = seq.scanInt(u32, rest) orelse return null;
+    const height = seq.scanParam(u32, rest, 0) orelse return null;
     rest = rest[height.len..];
     if (rest.len == 0 or rest[0] != ';') return null;
     rest = rest[1..];
 
-    const width = seq.scanInt(u32, rest) orelse return null;
+    const width = seq.scanParam(u32, rest, 0) orelse return null;
     rest = rest[width.len..];
     if (!std.mem.eql(u8, rest, "t")) return null;
 
@@ -777,10 +784,7 @@ test "parseDeviceAttributes returns null on anything it does not recognise" {
     const rejected = [_][]const u8{
         "", // nothing at all
         "\x1b[?62;1;6", // no final byte
-        "\x1b[?62;", // a trailing separator
-        "\x1b[?62;;1c", // an empty parameter
-        "\x1b[?;1c", // no class
-        "\x1b[?c", // no parameters at all
+        "\x1b[?62;", // a trailing separator with no final byte
         "\x1b[62;1c", // no `?`, so not a DA1 reply
         "\x1b]?62;1c", // OSC, not CSI
         "\x1b[?62;1R", // the wrong final byte
@@ -793,6 +797,58 @@ test "parseDeviceAttributes returns null on anything it does not recognise" {
     for (rejected) |bytes| {
         try std.testing.expect(parseDeviceAttributes(bytes) == null);
     }
+}
+
+test "the replies real terminals send all parse" {
+    // Collected off the wire rather than written from the grammar, and
+    // listed without saying which terminal sent which: what they are here
+    // for is the shapes. A bare class and nothing else; a dozen attributes;
+    // a repeated attribute; a zero-padded version; a trailing separator.
+    const da1 = [_][]const u8{
+        "\x1b[?1;2c",
+        "\x1b[?6c",
+        "\x1b[?62;22;52c",
+        "\x1b[?62;52;c",
+        "\x1b[?62;4;22;28;52c",
+        "\x1b[?64;1;2;6;9;15;17;18;21;22;28c",
+        "\x1b[?64;1;2;4;6;17;18;21;22;52c",
+        "\x1b[?64;2;3;4;6;9;11;15;21;28;29;1;22c",
+        "\x1b[?65;4;6;18;22c",
+        "\x1b[?65;1;3;4;7;9;18;21;22;29;52;314c",
+        "\x1b[?61;1;21;22;28c",
+        "\x1b[?61;4;6;7;14;21;22;23;24;28;32;42;52c",
+    };
+    for (da1) |bytes| try std.testing.expect(parseDeviceAttributes(bytes) != null);
+
+    const da2 = [_][]const u8{
+        "\x1b[>41;411;0c",
+        "\x1b[>1;10;0c",
+        "\x1b[>1;4000;48c",
+        "\x1b[>1;012800;0c",
+        "\x1b[>0;2600;1c",
+        "\x1b[>84;0;0c",
+        "\x1b[>77;30803;0c",
+        "\x1b[>1;95;0c",
+    };
+    for (da2) |bytes| try std.testing.expect(parseSecondaryDeviceAttributes(bytes) != null);
+}
+
+test "parseDeviceAttributes reads an omitted parameter as its default" {
+    // The reply a real terminal sends, trailing separator and all. Refusing
+    // it refused the sentinel that ends every startup probe.
+    const trailing = parseDeviceAttributes("\x1b[?62;52;c").?;
+    try std.testing.expectEqual(@as(u16, 62), trailing.class);
+    try std.testing.expectEqualSlices(u16, &.{ 52, 0 }, trailing.list());
+
+    const middle = parseDeviceAttributes("\x1b[?62;;1c").?;
+    try std.testing.expectEqualSlices(u16, &.{ 0, 1 }, middle.list());
+
+    const no_class = parseDeviceAttributes("\x1b[?;1c").?;
+    try std.testing.expectEqual(@as(u16, 0), no_class.class);
+
+    const nothing = parseDeviceAttributes("\x1b[?c").?;
+    try std.testing.expectEqual(@as(u16, 0), nothing.class);
+    try std.testing.expectEqual(@as(usize, 0), nothing.list().len);
 }
 
 test "parseDeviceAttributes survives a number long enough to overflow" {
@@ -834,11 +890,9 @@ test "parseSecondaryDeviceAttributes returns null on anything it does not recogn
     const rejected = [_][]const u8{
         "", // nothing at all
         "\x1b[>0;276;0", // no final byte
-        "\x1b[>0;276;", // a trailing separator
-        "\x1b[>0;;0c", // an empty parameter
+        "\x1b[>0;276;", // a trailing separator with no final byte
         "\x1b[>0c", // no version
-        "\x1b[>;276;0c", // no terminal type
-        "\x1b[>c", // no parameters at all
+        "\x1b[>c", // no version, and no separator either
         "\x1b[?0;276;0c", // the primary form, a different reply
         "\x1b[0;276;0c", // no `>`
         "\x1b]>0;276;0c", // OSC, not CSI
@@ -855,6 +909,18 @@ test "parseSecondaryDeviceAttributes returns null on anything it does not recogn
     }
 }
 
+test "parseSecondaryDeviceAttributes reads an omitted parameter as its default" {
+    const no_version = parseSecondaryDeviceAttributes("\x1b[>0;;0c").?;
+    try std.testing.expectEqual(@as(u32, 0), no_version.version);
+
+    const no_type = parseSecondaryDeviceAttributes("\x1b[>;276;0c").?;
+    try std.testing.expectEqual(@as(u16, 0), no_type.terminal_type);
+    try std.testing.expectEqual(@as(u32, 276), no_type.version);
+
+    const no_keyboard = parseSecondaryDeviceAttributes("\x1b[>1;4000;c").?;
+    try std.testing.expectEqual(@as(u16, 0), no_keyboard.keyboard);
+}
+
 test "parseSecondaryDeviceAttributes survives a number long enough to overflow" {
     try std.testing.expect(parseSecondaryDeviceAttributes("\x1b[>99999999999999999999;276;0c") == null);
     try std.testing.expect(parseSecondaryDeviceAttributes("\x1b[>0;99999999999999999999;0c") == null);
@@ -862,12 +928,14 @@ test "parseSecondaryDeviceAttributes survives a number long enough to overflow" 
 }
 
 test "parseVersion reads the name a terminal chose" {
-    try std.testing.expectEqualStrings("xterm(390)", parseVersion("\x1bP>|xterm(390)\x1b\\").?);
-    try std.testing.expectEqualStrings("WezTerm 20240203", parseVersion("\x1bP>|WezTerm 20240203\x1b\\").?);
+    // Both shapes terminals use, with the names left generic: a version in
+    // brackets, and a version after a space.
+    try std.testing.expectEqualStrings("name(390)", parseVersion("\x1bP>|name(390)\x1b\\").?);
+    try std.testing.expectEqualStrings("name 20240203", parseVersion("\x1bP>|name 20240203\x1b\\").?);
 }
 
 test "parseVersion accepts BEL where a terminal uses it instead of ST" {
-    try std.testing.expectEqualStrings("foot(1.16.2)", parseVersion("\x1bP>|foot(1.16.2)\x07").?);
+    try std.testing.expectEqualStrings("name(1.16.2)", parseVersion("\x1bP>|name(1.16.2)\x07").?);
 }
 
 test "parseVersion reads an empty name as an empty slice, not null" {
@@ -946,7 +1014,6 @@ test "parseKittyKeyboardReply returns null on anything it does not recognise" {
     const rejected = [_][]const u8{
         "", // nothing at all
         "\x1b[?1", // no final byte
-        "\x1b[?u", // no flags
         "\x1b[?", // nothing but the introducer
         "\x1b[1u", // no `?`, so not a reply
         "\x1b[>1u", // the push, which a program sends rather than reads
@@ -962,6 +1029,11 @@ test "parseKittyKeyboardReply returns null on anything it does not recognise" {
     for (rejected) |bytes| {
         try std.testing.expect(parseKittyKeyboardReply(bytes) == null);
     }
+}
+
+test "parseKittyKeyboardReply reads an omitted parameter as no flags" {
+    const none = parseKittyKeyboardReply("\x1b[?u").?;
+    try std.testing.expectEqual(@as(u5, 0), none.bits());
 }
 
 test "parseKittyKeyboardReply survives a number long enough to overflow" {
@@ -1187,6 +1259,7 @@ test "fuzz parseDeviceAttributes" {
         corpus.seed("\x1b[?65535;65535c"),
         corpus.seed("\x1b[?62;65536c"),
         corpus.seed("\x1b[?62;;1c"),
+        corpus.seed("\x1b[?62;52;c"),
         corpus.seed("\x1b[?62;"),
         corpus.seed("\x1b[62;1c"),
         corpus.seed("\x1b[?62;1cc"),
@@ -1238,7 +1311,7 @@ test "fuzz parseVersion" {
         }
     }.one, .{ .corpus = &.{
         corpus.seed("\x1bP>|xterm(390)\x1b\\"),
-        corpus.seed("\x1bP>|foot(1.16.2)\x07"),
+        corpus.seed("\x1bP>|name(1.16.2)\x07"),
         corpus.seed("\x1bP>|\x1b\\"),
         corpus.seed("\x1bP>|99999999999999999999\x1b\\"),
         corpus.seed("\x1bP>|xterm(390)"),

@@ -44,6 +44,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Every reply parser reads an omitted parameter as its default.** ECMA-48
+  says a parameter left out takes its default value, and terminals use that:
+  a real DA1 reply is `CSI ? 62 ; 52 ; c`, three parameters with the last
+  omitted, and refusing it refused the one reply that ends every startup
+  probe. `parseDeviceAttributes`, `parseSecondaryDeviceAttributes`,
+  `parseModeReply`, `parseKittyKeyboardReply`, `parseWindowSize`,
+  `parseColorSchemeReply` and `parseExtraCursorSupport` default to zero;
+  `parseCursorPosition` and `parseExtendedCursorPosition` default to one,
+  which is what a cursor report counts from. The separators stay
+  compulsory — an empty parameter is a parameter, and a missing `;` is a
+  reply of a different shape — and digits that do not fit in the field are
+  still a reject rather than a default. The suite carries the DA1, DA2 and
+  XTVERSION replies real terminals send, collected off the wire.
+
 - **`KeyParser` tops up its buffer when the buffer empties, not once per
   event.** A top-up moves whatever is unread to the front of the buffer, so
   one per event cost the whole buffer per keypress — and the bigger the

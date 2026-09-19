@@ -314,7 +314,8 @@ pub const ExtraCursorSupport = struct {
 /// `CSI > 1 ; 2 ; 3 ; 29 ; 30 ; 40 ; 100 ; 101 SP q`, or any subset of it.
 ///
 /// Numbers the protocol has not defined are read past rather than refused,
-/// since it will define more. An empty list parses, and says the terminal
+/// since it will define more, and an omitted parameter is its default, zero,
+/// which is one of those. An empty list parses, and says the terminal
 /// implements nothing.
 ///
 /// Note that `CSI > 100 SP q` is both a support reply listing only operation
@@ -331,7 +332,7 @@ pub fn parseExtraCursorSupport(bytes: []const u8) ?ExtraCursorSupport {
     var rest = body;
     while (true) {
         const end = std.mem.indexOfScalar(u8, rest, ';') orelse rest.len;
-        const scan = seq.scanInt(u32, rest[0..end]) orelse return null;
+        const scan = seq.scanParam(u32, rest[0..end], 0) orelse return null;
         if (scan.len != end) return null;
         switch (scan.value) {
             1 => support.block = true,
@@ -346,7 +347,9 @@ pub fn parseExtraCursorSupport(bytes: []const u8) ?ExtraCursorSupport {
         }
         if (end == rest.len) return support;
         rest = rest[end + 1 ..];
-        if (rest.len == 0) return null;
+        // A separator with nothing behind it is an omitted parameter, which
+        // is its default and which the protocol has not defined.
+        if (rest.len == 0) return support;
     }
 }
 
@@ -720,14 +723,22 @@ test "parseExtraCursorSupport returns null on anything it does not recognise" {
         "", // nothing at all
         "\x1b[>1;2;3", // no trailer
         "\x1b[>1;2;3q", // no space before the q
-        "\x1b[>1;2; q", // a separator with nothing after it
-        "\x1b[>;1 q", // a separator with nothing before it
         "\x1b[1;2 q", // no private marker
         "\x1b]>1;2 q", // OSC, not CSI
         "\x1b[>1:2 q", // sub-parameters, which this reply has none of
         "\x1b[>4294967296 q", // a number too large for its field
     };
     for (rejected) |bytes| try std.testing.expect(parseExtraCursorSupport(bytes) == null);
+}
+
+test "parseExtraCursorSupport reads an omitted operation as its default" {
+    // Zero is the default, and zero is an operation the protocol has not
+    // defined, so an empty element changes nothing about what was claimed.
+    const empty = [_][]const u8{ "\x1b[>;1 q", "\x1b[>1; q", "\x1b[>1;;2 q" };
+    for (empty) |bytes| {
+        const support = parseExtraCursorSupport(bytes).?;
+        try std.testing.expect(support.block);
+    }
 }
 
 test "parseExtraCursors reads an empty answer as no cursors at all" {
