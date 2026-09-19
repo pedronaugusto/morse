@@ -364,8 +364,9 @@ that compares with `memcmp` and a screen that diffs a row at a time. That is
 why `Color` is a tagged four-byte struct rather than the tagged union its
 shape asks for: Zig gives an auto-layout union no guaranteed representation
 and will not put one inside an `extern struct`. Write a colour with
-`.default`, `.ansi(.red)`, `.palette(196)` or `.rgb(255, 128, 0)`; read one by
-switching on `kind`. A `comptime` block pins `Style` at 22 bytes, aligned to
+`.default`, `.ansi(.red)`, `.palette(196)` or `.rgb(255, 128, 0)`, each of
+which zeroes the channels its kind does not use, so `Color.eql` and a byte
+comparison are the same comparison; read one by switching on `kind`. A `comptime` block pins `Style` at 22 bytes, aligned to
 one, with no padding, so a field added in the wrong place fails the build
 rather than quietly making that comparison read the holes. `MouseEvent`,
 `Resize`, `CursorPosition`, `ExtendedCursorPosition`, `Rgb`, `Rgb16`,

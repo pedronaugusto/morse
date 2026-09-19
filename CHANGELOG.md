@@ -44,6 +44,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`Color.eql` is the byte comparison.** Every constructor already zeroes
+  the channels its kind does not use, so a colour has one spelling and the
+  two relations cannot disagree — which is what the `extern` layout is for:
+  a renderer comparing rows of cells with `memcmp` and a renderer comparing
+  styles field by field must find the same cells changed. Before this, `eql`
+  ignored the unused channels and a test asserted that the two answers
+  differed; that test is replaced by one asserting they agree, over every
+  colour the constructors can make. A colour written out field by field with
+  a stray byte in a channel its kind does not use is now unequal to the
+  colour it means, and the doc says so.
+
 - **Every reply parser reads an omitted parameter as its default.** ECMA-48
   says a parameter left out takes its default value, and terminals use that:
   a real DA1 reply is `CSI ? 62 ; 52 ; c`, three parameters with the last

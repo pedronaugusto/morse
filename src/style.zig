@@ -106,9 +106,15 @@ pub const Rgb = extern struct {
 /// Write one with `Color.default`, `Color.ansi`, `Color.palette` or
 /// `Color.rgb`, which in a typed position spell themselves `.default`,
 /// `.ansi(.red)`, `.palette(196)` and `.rgb(255, 128, 0)`. Read one by
-/// switching on `kind` and taking `index`, `toAnsi` or `toRgb`. The fields
-/// are public so a comptime table of colours can be written out directly,
-/// but nothing has to touch them.
+/// switching on `kind` and taking `index`, `toAnsi` or `toRgb`.
+///
+/// Every one of those zeroes the channels its kind does not use, so a colour
+/// has one spelling and `eql` and a byte comparison give the same answer --
+/// which is the point of the layout: a renderer comparing rows of cells with
+/// `memcmp` and a renderer comparing styles field by field must not disagree
+/// about which cells changed. They run at comptime, so a table of colours is
+/// written with them like anything else. The fields are the storage; a value
+/// built out of them by hand is the caller's to keep canonical.
 pub const Color = extern struct {
     /// Which of the four forms a colour is in.
     pub const Kind = enum(u8) {
@@ -181,19 +187,15 @@ pub const Color = extern struct {
         return .{ .r = color.r, .g = color.g, .b = color.b };
     }
 
-    /// Whether two colours would write the same bytes.
+    /// Whether two colours are the same colour.
     ///
-    /// Field by field rather than over the four bytes, because the channels
-    /// of anything but an `.rgb` colour are not part of its meaning: a
-    /// hand-written `.{ .kind = .default, .r = 9 }` is still the default
-    /// colour, and `diffStyle` must not write a sequence for it.
+    /// The four bytes, compared as four bytes. Every constructor zeroes the
+    /// channels its kind does not use, so this is exactly the comparison a
+    /// renderer makes over a row of cells with `memcmp`: one relation, not
+    /// two that can disagree on the very type whose layout exists for the
+    /// byte one.
     pub fn eql(a: Color, b: Color) bool {
-        if (a.kind != b.kind) return false;
-        return switch (a.kind) {
-            .default => true,
-            .ansi, .palette => a.r == b.r,
-            .rgb => a.r == b.r and a.g == b.g and a.b == b.b,
-        };
+        return @as(u32, @bitCast(a)) == @as(u32, @bitCast(b));
     }
 };
 
@@ -1003,18 +1005,52 @@ test "every Ansi slot round trips through a colour" {
     }
 }
 
-test "eql ignores the channels a kind does not use" {
-    // A colour built by hand with rubbish in the unused bytes is still the
-    // colour its kind says it is, and `diffStyle` must write nothing for it.
-    const clean: Color = .default;
-    const dirty: Color = .{ .kind = .default, .r = 9, .g = 9, .b = 9 };
-    try std.testing.expect(clean.eql(dirty));
-    try std.testing.expect(!std.mem.eql(u8, std.mem.asBytes(&clean), std.mem.asBytes(&dirty)));
+test "eql and a byte comparison agree on every colour a constructor makes" {
+    // The relation the `extern` layout exists for. Every colour a
+    // constructor produces is canonical -- the channels its kind does not
+    // use are zero -- so comparing four bytes and comparing meaning are the
+    // same comparison, on every pair.
+    var colors: [1 + 16 + 256 + 12]Color = undefined;
+    var n: usize = 0;
+    colors[n] = .default;
+    n += 1;
+    for (0..16) |i| {
+        colors[n] = .ansi(@enumFromInt(i));
+        n += 1;
+    }
+    for (0..256) |i| {
+        colors[n] = .palette(@intCast(i));
+        n += 1;
+    }
+    for ([_][3]u8{
+        .{ 0, 0, 0 },
+        .{ 1, 0, 0 },
+        .{ 0, 1, 0 },
+        .{ 0, 0, 1 },
+        .{ 255, 128, 1 },
+        .{ 255, 255, 255 },
+    }) |channels| {
+        colors[n] = .rgb(channels[0], channels[1], channels[2]);
+        n += 1;
+        colors[n] = .fromRgb(.{ .r = channels[0], .g = channels[1], .b = channels[2] });
+        n += 1;
+    }
 
-    var out: Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
-    try diffStyle(&out.writer, .{ .fg = clean }, .{ .fg = dirty });
-    try std.testing.expectEqualStrings("", out.written());
+    for (colors[0..n]) |a| {
+        for (colors[0..n]) |b| {
+            const bytes = std.mem.eql(u8, std.mem.asBytes(&a), std.mem.asBytes(&b));
+            try std.testing.expectEqual(bytes, a.eql(b));
+        }
+    }
+}
+
+test "a colour a constructor made has no rubbish in the channels it does not use" {
+    // Canonical on construction is what makes the two relations one: there
+    // is no way to reach a `.default` carrying a stray green byte except by
+    // writing the fields out by hand, which is the caller's to keep right.
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0 }, std.mem.asBytes(&Color.default));
+    try std.testing.expectEqualSlices(u8, &.{ 1, 9, 0, 0 }, std.mem.asBytes(&Color.ansi(.bright_red)));
+    try std.testing.expectEqualSlices(u8, &.{ 2, 196, 0, 0 }, std.mem.asBytes(&Color.palette(196)));
 
     // And two colours of different kinds that share a first byte are not
     // equal.
