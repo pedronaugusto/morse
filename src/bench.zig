@@ -346,6 +346,67 @@ test "bench: a megabyte of mixed input, framed and decoded" {
     try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
 }
 
+/// A block of printable text, the shape a paste or a fast typist arrives in.
+fn plainInput(allocator: std.mem.Allocator, size: usize) ![]u8 {
+    const bytes = try allocator.alloc(u8, size);
+    for (bytes, 0..) |*b, i| b.* = ' ' + @as(u8, @intCast(i % 95));
+    return bytes;
+}
+
+test "bench: what the parser costs does not depend on the caller's buffer" {
+    // The grid the per-event top-up used to fall off: the cost of a top-up
+    // is the whole of the unread buffer, so doing one per event made a
+    // large buffer slower than a small one and a large read slower than a
+    // small one -- exactly backwards, and exactly what the README's advice
+    // to size for an OSC 52 reply steers a caller into.
+    const block = 256 * 1024;
+    const mixed = try mixedInput(std.testing.allocator, block);
+    defer std.testing.allocator.free(mixed);
+    const text = try plainInput(std.testing.allocator, block);
+    defer std.testing.allocator.free(text);
+
+    const streams = [_]struct { name: []const u8, bytes: []const u8 }{
+        .{ .name = "text", .bytes = text },
+        .{ .name = "mixed", .bytes = mixed },
+    };
+    const buffers = [_]usize{ 64, 1024, 16 * 1024 };
+    const reads = [_]usize{ 64, 977, 8192, block };
+
+    var storage: [16 * 1024]u8 = undefined;
+    var worst: f64 = 0;
+    for (streams) |stream| {
+        for (buffers) |size| {
+            var line: [4]f64 = @splat(0);
+            for (reads, 0..) |read, i| {
+                var parser: key.KeyParser = .init(storage[0..size]);
+                const start = nowNanos();
+                var offset: usize = 0;
+                while (offset < stream.bytes.len) {
+                    const end = @min(offset + read, stream.bytes.len);
+                    var batch = parser.feed(stream.bytes[offset..end]);
+                    while (batch.next()) |_| {}
+                    offset = end;
+                }
+                const elapsed = nowNanos() - start;
+                const ns_per_byte = @as(f64, @floatFromInt(elapsed)) /
+                    @as(f64, @floatFromInt(stream.bytes.len));
+                line[i] = @as(f64, @floatFromInt(stream.bytes.len)) /
+                    @as(f64, @floatFromInt(elapsed)) * 1000;
+                worst = @max(worst, ns_per_byte);
+            }
+            std.debug.print(
+                "bench: KeyParser {s:<6} {d:>5} B buffer  {d:>7.1} {d:>7.1} {d:>7.1} {d:>7.1} MB/s\n",
+                .{ stream.name, size, line[0], line[1], line[2], line[3] },
+            );
+        }
+    }
+
+    // One ceiling for every cell of the grid, because the defect this
+    // catches is a whole grid tilting rather than one number moving.
+    report("KeyParser, worst of the grid", worst, "ns", 200);
+    try std.testing.expect(worst < 200);
+}
+
 test "bench: nothing here needed an allocator" {
     // Every writer in the package takes a `*std.Io.Writer`, and a fixed one
     // cannot allocate. A buffer sized exactly to the bytes a call produces

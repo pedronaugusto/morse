@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`KeyParser` tops up its buffer when the buffer empties, not once per
+  event.** A top-up moves whatever is unread to the front of the buffer, so
+  one per event cost the whole buffer per keypress — and the bigger the
+  buffer a caller sized, the slower the parser ran, which is backwards and
+  is exactly where the README's advice to size for an OSC 52 reply leads. A
+  megabyte of text through a 16 KB buffer read in one go measured 0.4 MB/s
+  before and 118.6 MB/s after; the grid of buffer and read sizes is now
+  flat, 116–140 MB/s text and 194–282 MB/s mixed, where it ran from 0.4 to
+  140. `src/bench.zig` measures that whole grid rather than the one corner
+  of it where the cost could not show.
+
+### Fixed
+
+- **A sequence lying across the end of the buffer is no longer dropped.**
+  The drop that exists for a sequence longer than the buffer fired whenever
+  the buffer was merely full and the sequence at its head unfinished, which
+  the per-event top-up arranged constantly. Ordinary input lost about a
+  quarter of its events: the megabyte of mixed input in `src/bench.zig`
+  decodes to 203,217 events where it decoded to 149,306.
+
 ## [0.4.0] - 2026-09-19
 
 Four protocols on the writing side, the numbers to show what they cost, and

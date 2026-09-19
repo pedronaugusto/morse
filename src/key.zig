@@ -541,14 +541,12 @@ pub const Events = struct {
         while (true) {
             // Topping up here rather than in `feed` is what lets one feed of
             // many kilobytes drain through a buffer of a few dozen bytes.
-            // Room is made only when there is something to put in it, so a
-            // quiet drain does not memmove the buffer once per keystroke.
-            if (it.fresh.len != 0 and p.end == p.buffer.len) p.compact();
-            const room = p.buffer.len - p.end;
-            const take = @min(room, it.fresh.len);
-            @memcpy(p.buffer[p.end..][0..take], it.fresh[0..take]);
-            p.end += take;
-            it.fresh = it.fresh[take..];
+            // Only when the buffer has run dry, though: a top-up moves the
+            // unread bytes to the front, so one per event costs the whole
+            // buffer per keypress and costs more the larger the buffer is.
+            // The other place it is done is on `.incomplete`, which is the
+            // only other time more bytes can change the answer.
+            if (p.start == p.end and it.fresh.len != 0) _ = it.fill();
 
             if (p.start == p.end) return null;
 
@@ -569,6 +567,10 @@ pub const Events = struct {
                     continue;
                 },
                 .incomplete => {
+                    // The start of a sequence and not the whole of it. More
+                    // of this feed may finish it; nothing else can.
+                    if (it.fresh.len != 0 and it.fill() != 0) continue;
+
                     // A full buffer that is still the start of something is a
                     // sequence longer than the caller sized for. Nothing more
                     // can arrive to complete it, so it goes; this is the only
@@ -582,6 +584,21 @@ pub const Events = struct {
                 },
             }
         }
+    }
+
+    /// Moves as much of the unread input into the parser's buffer as will
+    /// fit, and says how many bytes that was.
+    ///
+    /// Zero means the buffer is full of a sequence that is not finished,
+    /// which is the one case the parser cannot resolve by waiting.
+    fn fill(it: *Events) usize {
+        const p = it.parser;
+        p.compact();
+        const take = @min(p.buffer.len - p.end, it.fresh.len);
+        @memcpy(p.buffer[p.end..][0..take], it.fresh[0..take]);
+        p.end += take;
+        it.fresh = it.fresh[take..];
+        return take;
     }
 };
 
@@ -1736,6 +1753,39 @@ test "a multi-byte codepoint split across feeds is one key" {
     var second = parser.feed("\x99\x82");
     try std.testing.expectEqual(Key{ .char = 0x1f642 }, second.next().?.key.key);
     try std.testing.expectEqual(@as(?Event, null), second.next());
+}
+
+test "a sequence lying across the end of the buffer is completed, not dropped" {
+    // The buffer fills, its tail is half a sequence, and the rest of that
+    // sequence is still in the bytes the caller handed over. Topping up on
+    // `.incomplete` is what finishes it; without that the half that fitted
+    // is dropped and the half that follows decodes as whatever it looks
+    // like on its own.
+    const cycle = "\x1b[48;24;80;384;640t" ++ "abcdefg";
+    const rounds = 40;
+    var input: [cycle.len * rounds]u8 = undefined;
+    for (0..rounds) |i| @memcpy(input[i * cycle.len ..][0..cycle.len], cycle);
+
+    for ([_]usize{ 1, 7, 64, 129, input.len }) |read| {
+        var storage: [KeyParser.min_buffer]u8 = undefined;
+        var parser: KeyParser = .init(&storage);
+
+        var sizes: usize = 0;
+        var offset: usize = 0;
+        while (offset < input.len) {
+            const end = @min(offset + read, input.len);
+            var events = parser.feed(input[offset..end]);
+            while (events.next()) |event| {
+                if (event == .resize) {
+                    sizes += 1;
+                    try std.testing.expectEqual(@as(u32, 24), event.resize.rows);
+                }
+            }
+            offset = end;
+        }
+        try std.testing.expectEqual(@as(usize, rounds), sizes);
+        try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
+    }
 }
 
 test "a feed longer than the buffer drains through it" {
