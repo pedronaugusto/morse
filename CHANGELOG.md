@@ -157,10 +157,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   buffer a caller sized, the slower the parser ran, which is backwards and
   is exactly where the README's advice to size for an OSC 52 reply leads. A
   megabyte of text through a 16 KB buffer read in one go measured 0.4 MB/s
-  before and 118.6 MB/s after; the grid of buffer and read sizes is now
-  flat, 116–140 MB/s text and 194–282 MB/s mixed, where it ran from 0.4 to
-  140. `src/bench.zig` measures that whole grid rather than the one corner
-  of it where the cost could not show.
+  before and 118.6 MB/s after; the grid of buffer and read sizes reads flat
+  now, where it ran from 0.4 MB/s to 140. `src/bench.zig` measures that
+  whole grid rather than the one corner of it where the cost could not
+  show.
 
 ### Fixed
 
@@ -169,7 +169,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fuzzers: under `-ffuzz` the shipped test runner hands `@errorReturnTrace()`
   to a function taking the other `StackTrace`, which is a type error at every
   fuzz call site. The test module turns error tracing off, which costs
-  nothing a fuzz run wants — the input is the report — and the twenty-nine
+  nothing a fuzz run wants — the input is the report — and the thirty-one
   targets now search, one corpus each.
 
 - **Three doc comments said things the field does not do.** `unicodeCore`

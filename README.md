@@ -118,14 +118,15 @@ try morse.notify(w, "Build finished", "0 errors");
 // base64 encoded on the fly -- no allocation, no buffer sized to the text.
 try morse.clipboardWrite(w, .clipboard, "copied by morse");
 
-// Ask the terminal what it is. None of these is guaranteed an answer, so
-// none of them may be waited on without a timeout of your own.
-try morse.queryMode(w, morse.syncOutput.number);
-try morse.queryDeviceAttributes(w);
-try morse.queryColor(w, .background);
+// Ask the terminal what it is: seventeen questions in one write, in the
+// order that makes one timeout safe, with DA1 last because every
+// terminal answers it. Arm your timeout, disarm it when the DA1 reply
+// arrives, and read silence as a no.
+try (morse.Probe{}).write(w);
+
+// A question the probe does not ask, because it needs a name. None of
+// these is guaranteed an answer either.
 try morse.queryCapability(w, "Co");
-try morse.queryColorScheme(w);
-try morse.queryGraphics(w, 31);
 
 // Input is one byte stream carrying keys, mouse reports and replies all
 // at once, so one parser frames it. The buffer is yours, nothing here
@@ -135,7 +136,9 @@ var input: [1024]u8 = undefined;
 var keys: morse.KeyParser = .init(&input);
 
 // Control and a in the kitty protocol, then an SGR mouse click.
-var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t\x1b[?997;1n");
+var events = keys.feed(
+    "\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t\x1b[?997;1n\x1b[?62;52;c",
+);
 while (events.next()) |event| switch (event) {
     // A key, and whatever text the terminal said it produced.
     .key => |key| std.debug.print("key:        {s}{t} {s}\n", .{
@@ -147,7 +150,13 @@ while (events.next()) |event| switch (event) {
     // One event and a borrowed slice, not one `KeyEvent` per character.
     .text => |text| std.debug.print("text:       {s}\n", .{text}),
     // Anything framed but not a key: a mouse report, a reply, an OSC.
-    .unhandled => |bytes| if (morse.parseMouse(bytes)) |click| std.debug.print(
+    // `probeMatches` says which question a reply answers, so the
+    // routing is a lookup rather than a table of shapes in here.
+    .unhandled => |bytes| if (morse.probeMatches(bytes, .device_attributes)) {
+        std.debug.print("terminal:   class {d}\n", .{
+            morse.parseDeviceAttributes(bytes).?.class,
+        });
+    } else if (morse.parseMouse(bytes)) |click| std.debug.print(
         "click:      {s} at {d},{d}\n",
         .{ @tagName(click.button), click.x, click.y },
     ),
@@ -324,9 +333,10 @@ mistyped and arithmetically impossible inputs all return null, no number in a
 reply can overflow the field it is parsed into, and what comes back borrows
 from the bytes you passed in. A reply parser is liberal where the grammar is:
 a parameter the terminal left out takes its default, so the trailing `;` in
-`CSI ? 62 ; 52 ; c` is a third attribute of zero and not a reject. `KeyEvent.text` likewise holds only what the
-terminal said the key produced, and is empty for a report like `CSI 97 u`,
-which names a key without saying what it typed.
+`CSI ? 62 ; 52 ; c` is a third attribute of zero and not a reject.
+`KeyEvent.text` likewise holds only what the terminal said the key produced,
+and is empty for a report like `CSI 97 u`, which names a key without saying
+what it typed.
 
 **One parser frames the input, and holds the only state here.** `KeyParser`
 decides where each sequence ends, decodes the keys, and hands everything else
@@ -335,12 +345,12 @@ whichever parser reads it, so an unrecognised reply never resynchronises the
 stream a byte at a time. A run of printable text — a paste, or typing faster
 than a read — comes back as one `Event.text` borrowing the same buffer; a
 single printable codepoint is a keypress and comes back as `Event.key`. You
-own the buffer: `min_buffer` covers keys, but an
-OSC 52 reply is as long as whatever was copied. A sequence longer than the
-buffer is the one thing the parser cannot hand back, and it says so —
-`Event.overflow` with the count of bytes it dropped, and the stream picked up
-at the end of that sequence rather than in the middle of it, where a base64
-payload reads as a few hundred keys nobody typed.
+own the buffer: `min_buffer` covers keys, but an OSC 52 reply is as long as
+whatever was copied. A sequence longer than the buffer is the one thing the
+parser cannot hand back, and it says so — `Event.overflow` with the count of
+bytes it dropped, and the stream picked up at the end of that sequence
+rather than in the middle of it, where a base64 payload reads as a few
+hundred keys nobody typed.
 
 **The Windows console arrives in two shapes, and both come out as `Key`.** A
 terminal in win32 input mode (`win32Input`, mode 9001) sends every key as
@@ -391,9 +401,10 @@ shape asks for: Zig gives an auto-layout union no guaranteed representation
 and will not put one inside an `extern struct`. Write a colour with
 `.default`, `.ansi(.red)`, `.palette(196)` or `.rgb(255, 128, 0)`, each of
 which zeroes the channels its kind does not use, so `Color.eql` and a byte
-comparison are the same comparison; read one by switching on `kind`. A `comptime` block pins `Style` at 22 bytes, aligned to
-one, with no padding, so a field added in the wrong place fails the build
-rather than quietly making that comparison read the holes. `MouseEvent`,
+comparison are the same comparison; read one by switching on `kind`. A
+`comptime` block pins `Style` at 22 bytes, aligned to one, with no padding,
+so a field added in the wrong place fails the build rather than quietly
+making that comparison read the holes. `MouseEvent`,
 `Resize`, `CursorPosition`, `ExtendedCursorPosition`, `Rgb`, `Rgb16`,
 `CursorCell`, `CursorRect`, `Placement` and `GraphicsRect` are `extern` for
 the same reason.
@@ -483,8 +494,8 @@ them grows past its budget. `KeyParser` is fuzzed fed in two pieces, so the
 split lands anywhere a real read could have, and its framing is checked
 against a second framer written from the same grammar as a state machine —
 two implementations that share no line, and a disagreement about where a
-sequence ends fails the build. `zig build test --fuzz`
-keeps searching from those seeds, a corpus per property;
+sequence ends fails the build. `zig build test --fuzz` keeps searching from
+those seeds, a corpus per property;
 [`ci/linux.sh`](ci/linux.sh) runs the Linux half in Docker from a machine that
 is not Linux.
 

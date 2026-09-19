@@ -117,14 +117,15 @@ pub fn main() !void {
     // base64 encoded on the fly -- no allocation, no buffer sized to the text.
     try morse.clipboardWrite(w, .clipboard, "copied by morse");
 
-    // Ask the terminal what it is. None of these is guaranteed an answer, so
-    // none of them may be waited on without a timeout of your own.
-    try morse.queryMode(w, morse.syncOutput.number);
-    try morse.queryDeviceAttributes(w);
-    try morse.queryColor(w, .background);
+    // Ask the terminal what it is: seventeen questions in one write, in the
+    // order that makes one timeout safe, with DA1 last because every
+    // terminal answers it. Arm your timeout, disarm it when the DA1 reply
+    // arrives, and read silence as a no.
+    try (morse.Probe{}).write(w);
+
+    // A question the probe does not ask, because it needs a name. None of
+    // these is guaranteed an answer either.
     try morse.queryCapability(w, "Co");
-    try morse.queryColorScheme(w);
-    try morse.queryGraphics(w, 31);
 
     // Input is one byte stream carrying keys, mouse reports and replies all
     // at once, so one parser frames it. The buffer is yours, nothing here
@@ -134,7 +135,9 @@ pub fn main() !void {
     var keys: morse.KeyParser = .init(&input);
 
     // Control and a in the kitty protocol, then an SGR mouse click.
-    var events = keys.feed("\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t\x1b[?997;1n");
+    var events = keys.feed(
+        "\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t\x1b[?997;1n\x1b[?62;52;c",
+    );
     while (events.next()) |event| switch (event) {
         // A key, and whatever text the terminal said it produced.
         .key => |key| std.debug.print("key:        {s}{t} {s}\n", .{
@@ -146,7 +149,13 @@ pub fn main() !void {
         // One event and a borrowed slice, not one `KeyEvent` per character.
         .text => |text| std.debug.print("text:       {s}\n", .{text}),
         // Anything framed but not a key: a mouse report, a reply, an OSC.
-        .unhandled => |bytes| if (morse.parseMouse(bytes)) |click| std.debug.print(
+        // `probeMatches` says which question a reply answers, so the
+        // routing is a lookup rather than a table of shapes in here.
+        .unhandled => |bytes| if (morse.probeMatches(bytes, .device_attributes)) {
+            std.debug.print("terminal:   class {d}\n", .{
+                morse.parseDeviceAttributes(bytes).?.class,
+            });
+        } else if (morse.parseMouse(bytes)) |click| std.debug.print(
             "click:      {s} at {d},{d}\n",
             .{ @tagName(click.button), click.x, click.y },
         ),
