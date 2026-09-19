@@ -96,14 +96,23 @@ test "bench: a style diff is four bytes and a few dozen nanoseconds" {
     try std.testing.expect(ns < 4000);
 }
 
-test "bench: the worst style diff there is stays one sequence" {
-    // Every attribute and all three colours changing at once: the longest
-    // sequence `diffStyle` can produce, and still one sequence.
-    const from: style.Style = .{
+/// Nine styles a renderer really moves between: the default, single
+/// attributes, an underline with a colour of its own, each of the three
+/// colour forms, a combination, and everything at once.
+const style_matrix = [_]style.Style{
+    .{},
+    .{ .bold = true },
+    .{ .dim = true, .italic = true },
+    .{ .underline = .curly, .underline_color = .rgb(255, 0, 0) },
+    .{ .fg = .ansi(.cyan) },
+    .{ .fg = .palette(33), .bg = .ansi(.black) },
+    .{ .fg = .rgb(200, 100, 50), .bg = .rgb(10, 20, 30) },
+    .{ .bold = true, .reverse = true, .strikethrough = true, .fg = .ansi(.bright_white) },
+    .{
         .bold = true,
         .dim = true,
         .italic = true,
-        .underline = .curly,
+        .underline = .dashed,
         .blink = true,
         .reverse = true,
         .hidden = true,
@@ -113,15 +122,64 @@ test "bench: the worst style diff there is stays one sequence" {
         .fg = .rgb(1, 2, 3),
         .bg = .rgb(4, 5, 6),
         .underline_color = .rgb(7, 8, 9),
-    };
+    },
+};
+
+test "bench: a style diff is the shorter of the difference and a reset" {
+    // Every attribute and all three colours changing at once. The
+    // difference is thirty-eight bytes of off codes; `CSI 0 m` is four and
+    // leaves the terminal in the same style, so four is what goes out.
     var buffer: [128]u8 = undefined;
     var out: Writer = .fixed(&buffer);
-    try style.diffStyle(&out, from, .{});
+    try style.diffStyle(&out, style_matrix[style_matrix.len - 1], .{});
+    try std.testing.expectEqualStrings("\x1b[0m", out.buffered());
 
-    const written = out.buffered();
-    try std.testing.expectEqualStrings("\x1b[22;23;24;25;27;28;29;55;75;39;49;59m", written);
-    try std.testing.expectEqual(@as(usize, 38), written.len);
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, written, "\x1b["));
+    // The budget is the matrix rather than one corner of it, because what
+    // this costs is a whole grid of pairs and the worst of them is no
+    // longer the number that matters. Exact, and the same in every optimize
+    // mode: 1,703 bytes of difference against 1,312 of shorter-of-two, a
+    // fifth off, with the longest single pair 60 bytes.
+    var total: usize = 0;
+    var worst: usize = 0;
+    for (style_matrix) |from| {
+        for (style_matrix) |to| {
+            var w: Writer = .fixed(&buffer);
+            try style.diffStyle(&w, from, to);
+            const written = w.buffered();
+            total += written.len;
+            worst = @max(worst, written.len);
+            // Whichever spelling won, it is one sequence.
+            try std.testing.expect(std.mem.count(u8, written, "\x1b[") <= 1);
+        }
+    }
+    std.debug.print("bench: {s:<34} {d:>10} bytes (budget {d})\n", .{ "style matrix, 81 pairs", total, 1312 });
+    try std.testing.expectEqual(@as(usize, 1312), total);
+    try std.testing.expectEqual(@as(usize, 60), worst);
+}
+
+test "bench: a frame of style changes pays the same fifth" {
+    // 200 columns by 60 rows, eight runs a row and a reset at the end of
+    // each: 10,978 bytes of difference against 8,515.
+    var buffer: [128]u8 = undefined;
+    var total: usize = 0;
+    var pen: style.Style = .{};
+    var i: usize = 0;
+    for (0..60) |_| {
+        for (0..8) |_| {
+            const to = style_matrix[i % style_matrix.len];
+            i += 1;
+            var w: Writer = .fixed(&buffer);
+            try style.diffStyle(&w, pen, to);
+            total += w.buffered().len;
+            pen = to;
+        }
+        var w: Writer = .fixed(&buffer);
+        try style.diffStyle(&w, pen, .{});
+        total += w.buffered().len;
+        pen = .{};
+    }
+    std.debug.print("bench: {s:<34} {d:>10} bytes (budget {d})\n", .{ "style, 200x60 frame", total, 8515 });
+    try std.testing.expectEqual(@as(usize, 8515), total);
 }
 
 test "bench: a cursor move is the digits and nothing else" {
@@ -411,10 +469,10 @@ test "bench: nothing here needed an allocator" {
     // Every writer in the package takes a `*std.Io.Writer`, and a fixed one
     // cannot allocate. A buffer sized exactly to the bytes a call produces
     // is therefore both a byte budget and a proof that no growth happened.
-    var exact: [5]u8 = undefined;
+    var exact: [4]u8 = undefined;
     var out: Writer = .fixed(&exact);
     try style.diffStyle(&out, .{ .bold = true }, .{});
-    try std.testing.expectEqual(@as(usize, 5), out.buffered().len);
+    try std.testing.expectEqual(@as(usize, 4), out.buffered().len);
 
     var tight: [6]u8 = undefined;
     var moved: Writer = .fixed(&tight);

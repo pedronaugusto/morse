@@ -44,6 +44,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`diffStyle` writes the shorter of the difference and a reset.** The
+  difference is short when little changed and long when much did: coming
+  back from an everything-on style costs
+  `CSI 22;23;24;25;27;28;29;55;75;39;49;59m`, thirty-eight bytes, where
+  `CSI 0 m` costs four and leaves the terminal in exactly the same style. A
+  leading `0` costs two bytes and buys every off code at once, so the two
+  spellings are priced with `Writer.Discarding` — the same code that writes
+  the bytes, so there is no second encoder to keep in step — and the shorter
+  one goes out. Over a nine-style matrix, all eighty-one pairs, 1,703 bytes
+  become 1,312, a fifth off, with the reset shorter on 51 pairs and by up to
+  34 bytes; over a 200x60 frame of eight runs a row it is 10,978 against
+  8,515. Pricing costs a pass: a call that turns nothing off skips it, since
+  a reset would then have to restate everything the difference left alone,
+  and the rest measure 35 ns against 14 in ReleaseFast. `src/bench.zig`
+  budgets the matrix and the frame rather than the old worst case.
+
 - **`Color.eql` is the byte comparison.** Every constructor already zeroes
   the channels its kind does not use, so a colour has one spelling and the
   two relations cannot disagree — which is what the `extern` layout is for:

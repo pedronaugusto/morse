@@ -376,7 +376,12 @@ the same reason.
 **Styles are written as a diff.** `diffStyle(w, from, to)` writes the shortest
 `CSI ... m` between two styles, and nothing when they are equal. Off codes go
 first, then on codes, then colours: SGR 22 turns off bold and dim together, so
-turning bold off while dim stays on has to write `22;2`. You keep `from`.
+turning bold off while dim stays on has to state the dim again. There are two
+ways to spell the same move and it writes the shorter — a leading `0` costs
+two bytes and buys every off code at once, so coming back from an
+everything-on style is `CSI 0 m` rather than thirty-eight bytes of off codes.
+Both are priced with `Writer.Discarding`, which runs the code that writes the
+bytes, so there is no second encoder to keep in step. You keep `from`.
 
 **The mouse modes are one call.** `mouse` writes
 an `h` or an `l` for each of the seven DEC private modes, so `mouse(w, .{ .press

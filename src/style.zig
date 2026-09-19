@@ -291,6 +291,16 @@ pub const Style = extern struct {
     script: Script = .none,
 };
 
+/// The longest `CSI ... m` either spelling of a style change can produce:
+/// `CSI`, the eleven off codes or a `0`, every on code, three colours in
+/// their widest forms, and the `m`.
+///
+/// Used to size the buffer `diffStyle` prices a sequence into, so the
+/// pricing never has to drain. A sequence that outran it would still be
+/// priced correctly, only more slowly, and the suite pins the real worst
+/// case well under it.
+const max_sequence = 96;
+
 /// One `CSI ... m` being built up, parameter by parameter.
 ///
 /// The `CSI` is written with the first parameter rather than up front,
@@ -300,6 +310,11 @@ const Params = struct {
     /// Whether a parameter has been written, which is also whether the `CSI`
     /// has been.
     any: bool = false,
+    /// Whether a code that turns something off has been written. Read by
+    /// `diffStyle`, which needs it to know whether the other spelling is
+    /// worth pricing, and set here rather than worked out again from the
+    /// fields so the two cannot drift apart.
+    turned_off: bool = false,
 
     /// Opens the sequence on the first parameter and separates every one
     /// after it.
@@ -313,6 +328,12 @@ const Params = struct {
     fn code(p: *Params, value: u8) Writer.Error!void {
         try p.open();
         try seq.writeInt(p.w, value);
+    }
+
+    /// The same, for a code that turns something off.
+    fn offCode(p: *Params, value: u8) Writer.Error!void {
+        p.turned_off = true;
+        return p.code(value);
     }
 
     /// Opens a parameter that has fields of its own and writes its first
@@ -364,7 +385,7 @@ fn writeFgBg(
     extended: u8,
 ) Writer.Error!void {
     switch (color.kind) {
-        .default => try p.code(default_code),
+        .default => try p.offCode(default_code),
         .ansi => {
             const slot = color.index();
             try p.code(if (slot < 8) base + slot else bright_base + (slot - 8));
@@ -397,7 +418,7 @@ fn writeFgBg(
 /// them.
 fn writeUnderlineColor(p: *Params, color: Color) Writer.Error!void {
     switch (color.kind) {
-        .default => try p.code(59),
+        .default => try p.offCode(59),
         .ansi, .palette => {
             try p.compound("58:5:");
             try seq.writeInt(p.w, color.index());
@@ -451,28 +472,75 @@ pub fn setStyle(w: *Writer, style: Style) Writer.Error!void {
 /// caller guarantees the terminal is really in `from` — this writes the
 /// difference, not the destination, so a wrong `from` leaves attributes on
 /// screen that no later call will think to clear.
+///
+/// There are two ways to spell the same move and this writes the shorter of
+/// them. The difference is short when little changed; when much changed, a
+/// leading `0` costs two bytes and buys every off code at once, so coming
+/// back from an everything-on style is `CSI 0 m`, four bytes, where the
+/// difference is thirty-eight. Both spellings leave the terminal in `to`;
+/// they are priced with `Writer.Discarding`, which runs the same code that
+/// writes the bytes, so there is no second encoder to keep in step. Ties go
+/// to the difference, which touches least.
 pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
+    // A buffer as wide as the longest sequence either spelling can produce,
+    // so pricing one is a memcpy rather than a call per parameter.
+    var scratch: [max_sequence]u8 = undefined;
+
+    var delta: Writer.Discarding = .init(&scratch);
+    const turned_off = writeSgr(&delta.writer, from, to, false) catch unreachable;
+    const difference = delta.fullCount();
+
+    // Nothing changed, which is the case a renderer meets most: no bytes,
+    // and nothing to price.
+    if (difference == 0) return;
+
+    // Nothing was turned off, so the reset spelling would have to write
+    // every attribute `to` carries -- a superset of the difference -- and
+    // pay for the `0` besides. It cannot win, so it is not priced.
+    if (!turned_off) {
+        _ = try writeSgr(w, from, to, false);
+        return;
+    }
+
+    var whole: Writer.Discarding = .init(&scratch);
+    _ = writeSgr(&whole.writer, from, to, true) catch unreachable;
+
+    _ = try writeSgr(w, from, to, whole.fullCount() < difference);
+}
+
+/// Writes one `CSI ... m`, either as the difference from `from` or as `0`
+/// and then the whole of `to`.
+///
+/// One body, because the two spellings differ only in where they start: a
+/// reset puts the terminal in the default style, so the codes that follow
+/// are the difference from that.
+///
+/// Says whether it wrote a code that turns something off, which is what
+/// `diffStyle` needs to know before it is worth pricing the other spelling.
+fn writeSgr(w: *Writer, from: Style, to: Style, reset: bool) Writer.Error!bool {
     var params: Params = .{ .w = w };
+    if (reset) try params.code(0);
+    const base: Style = if (reset) .{} else from;
 
     // The off codes come first so that SGR 22, which turns off bold and dim
     // together, cannot undo an on code written in the same sequence.
-    const off_bold_dim = (from.bold and !to.bold) or (from.dim and !to.dim);
-    if (off_bold_dim) try params.code(22);
-    if (from.italic and !to.italic) try params.code(23);
-    if (from.underline != .none and to.underline == .none) try params.code(24);
-    if (from.blink and !to.blink) try params.code(25);
-    if (from.reverse and !to.reverse) try params.code(27);
-    if (from.hidden and !to.hidden) try params.code(28);
-    if (from.strikethrough and !to.strikethrough) try params.code(29);
-    if (from.overline and !to.overline) try params.code(55);
-    if (from.script != to.script and to.script == .none) try params.code(75);
+    const off_bold_dim = (base.bold and !to.bold) or (base.dim and !to.dim);
+    if (off_bold_dim) try params.offCode(22);
+    if (base.italic and !to.italic) try params.offCode(23);
+    if (base.underline != .none and to.underline == .none) try params.offCode(24);
+    if (base.blink and !to.blink) try params.offCode(25);
+    if (base.reverse and !to.reverse) try params.offCode(27);
+    if (base.hidden and !to.hidden) try params.offCode(28);
+    if (base.strikethrough and !to.strikethrough) try params.offCode(29);
+    if (base.overline and !to.overline) try params.offCode(55);
+    if (base.script != to.script and to.script == .none) try params.offCode(75);
 
     // Hence the `or off_bold_dim`: turning one of the pair off has just
     // turned the other off too, so the survivor is stated again.
-    if (to.bold and (!from.bold or off_bold_dim)) try params.code(1);
-    if (to.dim and (!from.dim or off_bold_dim)) try params.code(2);
-    if (to.italic and !from.italic) try params.code(3);
-    if (to.underline != from.underline and to.underline != .none) {
+    if (to.bold and (!base.bold or off_bold_dim)) try params.code(1);
+    if (to.dim and (!base.dim or off_bold_dim)) try params.code(2);
+    if (to.italic and !base.italic) try params.code(3);
+    if (to.underline != base.underline and to.underline != .none) {
         if (to.underline == .single) {
             // Bare `4`, not `4:1`. The plain underline predates the
             // sub-parameter form by decades and terminals that have never
@@ -483,22 +551,23 @@ pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
             try seq.writeInt(w, @intFromEnum(to.underline));
         }
     }
-    if (to.blink and !from.blink) try params.code(5);
-    if (to.reverse and !from.reverse) try params.code(7);
-    if (to.hidden and !from.hidden) try params.code(8);
-    if (to.strikethrough and !from.strikethrough) try params.code(9);
-    if (to.overline and !from.overline) try params.code(53);
-    if (to.script != from.script and to.script != .none) {
+    if (to.blink and !base.blink) try params.code(5);
+    if (to.reverse and !base.reverse) try params.code(7);
+    if (to.hidden and !base.hidden) try params.code(8);
+    if (to.strikethrough and !base.strikethrough) try params.code(9);
+    if (to.overline and !base.overline) try params.code(53);
+    if (to.script != base.script and to.script != .none) {
         try params.code(@intFromEnum(to.script));
     }
 
-    if (!from.fg.eql(to.fg)) try writeFgBg(&params, to.fg, 39, 30, 90, 38);
-    if (!from.bg.eql(to.bg)) try writeFgBg(&params, to.bg, 49, 40, 100, 48);
-    if (!from.underline_color.eql(to.underline_color)) {
+    if (!base.fg.eql(to.fg)) try writeFgBg(&params, to.fg, 39, 30, 90, 38);
+    if (!base.bg.eql(to.bg)) try writeFgBg(&params, to.bg, 49, 40, 100, 48);
+    if (!base.underline_color.eql(to.underline_color)) {
         try writeUnderlineColor(&params, to.underline_color);
     }
 
     try params.finish();
+    return params.turned_off;
 }
 
 test "resetStyle writes the one parameter that clears everything" {
@@ -668,28 +737,40 @@ test "a combined style is one sequence in the documented order" {
     );
 }
 
-test "turning bold off while dim stays on re-states dim" {
+test "turning one of bold and dim off re-states the other" {
+    // SGR 22 turns off both, so the survivor is stated again -- and a reset
+    // spells the same move a byte shorter, which is what goes out.
+    var dim: Writer.Allocating = .init(std.testing.allocator);
+    defer dim.deinit();
+    try diffStyle(&dim.writer, .{ .bold = true, .dim = true }, .{ .dim = true });
+    try std.testing.expectEqualStrings("\x1b[0;2m", dim.written());
+
+    var bold: Writer.Allocating = .init(std.testing.allocator);
+    defer bold.deinit();
+    try diffStyle(&bold.writer, .{ .bold = true, .dim = true }, .{ .bold = true });
+    try std.testing.expectEqualStrings("\x1b[0;1m", bold.written());
+}
+
+test "the difference wins where it is the shorter of the two" {
+    // Nothing here turns the pair off, so there is no SGR 22 to undo and no
+    // `0` worth paying two bytes for.
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try diffStyle(&out.writer, .{ .bold = true, .dim = true }, .{ .dim = true });
-    try std.testing.expectEqualStrings("\x1b[22;2m", out.written());
+    try diffStyle(&out.writer, .{ .bold = true, .dim = true }, .{ .bold = true, .dim = true, .italic = true });
+    try std.testing.expectEqualStrings("\x1b[3m", out.written());
+
+    out.clearRetainingCapacity();
+    try diffStyle(&out.writer, .{ .bold = true, .fg = .ansi(.cyan) }, .{ .fg = .ansi(.cyan) });
+    try std.testing.expectEqualStrings("\x1b[22m", out.written());
 }
 
-test "turning dim off while bold stays on re-states bold" {
-    var out: Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
-
-    try diffStyle(&out.writer, .{ .bold = true, .dim = true }, .{ .bold = true });
-    try std.testing.expectEqualStrings("\x1b[22;1m", out.written());
-}
-
-test "turning both bold and dim off writes the one code that does it" {
+test "turning both bold and dim off is a reset, which is shorter" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
     try diffStyle(&out.writer, .{ .bold = true, .dim = true }, .{});
-    try std.testing.expectEqualStrings("\x1b[22m", out.written());
+    try std.testing.expectEqualStrings("\x1b[0m", out.written());
 }
 
 test "bold arriving beside a dim that stays on leaves the dim alone" {
@@ -711,14 +792,21 @@ test "a colour change beside an off code keeps the passes in order" {
         .{ .bold = true, .blink = true, .fg = .ansi(.red) },
         .{ .italic = true, .fg = .palette(33), .bg = .ansi(.bright_black) },
     );
-    try std.testing.expectEqualStrings("\x1b[22;25;3;38;5;33;100m", out.written());
+    try std.testing.expectEqualStrings("\x1b[0;3;38;5;33;100m", out.written());
 }
 
-test "turning an underline off writes the underline off code" {
+test "turning an underline off writes the underline off code, or a reset" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
+    // `CSI 24 m` and `CSI 0 m` leave the same terminal, and the second is a
+    // byte shorter, so that is the one written.
     try diffStyle(&out.writer, .{ .underline = .curly }, .{});
+    try std.testing.expectEqualStrings("\x1b[0m", out.written());
+
+    // With something else still on, the off code is the shorter half.
+    out.clearRetainingCapacity();
+    try diffStyle(&out.writer, .{ .underline = .curly, .bold = true }, .{ .bold = true });
     try std.testing.expectEqualStrings("\x1b[24m", out.written());
 }
 
@@ -731,22 +819,24 @@ test "changing one underline to another writes only the new one" {
 }
 
 test "a colour going back to default writes the default code for its side" {
+    // The off code where it is the shorter half: something else stays on,
+    // so a reset would have to state that again.
     const cases = [_]struct { from: Style, bytes: []const u8 }{
-        .{ .from = .{ .fg = .ansi(.red) }, .bytes = "\x1b[39m" },
-        .{ .from = .{ .fg = .rgb(1, 2, 3) }, .bytes = "\x1b[39m" },
-        .{ .from = .{ .bg = .palette(200) }, .bytes = "\x1b[49m" },
-        .{ .from = .{ .underline_color = .rgb(9, 9, 9) }, .bytes = "\x1b[59m" },
+        .{ .from = .{ .fg = .ansi(.red), .bold = true }, .bytes = "\x1b[39m" },
+        .{ .from = .{ .fg = .rgb(1, 2, 3), .bold = true }, .bytes = "\x1b[39m" },
+        .{ .from = .{ .bg = .palette(200), .bold = true }, .bytes = "\x1b[49m" },
+        .{ .from = .{ .underline_color = .rgb(9, 9, 9), .bold = true }, .bytes = "\x1b[59m" },
     };
     for (cases) |case| {
         var out: Writer.Allocating = .init(std.testing.allocator);
         defer out.deinit();
 
-        try diffStyle(&out.writer, case.from, .{});
+        try diffStyle(&out.writer, case.from, .{ .bold = true });
         try std.testing.expectEqualStrings(case.bytes, out.written());
     }
 }
 
-test "all three colours going back to default land in one sequence" {
+test "all three colours going back to default are one reset" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
@@ -755,7 +845,7 @@ test "all three colours going back to default land in one sequence" {
         .bg = .palette(200),
         .underline_color = .rgb(1, 2, 3),
     }, .{});
-    try std.testing.expectEqualStrings("\x1b[39;49;59m", out.written());
+    try std.testing.expectEqualStrings("\x1b[0m", out.written());
 }
 
 test "the same sixteen colours in their two spellings are not the same colour" {
@@ -766,6 +856,97 @@ test "the same sixteen colours in their two spellings are not the same colour" {
 
     try diffStyle(&out.writer, .{ .fg = .ansi(.red) }, .{ .fg = .palette(1) });
     try std.testing.expectEqualStrings("\x1b[38;5;1m", out.written());
+}
+
+test "what goes out is the shorter of the two spellings, on every pair" {
+    // The early-out that skips pricing the reset spelling when nothing was
+    // turned off has to be free: for every pair of these, what `diffStyle`
+    // writes is exactly the shorter of the difference and the reset.
+    const styles = [_]Style{
+        .{},
+        .{ .bold = true },
+        .{ .dim = true },
+        .{ .bold = true, .dim = true },
+        .{ .italic = true },
+        .{ .blink = true },
+        .{ .reverse = true },
+        .{ .hidden = true },
+        .{ .strikethrough = true },
+        .{ .overline = true },
+        .{ .underline = .single },
+        .{ .underline = .curly },
+        .{ .underline = .dashed, .underline_color = .rgb(1, 2, 3) },
+        .{ .script = .superscript },
+        .{ .script = .subscript },
+        .{ .fg = .ansi(.red) },
+        .{ .fg = .palette(33) },
+        .{ .fg = .rgb(1, 2, 3) },
+        .{ .bg = .ansi(.blue) },
+        .{ .bg = .rgb(4, 5, 6) },
+        .{ .underline_color = .ansi(.green) },
+        .{ .bold = true, .italic = true, .fg = .rgb(9, 9, 9), .bg = .palette(7) },
+        .{ .dim = true, .underline = .dotted, .overline = true, .script = .subscript },
+        .{
+            .bold = true,
+            .dim = true,
+            .italic = true,
+            .underline = .dashed,
+            .blink = true,
+            .reverse = true,
+            .hidden = true,
+            .strikethrough = true,
+            .overline = true,
+            .script = .superscript,
+            .fg = .rgb(1, 2, 3),
+            .bg = .rgb(4, 5, 6),
+            .underline_color = .rgb(7, 8, 9),
+        },
+    };
+
+    var buffer: [max_sequence]u8 = undefined;
+    for (styles) |from| {
+        for (styles) |to| {
+            var delta: Writer.Discarding = .init(&.{});
+            _ = try writeSgr(&delta.writer, from, to, false);
+            var whole: Writer.Discarding = .init(&.{});
+            _ = try writeSgr(&whole.writer, from, to, true);
+
+            var w: Writer = .fixed(&buffer);
+            try diffStyle(&w, from, to);
+            try std.testing.expectEqual(
+                @min(delta.fullCount(), whole.fullCount()),
+                @as(u64, w.buffered().len),
+            );
+            // And whichever won, it is one sequence and it ends in `m`.
+            if (w.buffered().len != 0) {
+                try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, w.buffered(), "\x1b["));
+                try std.testing.expectEqual(@as(u8, 'm'), w.buffered()[w.buffered().len - 1]);
+            }
+        }
+    }
+}
+
+test "the longest sequence either spelling writes fits the pricing buffer" {
+    // What `max_sequence` is sized against. Every attribute on at once from
+    // a default terminal, three direct colours: the longest body there is.
+    var buffer: [max_sequence]u8 = undefined;
+    var w: Writer = .fixed(&buffer);
+    try setStyle(&w, .{
+        .bold = true,
+        .dim = true,
+        .italic = true,
+        .underline = .dashed,
+        .blink = true,
+        .reverse = true,
+        .hidden = true,
+        .strikethrough = true,
+        .overline = true,
+        .script = .superscript,
+        .fg = .rgb(255, 255, 255),
+        .bg = .rgb(255, 255, 255),
+        .underline_color = .rgb(255, 255, 255),
+    });
+    try std.testing.expect(w.buffered().len < max_sequence);
 }
 
 test "a style diffed against itself writes nothing" {
@@ -828,10 +1009,12 @@ test "everything on and everything off again, in both directions" {
     try diffStyle(&on.writer, .{}, everything);
     try std.testing.expectEqualStrings("\x1b[1;2;3;4:5;5;7;8;9;53;31;104;58:5:2m", on.written());
 
+    // And back again in four bytes rather than thirty-five, which is what
+    // taking the shorter of the two spellings is worth at its widest.
     var off: Writer.Allocating = .init(std.testing.allocator);
     defer off.deinit();
     try diffStyle(&off.writer, everything, .{});
-    try std.testing.expectEqualStrings("\x1b[22;23;24;25;27;28;29;55;39;49;59m", off.written());
+    try std.testing.expectEqualStrings("\x1b[0m", off.written());
 }
 
 test "setStyle is the diff from the default style" {
@@ -872,7 +1055,7 @@ test "overline writes its own on and off codes" {
     try std.testing.expectEqualStrings("\x1b[53m", out.written());
 
     out.clearRetainingCapacity();
-    try diffStyle(&out.writer, .{ .overline = true }, .{});
+    try diffStyle(&out.writer, .{ .overline = true, .bold = true }, .{ .bold = true });
     try std.testing.expectEqualStrings("\x1b[55m", out.written());
 }
 
@@ -884,13 +1067,13 @@ test "overline is independent of the underline" {
     // cannot disturb the underline that arrives in the same sequence.
     try diffStyle(
         &out.writer,
-        .{ .overline = true },
-        .{ .underline = .single },
+        .{ .overline = true, .bold = true },
+        .{ .underline = .single, .bold = true },
     );
     try std.testing.expectEqualStrings("\x1b[55;4m", out.written());
 
     out.clearRetainingCapacity();
-    try diffStyle(&out.writer, .{ .underline = .curly }, .{ .overline = true });
+    try diffStyle(&out.writer, .{ .underline = .curly, .bold = true }, .{ .overline = true, .bold = true });
     try std.testing.expectEqualStrings("\x1b[24;53m", out.written());
 }
 
@@ -926,8 +1109,10 @@ test "the script diff writes one code, and 75 only on the way back to none" {
         .{ .from = .none, .to = .subscript, .bytes = "\x1b[74m" },
         .{ .from = .superscript, .to = .subscript, .bytes = "\x1b[74m" },
         .{ .from = .subscript, .to = .superscript, .bytes = "\x1b[73m" },
-        .{ .from = .superscript, .to = .none, .bytes = "\x1b[75m" },
-        .{ .from = .subscript, .to = .none, .bytes = "\x1b[75m" },
+        // A reset is a byte shorter than the off code when nothing else is
+        // on, and the same style either way.
+        .{ .from = .superscript, .to = .none, .bytes = "\x1b[0m" },
+        .{ .from = .subscript, .to = .none, .bytes = "\x1b[0m" },
         .{ .from = .subscript, .to = .subscript, .bytes = "" },
     };
     for (cases) |case| {
@@ -947,7 +1132,7 @@ test "the script travels with every other attribute in one sequence" {
         .{ .bold = true, .script = .subscript },
         .{ .italic = true, .script = .superscript },
     );
-    try std.testing.expectEqualStrings("\x1b[22;3;73m", out.written());
+    try std.testing.expectEqualStrings("\x1b[0;3;73m", out.written());
 }
 
 test "a style has no padding, so two of them compare byte for byte" {
