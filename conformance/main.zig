@@ -912,6 +912,147 @@ test "the graphics query is answered" {
     try check(response.ok());
 }
 
+test "an animation is built out of frames, played, and composed" {
+    var v: Vt = undefined;
+    try v.init(80, 24);
+    defer v.deinit();
+
+    // The image the frames belong to: two by two, RGBA, all white.
+    const white = [_]u8{0xff} ** 16;
+    try morse.transmitImage(v.w(), .{
+        .image = .{ .id = 9 },
+        .format = .rgba,
+        .width = 2,
+        .height = 2,
+        .quiet = .silent,
+    }, &white);
+    v.feed();
+
+    const images = &v.term.screens.active.kitty_images;
+    try check(images.imageById(9) != null);
+    // The root frame is the image's own pixels, so an image with no frame
+    // command behind it has no animation at all.
+    try check(images.imageById(9).?.animation == null);
+
+    // Two frames on top of it, each a full-size rectangle with a gap.
+    const red = [_]u8{ 0xff, 0x00, 0x00, 0xff } ** 4;
+    try morse.transmitFrame(v.w(), .{
+        .image = .{ .id = 9 },
+        .format = .rgba,
+        .width = 2,
+        .height = 2,
+        .gap = 48,
+        .quiet = .silent,
+    }, &red);
+    v.feed();
+
+    const blue = [_]u8{ 0x00, 0x00, 0xff, 0xff } ** 4;
+    try morse.transmitFrame(v.w(), .{
+        .image = .{ .id = 9 },
+        .format = .rgba,
+        .width = 2,
+        .height = 2,
+        .base = 2,
+        .compose = .overwrite,
+        .gap = 30,
+        .quiet = .silent,
+    }, &blue);
+    v.feed();
+
+    const animation = images.imageById(9).?.animation.?;
+    try checkEqual(@as(u32, 3), animation.frameCount());
+    try checkEqual(@as(u32, 48), animation.gapAt(1));
+    try checkEqual(@as(u32, 30), animation.gapAt(2));
+
+    // The root frame is made gapless, and `a=a` is the only way it is ever
+    // given a gap.
+    try checkEqual(@as(u32, 0), animation.gapAt(0));
+    try morse.animateImage(v.w(), .{ .image = .{ .id = 9 }, .frame = 1, .gap = 40 });
+    v.feed();
+    try checkEqual(@as(u32, 40), animation.gapAt(0));
+
+    // Naming a frame is the whole of a client-driven animation.
+    try morse.animateImage(v.w(), .{ .image = .{ .id = 9 }, .current = 3 });
+    v.feed();
+    try checkEqual(@as(u32, 2), animation.current_index);
+
+    // And the three playback states, with a loop count.
+    try morse.animateImage(v.w(), .{ .image = .{ .id = 9 }, .state = .loading });
+    v.feed();
+    try check(animation.state == .loading);
+
+    try morse.animateImage(v.w(), .{ .image = .{ .id = 9 }, .state = .running, .loops = 4 });
+    v.feed();
+    try check(animation.state == .running);
+    try checkEqual(@as(u32, 3), animation.max_loops);
+
+    try morse.animateImage(v.w(), .{ .image = .{ .id = 9 }, .state = .stopped });
+    v.feed();
+    try check(animation.state == .stopped);
+
+    // A composition moves pixels the terminal already has: the top-left
+    // pixel of the red frame onto the top-left pixel of the blue one.
+    const before = images.imageById(9).?.frameData(3).?[0..4].*;
+    try checkEqual([4]u8{ 0x00, 0x00, 0xff, 0xff }, before);
+
+    try morse.composeFrames(v.w(), .{
+        .image = .{ .id = 9 },
+        .source = 2,
+        .destination = 3,
+        .width = 1,
+        .height = 1,
+        .compose = .overwrite,
+        .quiet = .silent,
+    });
+    v.feed();
+
+    const after = images.imageById(9).?.frameData(3).?[0..4].*;
+    try checkEqual([4]u8{ 0xff, 0x00, 0x00, 0xff }, after);
+
+    // And the one animation command the delete writer already reached:
+    // `d=f` takes a frame away and leaves the image standing.
+    try morse.deleteImage(v.w(), .{
+        .target = .{ .frames = .{ .id = 9 } },
+        .quiet = .silent,
+    });
+    v.feed();
+    try check(images.imageById(9) != null);
+    try checkEqual(@as(u32, 2), images.imageById(9).?.animation.?.frameCount());
+}
+
+test "a frame command is answered, and a chunked one is answered once" {
+    var v: Vt = undefined;
+    try v.init(80, 24);
+    defer v.deinit();
+
+    const pixels = [_]u8{0xff} ** 16;
+    try morse.transmitImage(v.w(), .{
+        .image = .{ .id = 11 },
+        .format = .rgba,
+        .width = 2,
+        .height = 2,
+        .quiet = .silent,
+    }, &pixels);
+    v.feed();
+
+    // A frame large enough to need two sequences, which is where the
+    // protocol asks for `a=f` on the continuation chunk as well.
+    const frame = [_]u8{0x40} ** (morse.graphics_chunk_bytes + 4);
+    v.resetReplies();
+    try morse.transmitFrame(&v.writer, .{
+        .image = .{ .id = 11 },
+        .format = .rgba,
+        .width = 2,
+        .height = 2,
+    }, &frame);
+    v.feed();
+
+    const response = morse.parseGraphicsResponse(v.replies()).?;
+    try checkEqual(@as(?u32, 11), response.id);
+    try check(response.ok());
+    try checkEqual(@as(u32, 2), v.term.screens.active.kitty_images.imageById(11).?.animation.?.frameCount());
+}
+
 //=========================================================================
 // What this emulator does not implement.
 //=========================================================================

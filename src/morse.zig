@@ -492,6 +492,25 @@ pub const placeImage = graphics.placeImage;
 pub const deleteImage = graphics.deleteImage;
 /// Asks whether the terminal implements the graphics protocol at all.
 pub const queryGraphics = graphics.queryGraphics;
+/// How arriving pixels land on the pixels already there.
+pub const GraphicsCompose = graphics.GraphicsCompose;
+/// A colour with an alpha channel, as a frame's background key spells it.
+pub const GraphicsColor = graphics.GraphicsColor;
+/// Whether the terminal is playing an animation.
+pub const AnimationState = graphics.AnimationState;
+/// One animation frame on its way to the terminal.
+pub const Frame = graphics.Frame;
+/// A command that plays, stops or steps an image's animation.
+pub const Animate = graphics.Animate;
+/// A command that copies a rectangle from one frame of an image onto
+/// another.
+pub const Compose = graphics.Compose;
+/// Sends one animation frame, chunked by the protocol's rule.
+pub const transmitFrame = graphics.transmitFrame;
+/// Plays, stops or steps an image's animation.
+pub const animateImage = graphics.animateImage;
+/// Copies a rectangle from one frame of an image onto another.
+pub const composeFrames = graphics.composeFrames;
 /// The image bytes one transmit sequence carries.
 pub const graphics_chunk_bytes = graphics.chunk_bytes;
 /// The most base64 one transmit sequence may carry.
@@ -690,6 +709,9 @@ test "the root module re-exports what the README promises" {
     try placeImage(w, .{ .image = .{ .id = 1 }, .placement = .{ .z = -1 } });
     try deleteImage(w, .{ .target = .{ .image = .{ .id = 1 } }, .free = true });
     try queryGraphics(w, 31);
+    try transmitFrame(w, .{ .image = .{ .id = 1 }, .width = 1, .height = 1 }, "abc");
+    try animateImage(w, .{ .image = .{ .id = 1 }, .state = .running });
+    try composeFrames(w, .{ .image = .{ .id = 1 }, .source = 1, .destination = 2 });
     try placeholderRow(w, .{ .id = 1, .row = 0, .columns = 1 });
     try placeholderCell(w, 0, 0, 0);
 
@@ -793,6 +815,15 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(GraphicsFormat.rgba, GraphicsFormat.rgba);
     try std.testing.expectEqual(GraphicsMedium.direct, GraphicsMedium.direct);
     try std.testing.expectEqual(GraphicsQuiet.answers, GraphicsQuiet.answers);
+
+    const frame: Frame = .{ .image = image, .edit = 2, .gap = 40 };
+    const playing: Animate = .{ .image = image, .state = .running, .loops = 1 };
+    const copying: Compose = .{ .image = image, .source = 1, .destination = 2 };
+    const canvas: GraphicsColor = .{ .r = 0xff, .a = 0xff };
+    try std.testing.expect(frame.edit == 2 and frame.gap == 40);
+    try std.testing.expect(playing.state == AnimationState.running and playing.loops == 1);
+    try std.testing.expect(copying.compose == GraphicsCompose.blend);
+    try std.testing.expectEqual(@as(u32, 4278190335), canvas.rgba());
 
     const scaled: TextSize = .{ .scale = 2, .vertical = .center, .horizontal = .right };
     try std.testing.expect(scaled.vertical == VerticalAlign.center);

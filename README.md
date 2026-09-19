@@ -305,9 +305,11 @@ and its `CSI ? 997` answer).
 with `Transmit`, `Place`, `Placement`, `Delete`, `DeleteTarget`,
 `GraphicsFormat`, `GraphicsMedium`, `GraphicsQuiet`, `GraphicsImage`,
 `GraphicsRect`, `GraphicsAction`, `graphics_chunk_bytes` and
-`graphics_chunk_base64_max`; `placeholderRow`, `placeholderCell`,
-`Placeholder`, `graphics_placeholder`, `graphics_placeholder_max` for the
-Unicode placeholder path.
+`graphics_chunk_base64_max`; `transmitFrame`, `animateImage` and
+`composeFrames` for animation, with `Frame`, `Animate`, `Compose`,
+`AnimationState`, `GraphicsCompose` and `GraphicsColor`; `placeholderRow`,
+`placeholderCell`, `Placeholder`, `graphics_placeholder`,
+`graphics_placeholder_max` for the Unicode placeholder path.
 
 **Extra cursors.** `extraCursors`, `extraCursorsClear`, `extraCursorColor`,
 `queryExtraCursorSupport`, `queryExtraCursors`, `queryExtraCursorColors`,
@@ -437,8 +439,11 @@ call `toCells` with your cell size. Both count from 1.
 3072-byte pieces that fill a 4096-character chunk exactly, writes `m=1` on
 every sequence but the last, and writes no `m` at all when the whole payload
 fitted in one. A megabyte of pixels costs 3,094 bytes of framing — 0.22% —
-and no buffer of its own. Placement lifecycle, acknowledgements and z-layers
-are not here: they need state between frames, and nothing in morse keeps any.
+and no buffer of its own. `transmitFrame` sends an animation frame through
+the same chunker, adding the `a=f` the protocol wants on every chunk of a
+frame and not only on the first. Placement lifecycle, acknowledgements and
+z-layers are not here: they need state between frames, and nothing in morse
+keeps any.
 
 **Synchronised output is a bracket, not a setting.** Mode 2026 goes on
 immediately before a frame and off immediately after it. It does not nest,
@@ -511,7 +516,7 @@ agrees. This step builds a terminal emulator from source, feeds it every
 writer, and asks the emulator what it did — the cursor, the modes, the style,
 the screen after each erase and scroll, the image storage, the cell under a
 hyperlink — then sends the emulator's own replies back through the parsers
-here. 1,031 assertions, and two named skips: this emulator has neither
+here. 1,050 assertions, and two named skips: this emulator has neither
 superscript nor a multiple cursors protocol, so `Style.script` and
 `extraCursors` stand on their byte-exact tests alone. The emulator is a lazy
 dependency, pinned to a commit and reached by this step alone, so a program

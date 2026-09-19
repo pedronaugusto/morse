@@ -16,10 +16,13 @@
 //! screen now, which z-layer a picture belongs to, and when to swap one
 //! picture for another are all decisions that need state across frames, and
 //! nothing in `morse` keeps state across frames. The terminal's answer to a
-//! command is `parseGraphicsResponse` in `device.zig`, because a reply is a
-//! reply wherever it came from. Animation is not here either: `a=f`, `a=a`
-//! and `a=c` give `c`, `r`, `z`, `X` and `Y` meanings of their own, so the
-//! encoder below would not be shared, it would be shadowed.
+//! command is `parseGraphicsResponse`, further down, because a reply is a
+//! reply wherever it came from.
+//!
+//! Animation is here, as a family of its own rather than as more keys on
+//! the writers above: `a=f`, `a=a` and `a=c` give `c`, `r`, `z`, `X` and
+//! `Y` meanings of their own, so a shared encoder would not be shared, it
+//! would be shadowed.
 
 const std = @import("std");
 const base64 = @import("base64.zig");
@@ -251,6 +254,176 @@ pub const Delete = struct {
 };
 
 //=========================================================================
+// What an animation command says.
+//
+// Three more actions -- `a=f`, `a=a` and `a=c` -- and a command struct each,
+// because the letters they share with a placement do not mean there what
+// they mean here: `c` and `r` are frame numbers rather than columns and
+// rows, `z` is a gap in milliseconds rather than a layer, and `X` and `Y`
+// are a composition mode and a colour rather than offsets inside a cell. A
+// type each is what keeps the two readings apart.
+//=========================================================================
+
+/// How arriving pixels land on the pixels already there, as the `X` key of a
+/// frame and the `C` key of a composition spell it.
+pub const GraphicsCompose = enum(u8) {
+    /// The protocol's default: the arriving pixels are alpha blended onto
+    /// what is under them.
+    blend = 0,
+    /// `X=1` or `C=1`: the arriving pixels replace what is under them,
+    /// alpha and all.
+    overwrite = 1,
+};
+
+/// A colour with an alpha channel: the `Y` key of a frame, which fills the
+/// pixels that frame's own data does not cover.
+pub const GraphicsColor = extern struct {
+    r: u8 = 0,
+    g: u8 = 0,
+    b: u8 = 0,
+    /// Zero is transparent and 255 is opaque, so the default here is a
+    /// transparent black pixel -- the protocol's own default canvas.
+    a: u8 = 0,
+
+    /// The one number the protocol carries the colour as, `0xRRGGBBAA`:
+    /// red in the most significant byte and alpha in the least.
+    pub fn rgba(color: GraphicsColor) u32 {
+        return @as(u32, color.r) << 24 |
+            @as(u32, color.g) << 16 |
+            @as(u32, color.b) << 8 |
+            @as(u32, color.a);
+    }
+};
+
+/// Whether the terminal is playing an animation, as the `s` key spells it.
+pub const AnimationState = enum(u8) {
+    /// No `s` key at all, which is what a command that only sets a gap or
+    /// names a frame wants: playback is left as it was.
+    unchanged = 0,
+    /// `s=1`: stop. The loop counter resets with it.
+    stopped = 1,
+    /// `s=2`: play, but wait on the last frame for more frames rather than
+    /// going back to the first. What to ask for while frames are still on
+    /// their way.
+    loading = 2,
+    /// `s=3`: play, looping back to the first frame after the last.
+    running = 3,
+};
+
+/// One animation frame on its way to the terminal: `a=f`.
+///
+/// A frame belongs to an image, so the image must already be there and
+/// `image` must name it -- the protocol answers a frame command carrying
+/// neither `i` nor `I` with `EINVAL`. Frames count from one, and frame one
+/// is the image's own pixels rather than anything sent here.
+pub const Frame = struct {
+    /// Which image this is a frame of. Not optional.
+    image: GraphicsImage = .none,
+    /// The `r` key: which frame to edit, counting from one. Zero makes a
+    /// new frame, which is how an animation is built up.
+    edit: u32 = 0,
+    /// The `c` key: the frame whose pixels are the canvas this one is
+    /// composed onto, counting from one. Zero fills the canvas with
+    /// `background` instead.
+    base: u32 = 0,
+    /// The `x` key: where in the frame, in pixels, the rectangle being sent
+    /// starts horizontally. The rest of the frame comes from the canvas.
+    x: u32 = 0,
+    /// The `y` key: the same vertically.
+    y: u32 = 0,
+    /// The `X` key.
+    compose: GraphicsCompose = .blend,
+    /// The `Y` key: what the canvas is filled with when `base` is zero.
+    background: GraphicsColor = .{},
+    /// The `z` key: how many milliseconds this frame is shown before the
+    /// next one. Zero takes the terminal's own default, and a negative gap
+    /// makes the frame *gapless* -- never shown, and useful only as the
+    /// canvas another frame is built on.
+    gap: i32 = 0,
+    /// The `f` key.
+    format: GraphicsFormat = .rgba,
+    /// The `t` key.
+    medium: GraphicsMedium = .direct,
+    /// The `s` key: the width in pixels of the rectangle being sent, which
+    /// is the image's own width when the frame covers all of it.
+    width: u32 = 0,
+    /// The `v` key: its height.
+    height: u32 = 0,
+    /// The `S` key: how many bytes to read.
+    size: u32 = 0,
+    /// The `O` key: where in the file or object to start reading.
+    offset: u32 = 0,
+    /// The `o` key: the payload is zlib-deflated before it is base64
+    /// encoded.
+    compressed: bool = false,
+    /// The `q` key.
+    quiet: GraphicsQuiet = .answers,
+};
+
+/// A command that plays, stops or steps an image's animation: `a=a`.
+///
+/// The keys are independent, so one command can set a frame's gap, name the
+/// frame to show and start playback at once. `image` is not optional.
+pub const Animate = struct {
+    /// Which image's animation this is about.
+    image: GraphicsImage = .none,
+    /// The `s` key.
+    state: AnimationState = .unchanged,
+    /// The `c` key: which frame to show now, counting from one. Zero leaves
+    /// the current frame alone. This is the whole of a client-driven
+    /// animation -- send the frames, then name one per tick -- and it costs
+    /// a round trip per frame, which is what the gaps below are for.
+    current: u32 = 0,
+    /// The `r` key: which frame `gap` is about, counting from one. The root
+    /// frame is made with no gap, so this is the only way to give it one.
+    frame: u32 = 0,
+    /// The `z` key: the gap in milliseconds for `frame`. Zero leaves it as
+    /// it was, and a negative gap makes that frame gapless.
+    gap: i32 = 0,
+    /// The `v` key: how many times to play. Zero leaves the count as it
+    /// was, one plays for ever, and anything larger plays that many times
+    /// less one. Stopping resets the count.
+    loops: u32 = 0,
+    /// The `q` key.
+    quiet: GraphicsQuiet = .answers,
+};
+
+/// A command that copies a rectangle of pixels from one frame of an image
+/// onto another frame of it: `a=c`.
+///
+/// Both frames count from one and both belong to `image`, which is not
+/// optional. The two rectangles are the same size, `width` by `height`, and
+/// each has a corner of its own. A rectangle that leaves the image is
+/// `EINVAL`, and so is composing a frame onto itself through rectangles
+/// that overlap.
+pub const Compose = struct {
+    /// Which image's frames these are.
+    image: GraphicsImage = .none,
+    /// The `r` key: the frame the pixels come from.
+    source: u32 = 0,
+    /// The `c` key: the frame they land on.
+    destination: u32 = 0,
+    /// The `X` key: the left edge, in pixels, of the rectangle in the
+    /// source frame.
+    source_x: u32 = 0,
+    /// The `Y` key: its top edge.
+    source_y: u32 = 0,
+    /// The `x` key: the left edge of where it lands in the destination
+    /// frame.
+    destination_x: u32 = 0,
+    /// The `y` key: its top edge.
+    destination_y: u32 = 0,
+    /// The `w` key: the width of both rectangles. Zero is the whole image.
+    width: u32 = 0,
+    /// The `h` key: their height.
+    height: u32 = 0,
+    /// The `C` key.
+    compose: GraphicsCompose = .blend,
+    /// The `q` key.
+    quiet: GraphicsQuiet = .answers,
+};
+
+//=========================================================================
 // The chunk rule.
 //=========================================================================
 
@@ -339,6 +512,22 @@ fn writeImage(k: *Keys, image: GraphicsImage) Writer.Error!void {
     }
 }
 
+/// Writes the keys that say where the payload comes from and what shape it
+/// is: `f t s v S O o`.
+///
+/// `cmd` is a `Transmit` or a `Frame`. An animation frame travels by the
+/// same seven keys under the same names, so they are spelled once here
+/// rather than twice.
+fn writeMedia(k: *Keys, cmd: anytype) Writer.Error!void {
+    if (cmd.format != .rgba) try k.int('f', @intFromEnum(cmd.format));
+    if (cmd.medium != .direct) try k.char('t', @intFromEnum(cmd.medium));
+    if (cmd.width != 0) try k.int('s', cmd.width);
+    if (cmd.height != 0) try k.int('v', cmd.height);
+    if (cmd.size != 0) try k.int('S', cmd.size);
+    if (cmd.offset != 0) try k.int('O', cmd.offset);
+    if (cmd.compressed) try k.char('o', 'z');
+}
+
 /// Writes the keys of the first sequence of a transmit.
 fn writeTransmit(k: *Keys, cmd: Transmit) Writer.Error!void {
     switch (cmd.action) {
@@ -348,13 +537,7 @@ fn writeTransmit(k: *Keys, cmd: Transmit) Writer.Error!void {
     }
     if (cmd.quiet != .answers) try k.int('q', @intFromEnum(cmd.quiet));
     try writeImage(k, cmd.image);
-    if (cmd.format != .rgba) try k.int('f', @intFromEnum(cmd.format));
-    if (cmd.medium != .direct) try k.char('t', @intFromEnum(cmd.medium));
-    if (cmd.width != 0) try k.int('s', cmd.width);
-    if (cmd.height != 0) try k.int('v', cmd.height);
-    if (cmd.size != 0) try k.int('S', cmd.size);
-    if (cmd.offset != 0) try k.int('O', cmd.offset);
-    if (cmd.compressed) try k.char('o', 'z');
+    try writeMedia(k, cmd);
     if (cmd.transient) try k.int('N', 1);
     if (cmd.action == .display) try writePlacement(k, cmd.action.display);
 }
@@ -491,6 +674,106 @@ pub fn queryGraphics(w: *Writer, id: u32) Writer.Error!void {
         .width = 1,
         .height = 1,
     }, &.{ 0, 0, 0 });
+}
+
+//=========================================================================
+// Writing an animation command.
+//
+// Beside the writers above rather than inside them: an animation command
+// reuses the transmission keys and nothing else, so `writeMedia` is shared
+// and every other key is written here, under its own meaning.
+//=========================================================================
+
+/// Writes the keys of the first sequence of a frame, after its `a=f`.
+fn writeFrame(k: *Keys, cmd: Frame) Writer.Error!void {
+    if (cmd.quiet != .answers) try k.int('q', @intFromEnum(cmd.quiet));
+    try writeImage(k, cmd.image);
+    try writeMedia(k, cmd);
+    if (cmd.x != 0) try k.int('x', cmd.x);
+    if (cmd.y != 0) try k.int('y', cmd.y);
+    if (cmd.base != 0) try k.int('c', cmd.base);
+    if (cmd.edit != 0) try k.int('r', cmd.edit);
+    if (cmd.gap != 0) try k.signed('z', cmd.gap);
+    if (cmd.compose != .blend) try k.int('X', @intFromEnum(cmd.compose));
+    if (cmd.background.rgba() != 0) try k.int('Y', cmd.background.rgba());
+}
+
+/// Sends one animation frame: `APC G a=f,... ; <base64> ST`, chunked by the
+/// same rule as `transmitImage`.
+///
+/// The one difference from an image is on the wire rather than in the call:
+/// the protocol requires `a=f` on every chunk of a frame, not only on the
+/// first, so the continuation sequences here carry `a=f,m=...` where an
+/// image's carry `m=...` alone.
+///
+/// Nothing is flushed and nothing else may be written in between, as with
+/// any chunked payload.
+pub fn transmitFrame(w: *Writer, cmd: Frame, data: []const u8) Writer.Error!void {
+    var offset: usize = 0;
+    var first = true;
+    while (true) {
+        const end = @min(offset + chunk_bytes, data.len);
+        const last = end == data.len;
+
+        try w.writeAll(seq.apc ++ "G");
+        var keys: Keys = .{ .w = w };
+        try keys.char('a', 'f');
+        if (first) {
+            try writeFrame(&keys, cmd);
+        } else if (cmd.quiet != .answers) {
+            try keys.int('q', @intFromEnum(cmd.quiet));
+        }
+        if (!first or !last) try keys.int('m', if (last) 0 else 1);
+        try w.writeByte(';');
+        try base64.write(w, data[offset..end]);
+        try w.writeAll(seq.st);
+
+        if (last) return;
+        offset = end;
+        first = false;
+    }
+}
+
+/// Plays, stops or steps an image's animation: `APC G a=a,... ST`.
+///
+/// There is no payload and so no `;`. A command the terminal accepts is
+/// answered with nothing at all, whatever `quiet` says; a refusal comes
+/// back as `parseGraphicsResponse` reads it.
+pub fn animateImage(w: *Writer, cmd: Animate) Writer.Error!void {
+    try w.writeAll(seq.apc ++ "G");
+    var keys: Keys = .{ .w = w };
+    try keys.char('a', 'a');
+    if (cmd.quiet != .answers) try keys.int('q', @intFromEnum(cmd.quiet));
+    try writeImage(&keys, cmd.image);
+    if (cmd.state != .unchanged) try keys.int('s', @intFromEnum(cmd.state));
+    if (cmd.frame != 0) try keys.int('r', cmd.frame);
+    if (cmd.gap != 0) try keys.signed('z', cmd.gap);
+    if (cmd.current != 0) try keys.int('c', cmd.current);
+    if (cmd.loops != 0) try keys.int('v', cmd.loops);
+    try w.writeAll(seq.st);
+}
+
+/// Copies a rectangle from one frame of an image onto another:
+/// `APC G a=c,... ST`.
+///
+/// The cheap way to change part of a frame, because the pixels are already
+/// in the terminal: no payload, and so no `;`.
+pub fn composeFrames(w: *Writer, cmd: Compose) Writer.Error!void {
+    try w.writeAll(seq.apc ++ "G");
+    var keys: Keys = .{ .w = w };
+    try keys.char('a', 'c');
+    if (cmd.quiet != .answers) try keys.int('q', @intFromEnum(cmd.quiet));
+    try writeImage(&keys, cmd.image);
+    if (cmd.destination != 0) try keys.int('c', cmd.destination);
+    if (cmd.source != 0) try keys.int('r', cmd.source);
+    if (cmd.destination_x != 0) try keys.int('x', cmd.destination_x);
+    if (cmd.destination_y != 0) try keys.int('y', cmd.destination_y);
+    if (cmd.width != 0) try keys.int('w', cmd.width);
+    if (cmd.height != 0) try keys.int('h', cmd.height);
+    if (cmd.source_x != 0) try keys.int('X', cmd.source_x);
+    if (cmd.source_y != 0) try keys.int('Y', cmd.source_y);
+    if (cmd.compose != .blend) try keys.int('C', @intFromEnum(cmd.compose));
+    try w.writeAll(seq.st);
 }
 
 //=========================================================================
@@ -854,6 +1137,159 @@ const Commands = struct {
         return readCommand(one);
     }
 };
+
+/// One animation command read back off the wire, as the command struct that
+/// would write it again.
+///
+/// This is where the round trip for `a=f`, `a=a` and `a=c` is made: the
+/// three share letters and mean different things by them, so reading each
+/// one back through its own action is what proves the writers above are not
+/// quietly spelling one command's keys with another's meaning.
+const Animation = union(enum) {
+    frame: Frame,
+    animate: Animate,
+    compose: Compose,
+};
+
+/// The value of a key as a `u32`, zero when the command does not carry it,
+/// and null when it carries something that is not a whole number.
+fn keyInt(c: Command, name: u8) ?u32 {
+    const value = c.get(name) orelse return 0;
+    const scan = seq.scanInt(u32, value) orelse return null;
+    if (scan.len != value.len) return null;
+    return scan.value;
+}
+
+/// The same for a key the protocol lets go negative.
+fn keySigned(c: Command, name: u8) ?i32 {
+    const value = c.get(name) orelse return 0;
+    const negative = value.len != 0 and value[0] == '-';
+    const digits = if (negative) value[1..] else value;
+    const scan = seq.scanInt(i64, digits) orelse return null;
+    if (scan.len != digits.len) return null;
+    return std.math.cast(i32, if (negative) -scan.value else scan.value);
+}
+
+/// Which image the command names, refusing the `i` and `I` together that
+/// the protocol refuses.
+fn keyImage(c: Command) ?GraphicsImage {
+    if (c.get('i') != null) {
+        if (c.get('I') != null) return null;
+        return .{ .id = keyInt(c, 'i') orelse return null };
+    }
+    if (c.get('I') != null) return .{ .number = keyInt(c, 'I') orelse return null };
+    return .none;
+}
+
+fn keyQuiet(c: Command) ?GraphicsQuiet {
+    return switch (keyInt(c, 'q') orelse return null) {
+        0 => .answers,
+        1 => .failures,
+        2 => .silent,
+        else => null,
+    };
+}
+
+fn keyFormat(c: Command) ?GraphicsFormat {
+    if (c.get('f') == null) return .rgba;
+    return switch (keyInt(c, 'f') orelse return null) {
+        24 => .rgb,
+        32 => .rgba,
+        100 => .png,
+        else => null,
+    };
+}
+
+fn keyMedium(c: Command) ?GraphicsMedium {
+    const value = c.get('t') orelse return .direct;
+    if (value.len != 1) return null;
+    return switch (value[0]) {
+        'd' => .direct,
+        'f' => .file,
+        't' => .temporary_file,
+        's' => .shared_memory,
+        else => null,
+    };
+}
+
+fn keyCompose(c: Command, name: u8) ?GraphicsCompose {
+    return switch (keyInt(c, name) orelse return null) {
+        0 => .blend,
+        1 => .overwrite,
+        else => null,
+    };
+}
+
+fn keyColor(c: Command, name: u8) ?GraphicsColor {
+    const value = keyInt(c, name) orelse return null;
+    return .{
+        .r = @truncate(value >> 24),
+        .g = @truncate(value >> 16),
+        .b = @truncate(value >> 8),
+        .a = @truncate(value),
+    };
+}
+
+/// Reads one animation command back into the command that wrote it, or
+/// null when the bytes are not one.
+fn readAnimation(bytes: []const u8) ?Animation {
+    const c = readCommand(bytes) orelse return null;
+    const action = c.get('a') orelse return null;
+    if (action.len != 1) return null;
+
+    const image = keyImage(c) orelse return null;
+    const quiet = keyQuiet(c) orelse return null;
+
+    return switch (action[0]) {
+        'f' => .{ .frame = .{
+            .image = image,
+            .edit = keyInt(c, 'r') orelse return null,
+            .base = keyInt(c, 'c') orelse return null,
+            .x = keyInt(c, 'x') orelse return null,
+            .y = keyInt(c, 'y') orelse return null,
+            .compose = keyCompose(c, 'X') orelse return null,
+            .background = keyColor(c, 'Y') orelse return null,
+            .gap = keySigned(c, 'z') orelse return null,
+            .format = keyFormat(c) orelse return null,
+            .medium = keyMedium(c) orelse return null,
+            .width = keyInt(c, 's') orelse return null,
+            .height = keyInt(c, 'v') orelse return null,
+            .size = keyInt(c, 'S') orelse return null,
+            .offset = keyInt(c, 'O') orelse return null,
+            .compressed = std.mem.eql(u8, c.get('o') orelse "", "z"),
+            .quiet = quiet,
+        } },
+        'a' => .{ .animate = .{
+            .image = image,
+            .state = switch (keyInt(c, 's') orelse return null) {
+                0 => .unchanged,
+                1 => .stopped,
+                2 => .loading,
+                3 => .running,
+                else => return null,
+            },
+            .current = keyInt(c, 'c') orelse return null,
+            .frame = keyInt(c, 'r') orelse return null,
+            .gap = keySigned(c, 'z') orelse return null,
+            .loops = keyInt(c, 'v') orelse return null,
+            .quiet = quiet,
+        } },
+        'c' => .{ .compose = .{
+            .image = image,
+            .source = keyInt(c, 'r') orelse return null,
+            .destination = keyInt(c, 'c') orelse return null,
+            .source_x = keyInt(c, 'X') orelse return null,
+            .source_y = keyInt(c, 'Y') orelse return null,
+            .destination_x = keyInt(c, 'x') orelse return null,
+            .destination_y = keyInt(c, 'y') orelse return null,
+            .width = keyInt(c, 'w') orelse return null,
+            .height = keyInt(c, 'h') orelse return null,
+            .compose = keyCompose(c, 'C') orelse return null,
+            .quiet = quiet,
+        } },
+        else => null,
+    };
+}
 
 //=========================================================================
 // Tests.
@@ -1272,6 +1708,390 @@ test "queryGraphics is a one-pixel image the terminal answers and forgets" {
     try queryGraphics(&out.writer, 31);
     try std.testing.expectEqualStrings("\x1b_Ga=q,i=31,f=24,s=1,v=1;AAAA\x1b\\", out.written());
     try expectCommand(out.written(), &.{ "a=q", "i=31", "f=24", "s=1", "v=1" }, &.{ 0, 0, 0 });
+}
+
+test "a frame writes a=f and only the keys that are not at their default" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try transmitFrame(&out.writer, .{ .image = .{ .id = 7 } }, "abc");
+    try std.testing.expectEqualStrings("\x1b_Ga=f,i=7;YWJj\x1b\\", out.written());
+    try expectCommand(out.written(), &.{ "a=f", "i=7" }, "abc");
+}
+
+test "a frame with every key writes them in the documented order" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try transmitFrame(&out.writer, .{
+        .image = .{ .number = 13 },
+        .edit = 3,
+        .base = 2,
+        .x = 10,
+        .y = 5,
+        .compose = .overwrite,
+        .background = .{ .r = 0xff, .a = 0xff },
+        .gap = 48,
+        .format = .rgb,
+        .medium = .shared_memory,
+        .width = 100,
+        .height = 200,
+        .size = 60000,
+        .offset = 16,
+        .compressed = true,
+        .quiet = .silent,
+    }, "/name");
+    try std.testing.expectEqualStrings(
+        "\x1b_Ga=f,q=2,I=13,f=24,t=s,s=100,v=200,S=60000,O=16,o=z," ++
+            "x=10,y=5,c=2,r=3,z=48,X=1,Y=4278190335;L25hbWU=\x1b\\",
+        out.written(),
+    );
+    try expectCommand(out.written(), &.{
+        "a=f", "q=2",  "I=13", "f=24", "t=s", "s=100", "v=200", "S=60000",      "O=16",
+        "o=z", "x=10", "y=5",  "c=2",  "r=3", "z=48",  "X=1",   "Y=4278190335",
+    }, "/name");
+}
+
+test "the gap of a frame is written on both sides of zero, and not at zero" {
+    // A positive gap is milliseconds; a negative one makes the frame
+    // gapless, which is a frame that exists only to be another frame's
+    // canvas; zero means the terminal's own default and is left out.
+    const cases = [_]struct { gap: i32, bytes: []const u8 }{
+        .{ .gap = -1, .bytes = "\x1b_Ga=f,i=1,z=-1;\x1b\\" },
+        .{ .gap = 0, .bytes = "\x1b_Ga=f,i=1;\x1b\\" },
+        .{ .gap = 48, .bytes = "\x1b_Ga=f,i=1,z=48;\x1b\\" },
+        .{ .gap = 2147483647, .bytes = "\x1b_Ga=f,i=1,z=2147483647;\x1b\\" },
+        .{ .gap = -2147483648, .bytes = "\x1b_Ga=f,i=1,z=-2147483648;\x1b\\" },
+    };
+    for (cases) |case| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+        try transmitFrame(&out.writer, .{ .image = .{ .id = 1 }, .gap = case.gap }, "");
+        try std.testing.expectEqualStrings(case.bytes, out.written());
+        try std.testing.expectEqual(case.gap, readAnimation(out.written()).?.frame.gap);
+    }
+}
+
+test "the background colour is the protocol's own 32-bit RGBA" {
+    // Both numbers are the protocol's worked examples: opaque red, and a
+    // green that is a little over half transparent.
+    try std.testing.expectEqual(@as(u32, 4278190335), (GraphicsColor{ .r = 0xff, .a = 0xff }).rgba());
+    try std.testing.expectEqual(@as(u32, 16711816), (GraphicsColor{ .g = 0xff, .a = 0x88 }).rgba());
+    try std.testing.expectEqual(@as(u32, 0), (GraphicsColor{}).rgba());
+
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try transmitFrame(&out.writer, .{
+        .image = .{ .id = 1 },
+        .background = .{ .g = 0xff, .a = 0x88 },
+    }, "");
+    try std.testing.expectEqualStrings("\x1b_Ga=f,i=1,Y=16711816;\x1b\\", out.written());
+
+    // A transparent black canvas is the protocol's default, so it is the
+    // one colour that writes no key at all.
+    var none: Writer.Allocating = .init(std.testing.allocator);
+    defer none.deinit();
+    try transmitFrame(&none.writer, .{ .image = .{ .id = 1 } }, "");
+    try std.testing.expect(readCommand(none.written()).?.get('Y') == null);
+}
+
+test "a chunked frame carries a=f on every sequence" {
+    // The one place a frame's bytes differ from an image's: the protocol
+    // requires the action on the continuation chunks too, where an image
+    // sends only `m` and `q`.
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const data = [_]u8{0xcd} ** (chunk_bytes + 1);
+    try transmitFrame(&out.writer, .{ .image = .{ .id = 1 }, .quiet = .silent }, &data);
+
+    var commands: Commands = .{ .rest = out.written() };
+    const first = commands.next().?;
+    try std.testing.expectEqualStrings("f", first.get('a').?);
+    try std.testing.expectEqualStrings("1", first.get('m').?);
+    try std.testing.expectEqual(chunk_base64_max, first.payload.len);
+
+    const last = commands.next().?;
+    try std.testing.expectEqualStrings("f", last.get('a').?);
+    try std.testing.expectEqualStrings("0", last.get('m').?);
+    try std.testing.expectEqualStrings("2", last.get('q').?);
+    // After the first sequence, only a, q and m.
+    try std.testing.expectEqual(@as(usize, 3), last.count());
+    try std.testing.expect(last.get('i') == null);
+    try std.testing.expect(commands.next() == null);
+}
+
+test "a frame that fits writes one sequence and no m key" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const data = [_]u8{0xab} ** chunk_bytes;
+    try transmitFrame(&out.writer, .{ .image = .{ .id = 1 } }, &data);
+
+    var commands: Commands = .{ .rest = out.written() };
+    const only = commands.next().?;
+    try std.testing.expect(only.get('m') == null);
+    try std.testing.expectEqual(chunk_base64_max, only.payload.len);
+    try std.testing.expect(commands.next() == null);
+}
+
+test "animation control writes the state, the frame, the gap, the current frame and the loops" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try animateImage(&out.writer, .{
+        .image = .{ .id = 7 },
+        .state = .running,
+        .frame = 3,
+        .gap = 48,
+        .current = 2,
+        .loops = 5,
+        .quiet = .silent,
+    });
+    try std.testing.expectEqualStrings("\x1b_Ga=a,q=2,i=7,s=3,r=3,z=48,c=2,v=5\x1b\\", out.written());
+    try expectCommand(out.written(), &.{
+        "a=a", "q=2", "i=7", "s=3", "r=3", "z=48", "c=2", "v=5",
+    }, "");
+    try std.testing.expect(!readCommand(out.written()).?.has_payload);
+
+    // The protocol's own example: the gap of the third frame of image
+    // seven, which is the only way the root frame ever gets one.
+    var gap: Writer.Allocating = .init(std.testing.allocator);
+    defer gap.deinit();
+    try animateImage(&gap.writer, .{ .image = .{ .id = 7 }, .frame = 3, .gap = 48 });
+    try std.testing.expectEqualStrings("\x1b_Ga=a,i=7,r=3,z=48\x1b\\", gap.written());
+
+    // And the one a client-driven animation sends per tick.
+    var step: Writer.Allocating = .init(std.testing.allocator);
+    defer step.deinit();
+    try animateImage(&step.writer, .{ .image = .{ .id = 3 }, .current = 7 });
+    try std.testing.expectEqualStrings("\x1b_Ga=a,i=3,c=7\x1b\\", step.written());
+}
+
+test "every animation state writes its own value, and the default writes none" {
+    const cases = [_]struct { state: AnimationState, bytes: []const u8 }{
+        .{ .state = .unchanged, .bytes = "\x1b_Ga=a,i=1\x1b\\" },
+        .{ .state = .stopped, .bytes = "\x1b_Ga=a,i=1,s=1\x1b\\" },
+        .{ .state = .loading, .bytes = "\x1b_Ga=a,i=1,s=2\x1b\\" },
+        .{ .state = .running, .bytes = "\x1b_Ga=a,i=1,s=3\x1b\\" },
+    };
+    for (cases) |case| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+        try animateImage(&out.writer, .{ .image = .{ .id = 1 }, .state = case.state });
+        try std.testing.expectEqualStrings(case.bytes, out.written());
+        try std.testing.expectEqual(case.state, readAnimation(out.written()).?.animate.state);
+    }
+}
+
+test "composing frames writes both frames, both rectangles and the mode" {
+    // The protocol's own example: a 23 by 27 rectangle at (4, 8) in frame
+    // seven, onto (1, 3) in frame nine, both frames of image one.
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try composeFrames(&out.writer, .{
+        .image = .{ .id = 1 },
+        .source = 7,
+        .destination = 9,
+        .width = 23,
+        .height = 27,
+        .source_x = 4,
+        .source_y = 8,
+        .destination_x = 1,
+        .destination_y = 3,
+    });
+    try std.testing.expectEqualStrings(
+        "\x1b_Ga=c,i=1,c=9,r=7,x=1,y=3,w=23,h=27,X=4,Y=8\x1b\\",
+        out.written(),
+    );
+    try expectCommand(out.written(), &.{
+        "a=c", "i=1", "c=9", "r=7", "x=1", "y=3", "w=23", "h=27", "X=4", "Y=8",
+    }, "");
+    try std.testing.expect(!readCommand(out.written()).?.has_payload);
+
+    // The whole image, replaced rather than blended, quietly.
+    var whole: Writer.Allocating = .init(std.testing.allocator);
+    defer whole.deinit();
+    try composeFrames(&whole.writer, .{
+        .image = .{ .number = 4 },
+        .source = 1,
+        .destination = 2,
+        .compose = .overwrite,
+        .quiet = .silent,
+    });
+    try std.testing.expectEqualStrings("\x1b_Ga=c,q=2,I=4,c=2,r=1,C=1\x1b\\", whole.written());
+}
+
+test "every animation command reads back as the command that wrote it" {
+    const commands = [_]Animation{
+        .{ .frame = .{ .image = .{ .id = 1 } } },
+        .{ .frame = .{
+            .image = .{ .number = 2 },
+            .edit = 4,
+            .base = 3,
+            .x = 10,
+            .y = 5,
+            .compose = .overwrite,
+            .background = .{ .r = 1, .g = 2, .b = 3, .a = 4 },
+            .gap = -40,
+            .format = .png,
+            .medium = .file,
+            .width = 7,
+            .height = 8,
+            .size = 9,
+            .offset = 11,
+            .compressed = true,
+            .quiet = .failures,
+        } },
+        .{ .animate = .{ .image = .{ .id = 1 } } },
+        .{ .animate = .{
+            .image = .{ .number = 5 },
+            .state = .loading,
+            .current = 6,
+            .frame = 7,
+            .gap = -1,
+            .loops = 8,
+            .quiet = .silent,
+        } },
+        .{ .compose = .{ .image = .{ .id = 1 } } },
+        .{ .compose = .{
+            .image = .{ .number = 9 },
+            .source = 1,
+            .destination = 2,
+            .source_x = 3,
+            .source_y = 4,
+            .destination_x = 5,
+            .destination_y = 6,
+            .width = 7,
+            .height = 8,
+            .compose = .overwrite,
+            .quiet = .failures,
+        } },
+    };
+
+    for (commands) |command| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+        switch (command) {
+            .frame => |cmd| try transmitFrame(&out.writer, cmd, ""),
+            .animate => |cmd| try animateImage(&out.writer, cmd),
+            .compose => |cmd| try composeFrames(&out.writer, cmd),
+        }
+        try std.testing.expectEqualDeep(command, readAnimation(out.written()).?);
+    }
+}
+
+test "readAnimation refuses what is not an animation command" {
+    const rejected = [_][]const u8{
+        "\x1b_Gi=1;\x1b\\", // no action at all
+        "\x1b_Ga=p,i=1\x1b\\", // a placement, whose keys mean other things
+        "\x1b_Ga=d,d=a\x1b\\", // a delete
+        "\x1b_Ga=T,i=1;\x1b\\", // a transmit that displays
+        "\x1b_Ga=x,i=1\x1b\\", // an action the protocol does not name
+    };
+    for (rejected) |bytes| try std.testing.expect(readAnimation(bytes) == null);
+}
+
+test "fuzz the animation round trip" {
+    // The property: whatever the field values, each of the three commands
+    // writes a sequence the reader accepts, and reading it back gives the
+    // command that was written -- which is what says the three are not
+    // sharing a meaning for the letters they share.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [32]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+            if (bytes.len < 20) return;
+
+            const a = std.mem.readInt(u32, bytes[0..4], .little);
+            const b = std.mem.readInt(u32, bytes[4..8], .little);
+            const c = std.mem.readInt(u32, bytes[8..12], .little);
+            const d = std.mem.readInt(u32, bytes[12..16], .little);
+            const e = std.mem.readInt(u32, bytes[16..20], .little);
+
+            const image: GraphicsImage = switch (@as(u2, @truncate(a))) {
+                0 => .none,
+                1 => .{ .id = b },
+                else => .{ .number = c },
+            };
+            const quiet: GraphicsQuiet = @enumFromInt(@as(u8, @truncate(a >> 2)) % 3);
+            const mode: GraphicsCompose = if (a & 0x10 != 0) .overwrite else .blend;
+
+            const commands = [_]Animation{
+                .{ .frame = .{
+                    .image = image,
+                    .edit = b,
+                    .base = c,
+                    .x = d,
+                    .y = e,
+                    .compose = mode,
+                    .background = .{
+                        .r = @truncate(d >> 24),
+                        .g = @truncate(d >> 16),
+                        .b = @truncate(d >> 8),
+                        .a = @truncate(d),
+                    },
+                    .gap = @bitCast(e),
+                    .format = switch (@as(u2, @truncate(a >> 5))) {
+                        0 => .rgb,
+                        1 => .png,
+                        else => .rgba,
+                    },
+                    .medium = switch (@as(u2, @truncate(a >> 7))) {
+                        0 => .direct,
+                        1 => .file,
+                        2 => .temporary_file,
+                        else => .shared_memory,
+                    },
+                    .width = c,
+                    .height = d,
+                    .size = e,
+                    .offset = b,
+                    .compressed = a & 0x200 != 0,
+                    .quiet = quiet,
+                } },
+                .{ .animate = .{
+                    .image = image,
+                    .state = @enumFromInt(@as(u8, @truncate(a >> 10)) % 4),
+                    .current = b,
+                    .frame = c,
+                    .gap = @bitCast(d),
+                    .loops = e,
+                    .quiet = quiet,
+                } },
+                .{ .compose = .{
+                    .image = image,
+                    .source = b,
+                    .destination = c,
+                    .source_x = d,
+                    .source_y = e,
+                    .destination_x = b,
+                    .destination_y = c,
+                    .width = d,
+                    .height = e,
+                    .compose = mode,
+                    .quiet = quiet,
+                } },
+            };
+
+            var buffer: [256]u8 = undefined;
+            for (commands) |command| {
+                var w: Writer = .fixed(&buffer);
+                switch (command) {
+                    .frame => |cmd| try transmitFrame(&w, cmd, ""),
+                    .animate => |cmd| try animateImage(&w, cmd),
+                    .compose => |cmd| try composeFrames(&w, cmd),
+                }
+                try std.testing.expectEqualDeep(command, readAnimation(w.buffered()).?);
+            }
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x01\x00\x00\x00\x07\x00\x00\x00\x02\x00\x00\x00" ++
+            "\x03\x00\x00\x00\x30\x00\x00\x00"),
+        corpus.seed("\x00" ** 20),
+        corpus.seed("\xff" ** 20),
+    } });
 }
 
 test "a placeholder row carries the image id in the foreground colour" {

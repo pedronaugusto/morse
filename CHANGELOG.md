@@ -111,10 +111,22 @@ package yet, so they are fixed now rather than carried.
   Together with a virtual placement they put an image on screen through a
   program that knows nothing about graphics but passes text through.
 
-  Animation is not here. `a=f`, `a=a` and `a=c` give `c`, `r`, `z`, `X` and
-  `Y` meanings of their own, so the encoder would not be shared by them, only
-  shadowed. Neither is the lifecycle above the bytes: which ids are free,
-  what has been acknowledged, and what is on screen need state between
+  Animation is a writer family of its own, because `a=f`, `a=a` and `a=c`
+  give `c`, `r`, `z`, `X` and `Y` meanings of their own: one encoder for all
+  of them would not be shared, it would be shadowed. `transmitFrame` sends a
+  frame — which frame to edit, which frame's pixels to build it on, the
+  composition mode, the gap in milliseconds, the background colour, and
+  where in the frame the rectangle lands — through the same chunker as an
+  image, with the `a=f` the protocol asks for on every chunk of a frame.
+  `animateImage` names the current frame, sets a frame's gap and the loop
+  count, and stops, runs or loads. `composeFrames` copies a rectangle from
+  one frame onto another, which changes a frame without sending pixels
+  again. `Frame`, `Animate` and `Compose` are the three commands,
+  `AnimationState` the `s` key, `GraphicsCompose` the blend-or-overwrite
+  choice, and `GraphicsColor` the 32-bit RGBA canvas colour.
+
+  What is still not here is the lifecycle above the bytes: which ids are
+  free, what has been acknowledged, and what is on screen need state between
   frames, and nothing here keeps any.
 
 - **The colour scheme.** `colorScheme`, mode 2031, asks the terminal to say
@@ -262,7 +274,7 @@ package yet, so they are fixed now rather than carried.
   hyperlink, the keyboard flags, the image and its placement. Then the other
   direction: the emulator's own replies come back through the parsers here,
   and the probe's seventeen questions go out in one call and are routed by
-  `probeMatches`. 1,031 assertions, and two named skips — this emulator has
+  `probeMatches`. 1,050 assertions, and two named skips — this emulator has
   neither superscript nor a multiple cursors protocol. The emulator is a lazy
   dependency pinned to a commit and asked for only when morse is the root
   package, so a program that depends on morse fetches nothing. CI runs the
