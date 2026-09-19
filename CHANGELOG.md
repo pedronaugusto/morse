@@ -166,7 +166,7 @@ package yet, so they are fixed now rather than carried.
   budget beside each number, so a change that makes one of them
   algorithmically worse fails the build. The byte budgets are exact and the
   same everywhere; the time ceilings are wide, because the suite runs in four
-  optimize modes on three operating systems. A megabyte of pixels costs 3,095
+  optimize modes on three operating systems. A megabyte of pixels costs 3,094
   bytes of framing, 0.22% of the payload, and the number is checked against
   the formula rather than against a recorded figure.
 
@@ -259,7 +259,7 @@ package yet, so they are fixed now rather than carried.
   feeds it what the writers produce, and asserts on the state the emulator
   ends up in — the cursor where each movement said, every named mode set and
   reset as DECRQM reports it, the current style after every attribute and
-  every colour form and after all 729 style diffs, the screen after each
+  every colour form and after all 676 style diffs, the screen after each
   erase, insert, delete and scroll, the title, the cell under a hyperlink,
   the keyboard flags pushed, set and popped, the image and its placement in
   the emulator's own storage. Then the other direction: DA1, DA2, DECRQM,

@@ -231,7 +231,10 @@ const morse_dep = b.dependency("morse", .{ .target = target, .optimize = optimiz
 exe.root_module.addImport("morse", morse_dep.module("morse"));
 ```
 
-No dependencies: nothing to link, and no C toolchain involved.
+No dependencies: nothing to link, and no C toolchain involved. The one entry
+in `build.zig.zon` belongs to `zig build conformance`, is lazy, and is asked
+for only when morse is the root package, so a build of this module never
+fetches it.
 
 ## The API
 
@@ -435,7 +438,7 @@ call `toCells` with your cell size. Both count from 1.
 `transmitImage` base64-encodes the pixels straight into the writer in the
 3072-byte pieces that fill a 4096-character chunk exactly, writes `m=1` on
 every sequence but the last, and writes no `m` at all when the whole payload
-fitted in one. A megabyte of pixels costs 3,095 bytes of framing — 0.22% —
+fitted in one. A megabyte of pixels costs 3,094 bytes of framing — 0.22% —
 and no buffer of its own. Placement lifecycle, acknowledgements and z-layers
 are not here: they need state between frames, and nothing in morse keeps any.
 
@@ -472,8 +475,9 @@ parser has already established the payload is well-formed base64;
 | Windows | `windows-latest` in CI, four optimize modes |
 
 morse calls no operating system API, so the same source builds everywhere Zig
-does; cross-compilation is checked for `x86_64-linux-gnu`,
-`x86_64-windows-gnu` and `aarch64-windows-gnu`.
+does. CI cross-compiles it for `x86_64-linux-gnu`, `aarch64-linux-gnu`,
+`x86_64-windows-gnu`, `aarch64-windows-gnu`, `x86_64-macos` and
+`aarch64-macos` on every push.
 
 ## Testing
 
@@ -495,8 +499,9 @@ split lands anywhere a real read could have, and its framing is checked
 against a second framer written from the same grammar as a state machine —
 two implementations that share no line, and a disagreement about where a
 sequence ends fails the build. `zig build test --fuzz` keeps searching from
-those seeds, a corpus per property; [`ci/linux.sh`](ci/linux.sh) runs the
-Linux half in Docker from a machine that is not Linux.
+those seeds: thirty-one targets, a corpus each, and the same invariants the
+fixed run asserts. [`ci/linux.sh`](ci/linux.sh) runs the Linux half in Docker
+from a machine that is not Linux.
 
 `zig build conformance` is the other half of the question. Byte-exact tests
 say morse writes what the specifications say; they cannot say a terminal

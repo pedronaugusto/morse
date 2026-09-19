@@ -56,6 +56,34 @@ jobs:
       - name: Examples
         run: zig build examples
 
+  # morse calls no operating system API, so the same source builds wherever
+  # Zig goes. One host is enough to say so, and it is the claim the README
+  # makes.
+  cross:
+    name: cross-compilation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Cross-compilation
+        run: |
+          for target in \
+            x86_64-linux-gnu \
+            aarch64-linux-gnu \
+            x86_64-windows-gnu \
+            aarch64-windows-gnu \
+            x86_64-macos \
+            aarch64-macos
+          do
+            echo "== $target"
+            zig build -Dtarget="$target"
+          done
+
   # The writers, fed to a terminal emulator built from source, and its
   # replies read back through this package's parsers. Its own job because it
   # is the only thing here that fetches anything, and because a failure in it
