@@ -256,8 +256,8 @@ pub fn extraCursorColor(
 ///
 /// A terminal that does answers with the list of shapes and operations it
 /// supports, read by `parseExtraCursorSupport`. One that does not answers
-/// nothing, so send `queryDeviceAttributes` straight after and take the DA1
-/// answer arriving alone as the no.
+/// nothing, so send `queryDeviceAttributes` straight after to exercise the
+/// input path, then take a timeout or explicit quiescence period as the no.
 pub fn queryExtraCursorSupport(w: *Writer) Writer.Error!void {
     try w.writeAll(introducer ++ trailer);
 }

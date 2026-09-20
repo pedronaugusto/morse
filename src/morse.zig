@@ -232,7 +232,7 @@ pub const parseColorSchemeReply = query.parseColorSchemeReply;
 //=========================================================================
 
 /// The questions a program asks a terminal on startup, written in one call
-/// with DA1 last.
+/// with slow forwarded queries first and DA1 last.
 pub const Probe = probing.Probe;
 /// Whether a reply answers a particular question.
 pub const probeMatches = probing.matches;

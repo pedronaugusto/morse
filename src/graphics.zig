@@ -664,8 +664,8 @@ fn writeDeleteTarget(k: *Keys, target: DeleteTarget, free: bool) Writer.Error!vo
 /// `id` comes back in the answer, so it is how this reply is told from every
 /// other graphics reply; it must not be zero. Pair it with
 /// `queryDeviceAttributes`, as with every other question here: a terminal
-/// without the protocol says nothing at all, and the DA1 answer arriving
-/// alone is what says so.
+/// without the protocol says nothing at all. DA1 proves the input path works,
+/// but only the caller's timeout or quiescence period says this went unanswered.
 pub fn queryGraphics(w: *Writer, id: u32) Writer.Error!void {
     try transmitImage(w, .{
         .action = .query,

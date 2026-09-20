@@ -310,7 +310,8 @@ pub fn kittyKeyboardSet(w: *Writer, flags: KittyFlags, how: KittyFlagChange) Wri
 ///
 /// A terminal that implements the protocol answers `CSI ? flags u`; one that
 /// does not answers nothing at all, which is how a program detects support —
-/// pair it with a query that every terminal answers and see which comes back.
+/// pair it with DA1 to exercise the input path, then wait for the caller's
+/// timeout or explicit quiescence period.
 pub fn kittyKeyboardQuery(w: *Writer) Writer.Error!void {
     try w.writeAll(seq.csi ++ "?u");
 }
@@ -357,7 +358,8 @@ pub const ModifyKeys = enum(u8) {
 ///
 /// A terminal that does not implement XTMODKEYS ignores this and answers
 /// nothing, which is indistinguishable from one that took it; pair
-/// `queryModifyKeys` with a question every terminal answers.
+/// `queryModifyKeys` with DA1 to exercise the input path, and let the caller's
+/// timeout or explicit quiescence period decide whether it went unanswered.
 pub fn modifyKeys(w: *Writer, resource: ModifyKeys, value: ?u8) Writer.Error!void {
     try w.writeAll(seq.csi ++ ">");
     try seq.writeInt(w, @intFromEnum(resource));

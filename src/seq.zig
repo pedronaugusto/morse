@@ -117,7 +117,7 @@ pub fn scanInt(comptime T: type, bytes: []const u8) ?Scan(T) {
 /// ECMA-48 says an omitted parameter takes its default value, and terminals
 /// use that: a real DA1 reply is `CSI ? 62 ; 52 ; c`, three parameters with
 /// the last of them omitted, and a parser that insists on digits there
-/// refuses the one reply every startup probe ends on. Strictness is right
+/// refuses the common reply every startup probe asks for. Strictness is right
 /// for a writer, which chooses what it sends, and wrong for a parser of
 /// somebody else's output.
 ///

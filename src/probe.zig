@@ -1,9 +1,9 @@
 //! The questions a program asks a terminal on startup, written in one call
-//! and answered in one round trip.
+//! and collected in one waiting window.
 //!
 //! Every question in `morse` already has a writer and every answer a parser.
-//! What is missing between them is the order, and the order is the whole of
-//! what makes one timeout safe instead of seventeen:
+//! What is missing between them is the order, so the slowest and most likely
+//! to be forwarded questions go first inside one waiting window:
 //!
 //! - the cursor position first, because a terminal that does not consume the
 //!   whole of a sequence it did not recognise bleeds the rest of it onto its
@@ -15,10 +15,12 @@
 //! - the identifying questions after them, in the order they cost;
 //! - the secondary device attributes late, because they identify nothing on
 //!   their own;
-//! - and the primary device attributes **last**, because every terminal
-//!   answers those. The DA1 reply is the sentinel: when it arrives, every
-//!   question written before it has been answered or will never be. A
-//!   program arms one timeout, disarms it on DA1, and reads silence as a no.
+//! - and the primary device attributes **last**, because nearly every
+//!   terminal answers those. DA1 proves that the input path works, but it is
+//!   not a completion sentinel: a multiplexer can answer it locally while an
+//!   earlier OSC query is still making a round trip to the outer terminal.
+//!   Keep the overall timeout armed, or finish after an explicit quiescence
+//!   period that is restarted by each reply. Only then is silence a no.
 //!
 //! `matches` is the other half. Replies arrive on the input stream among the
 //! keys, `KeyParser` frames them and hands each back as `Event.unhandled`,
@@ -28,8 +30,8 @@
 //! What this file will never hold: the waiting. No timeout, no read, no
 //! record of what a terminal answered last time, and no conclusion drawn
 //! from silence. It writes the questions in the right order and reads which
-//! answer is which; the arithmetic of "DA1 came back and this did not" is
-//! the caller's, because only the caller knows when it stopped waiting.
+//! answer is which; deciding that the waiting window is over is the caller's,
+//! because only the caller owns its timeout or quiescence timer.
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
@@ -87,8 +89,8 @@ pub const Probe = struct {
         cell_pixels,
         /// Which terminal family and version (DA2).
         secondary_device_attributes,
-        /// What the terminal claims to implement (DA1). Last, and the one
-        /// every terminal answers.
+        /// What the terminal claims to implement (DA1). Last, and commonly
+        /// answered even when the other questions are not.
         device_attributes,
     };
 
@@ -133,13 +135,13 @@ pub const Probe = struct {
     /// will not use for a picture.
     graphics_id: u32 = 31,
 
-    /// Writes every question this probe asks, in the order that makes one
-    /// round trip safe, with DA1 last.
+    /// Writes every question this probe asks, slow forwarded questions first
+    /// and DA1 last.
     ///
-    /// One call, one write, one timeout. The primary device attributes are
-    /// written whatever the fields say, because they are the sentinel rather
-    /// than a question: without them there is nothing to disarm the timeout
-    /// on, and a probe is a round trip rather than a batch.
+    /// One call, one write, one waiting window. The primary device attributes
+    /// are written whatever the fields say because their reply establishes
+    /// that the input path works. It does not end the window: a multiplexer
+    /// may answer DA1 before an earlier forwarded query comes back.
     pub fn write(p: Probe, w: *Writer) Writer.Error!void {
         if (p.cursor_position) try query.requestCursorPosition(w);
 
@@ -167,7 +169,7 @@ pub const Probe = struct {
 
     /// Whether this probe asks `question`.
     ///
-    /// `.device_attributes` is always asked; it is the sentinel.
+    /// `.device_attributes` is always asked to exercise the input path.
     pub fn asks(p: Probe, question: Question) bool {
         return switch (question) {
             .cursor_position => p.cursor_position,
@@ -251,7 +253,7 @@ fn windowSizeFor(reply: []const u8, what: device.WindowSize.What) bool {
 /// Every question, in the order `Probe.write` writes them.
 const every_question = std.enums.values(Probe.Question);
 
-test "a whole probe is one write, and DA1 is the last thing in it" {
+test "a whole probe is one write, with DA1 last" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
@@ -279,7 +281,7 @@ test "a whole probe is one write, and DA1 is the last thing in it" {
     try std.testing.expectEqual(@as(usize, 129), bytes.len);
     try std.testing.expectEqual(@as(usize, 17), every_question.len);
 
-    // DA1 last, and nowhere else: what disarms the caller's one timeout.
+    // DA1 is last in the write, though a multiplexer need not reply in order.
     try std.testing.expect(std.mem.endsWith(u8, bytes, "\x1b[c"));
     try std.testing.expectEqual(
         @as(usize, bytes.len - 3),
@@ -438,7 +440,7 @@ test "a reply to nothing the probe asked matches no question at all" {
     }
 }
 
-test "a probe's answers arrive through the key parser and route from there" {
+test "a probe routes a forwarded reply that arrives after DA1" {
     // The whole of it, end to end: the questions in one write, the answers
     // framed off one byte stream by the parser that frames the keys, and
     // each handed to the question that asked it. With a keypress in among
@@ -450,18 +452,20 @@ test "a probe's answers arrive through the key parser and route from there" {
     try (Probe{}).write(&out.writer);
 
     const replies = "\x1b[12;40R" ++
-        "\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\" ++
         "a" ++
         "\x1b[?2026;1$y" ++
         "\x1b[?29u" ++
-        "\x1b[?62;52;c";
+        // A multiplexer can answer DA1 locally before this forwarded OSC
+        // reply returns from the outer terminal.
+        "\x1b[?62;52;c" ++
+        "\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\";
 
     var storage: [256]u8 = undefined;
     var parser: key.KeyParser = .init(&storage);
 
     var answered: [17]bool = @splat(false);
     var keys: usize = 0;
-    var da1 = false;
+    var input_path_works = false;
 
     var events = parser.feed(replies);
     while (events.next()) |event| switch (event) {
@@ -470,16 +474,16 @@ test "a probe's answers arrive through the key parser and route from there" {
             for (every_question, 0..) |question, i| {
                 if (matches(reply, question)) {
                     answered[i] = true;
-                    if (question == .device_attributes) da1 = true;
+                    if (question == .device_attributes) input_path_works = true;
                 }
             }
         },
         else => {},
     };
 
-    // The sentinel came back, so every question that answered nothing has
-    // answered nothing: that is the whole of what a probe concludes.
-    try std.testing.expect(da1);
+    // DA1 established the input path, and the later OSC reply still belongs
+    // to this probe. Only the caller's timeout or quiescence period ends it.
+    try std.testing.expect(input_path_works);
     try std.testing.expectEqual(@as(usize, 1), keys);
     try std.testing.expectEqual(@as(usize, 5), std.mem.count(bool, &answered, &.{true}));
     try std.testing.expect(answered[@intFromEnum(Probe.Question.cursor_position)]);

@@ -117,10 +117,10 @@ pub fn main() !void {
     // base64 encoded on the fly -- no allocation, no buffer sized to the text.
     try morse.clipboardWrite(w, .clipboard, "copied by morse");
 
-    // Ask the terminal what it is: seventeen questions in one write, in the
-    // order that makes one timeout safe, with DA1 last because every
-    // terminal answers it. Arm your timeout, disarm it when the DA1 reply
-    // arrives, and read silence as a no.
+    // Ask the terminal what it is: seventeen questions in one write, with
+    // slow forwarded questions first and DA1 last. DA1 proves the input path
+    // works, but a multiplexer may answer it before a forwarded OSC reply.
+    // Keep the timeout armed, or finish after an explicit quiet period.
     try (morse.Probe{}).write(w);
 
     // A question the probe does not ask, because it needs a name. None of

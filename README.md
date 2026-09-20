@@ -118,10 +118,10 @@ try morse.notify(w, "Build finished", "0 errors");
 // base64 encoded on the fly -- no allocation, no buffer sized to the text.
 try morse.clipboardWrite(w, .clipboard, "copied by morse");
 
-// Ask the terminal what it is: seventeen questions in one write, in the
-// order that makes one timeout safe, with DA1 last because every
-// terminal answers it. Arm your timeout, disarm it when the DA1 reply
-// arrives, and read silence as a no.
+// Ask the terminal what it is: seventeen questions in one write, with
+// slow forwarded questions first and DA1 last. DA1 proves the input path
+// works, but a multiplexer may answer it before a forwarded OSC reply.
+// Keep the timeout armed, or finish after an explicit quiet period.
 try (morse.Probe{}).write(w);
 
 // A question the probe does not ask, because it needs a name. None of
@@ -382,19 +382,22 @@ byte of every sequence, so `KeyParser` holds it, `pending()` shows it, and
 is really implemented; `queryDeviceAttributes`, `queryVersion`, `queryColor`,
 `queryPaletteColor` and `queryCapability` (XTGETTCAP) ask the rest. Silence is
 an answer if you pair the question with one always answered, usually
-`queryDeviceAttributes`. What to do with it is yours: no timeout, no cache, no
-fallback.
+`queryDeviceAttributes` to prove the input path works. Only your timeout or an
+explicit quiet period says the optional query went unanswered; DA1 may return
+first through a multiplexer. What to do with that is yours: no timeout, no
+cache, no fallback lives here.
 
-**A startup probe is one write and one round trip.** `Probe.write` asks
-seventeen questions in 129 bytes, in the order that makes a single timeout
-safe: the cursor position first, so a terminal that bleeds an unrecognised
+**A startup probe is one write and one waiting window.** `Probe.write` asks
+seventeen questions in 129 bytes, ordered with the slow paths first: the
+cursor position leads, so a terminal that bleeds an unrecognised
 sequence bleeds it in front of everything; the OSC colour queries next,
 because a multiplexer forwards those and they take the long way round; DA2
-late, because it identifies nothing alone; DA1 **last**, because every
-terminal answers it. The DA1 reply is the sentinel — arm one timeout, disarm
-it there, and read silence as a no. `probeMatches(reply, question)` says
-which question a reply answers, so the routing is a lookup rather than a
-table of sequence shapes in your program.
+late, because it identifies nothing alone; DA1 **last**, because nearly every
+terminal answers it. DA1 proves the input path works, but is not a completion
+sentinel: a multiplexer can answer it locally while an earlier OSC query is
+still travelling outward. Keep the overall timeout armed, or finish after an
+explicit quiet period restarted by each reply; only then read silence as a
+no. `probeMatches(reply, question)` routes each reply.
 
 **`Style` is an `extern struct`, and so is every record in this package.**
 A renderer keeps a style in every cell, and a cell that is `extern` is a row

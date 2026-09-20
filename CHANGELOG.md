@@ -7,6 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 - Windows console mouse events name the button that changed while another button remains held.
+- Startup probes keep collecting after DA1 so multiplexed replies that take a longer path are not lost.
 
 ## [0.4.0] - 2026-09-19
 
@@ -215,18 +216,17 @@ package yet, so they are fixed now rather than carried.
   somebody designed rather than on noise. 200,000 streams and 2.7 million
   framed sequences agree.
 
-- **`Probe`: the startup questions in one write and one round trip.** Every
+- **`Probe`: the startup questions in one write and one waiting window.** Every
   question here already had a writer and every answer a parser; what was
-  missing was the order, and the order is the whole of what makes one
-  timeout safe instead of seventeen. `Probe.write` asks seventeen questions
+  missing was a useful order inside one timeout. `Probe.write` asks seventeen questions
   in 129 bytes — the cursor position first, because a terminal that does not
   consume a sequence it did not recognise bleeds the rest of it onto its own
   output and a report that comes back first drags that out in front; the OSC
   colour queries next, because a multiplexer forwards those and the answer
   takes the long way round; DA2 late, because it identifies nothing alone;
-  DA1 last, because every terminal answers it. The DA1 reply is the
-  sentinel: arm one timeout, disarm it there, and every question that
-  answered nothing before it has answered no. `probeMatches(reply,
+  DA1 last, because nearly every terminal answers it. DA1 proves the input
+  path works but does not end the probe: a multiplexer may answer it locally
+  before an earlier forwarded reply returns. `probeMatches(reply,
   question)` routes the answers — a reply answers at most one of them, which
   the suite checks over every question and every real reply. Each field
   turns one question off; DA1 is written whatever they say.
@@ -343,7 +343,7 @@ package yet, so they are fixed now rather than carried.
 - **Every reply parser reads an omitted parameter as its default.** ECMA-48
   says a parameter left out takes its default value, and terminals use that:
   a real DA1 reply is `CSI ? 62 ; 52 ; c`, three parameters with the last
-  omitted, and refusing it refused the one reply that ends every startup
+  omitted, and refusing it refused the common reply every startup
   probe. `parseDeviceAttributes`, `parseSecondaryDeviceAttributes`,
   `parseModeReply`, `parseKittyKeyboardReply`, `parseWindowSize`,
   `parseColorSchemeReply` and `parseExtraCursorSupport` default to zero;

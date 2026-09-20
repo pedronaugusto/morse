@@ -48,8 +48,9 @@ const Rgb = style.Rgb;
 ///
 /// The oldest query there is, and the one nearly every terminal answers,
 /// which makes it the usual companion to a query that might not be answered:
-/// send both, and a DA1 reply arriving alone says the other went unanswered
-/// rather than that the terminal is merely slow.
+/// send both, and DA1 proves that replies can get back. It is not a completion
+/// marker: only the caller's timeout or quiescence period says that the other
+/// query went unanswered.
 pub fn queryDeviceAttributes(w: *Writer) Writer.Error!void {
     try w.writeAll(seq.csi ++ "c");
 }
@@ -892,7 +893,7 @@ test "the replies real terminals send all parse" {
 
 test "parseDeviceAttributes reads an omitted parameter as its default" {
     // The reply a real terminal sends, trailing separator and all. Refusing
-    // it refused the sentinel that ends every startup probe.
+    // it refused the common DA1 reply every startup probe asks for.
     const trailing = parseDeviceAttributes("\x1b[?62;52;c").?;
     try std.testing.expectEqual(@as(u16, 62), trailing.class);
     try std.testing.expectEqualSlices(u16, &.{ 52, 0 }, trailing.list());
