@@ -445,6 +445,15 @@ pub const ConsoleEvent = union(enum) {
 /// Read the records with `ReadConsoleInputW` or whatever wrapper you prefer,
 /// copy each one into a `ConsoleRecord`, and hand it to `next`.
 pub const ConsoleDecoder = struct {
+    /// How long a caller holds a possible synthetic Ctrl press before
+    /// settling it with `flush`, in milliseconds.
+    ///
+    /// Microsoft's current terminal input source says an AltGr keyboard
+    /// generates a fake left-Ctrl press and a right-Alt press, and treats the
+    /// Ctrl as genuine only when they are more than 50 ms apart:
+    /// https://github.com/microsoft/terminal/blob/main/src/terminal/input/terminalInput.cpp#L363-L375
+    pub const altgr_window_ms = 50;
+
     /// What a half-arrived character is held in.
     state: ConsoleState = .{},
     /// The buttons held after the last mouse record, so a record can name
@@ -458,12 +467,32 @@ pub const ConsoleDecoder = struct {
     /// way: it rides a key-up record, but what it is is a keypress, so it
     /// comes out as one.
     report_key_up: bool = false,
+    /// A left-Ctrl press held for `altgr_window_ms` in case the right-Alt
+    /// half of AltGr follows it.
+    pending_altgr_ctrl: ?KeyEvent = null,
+    /// The synthetic modifier pair has arrived and its releases must be
+    /// hidden as well as its presses.
+    altgr_active: bool = false,
 
     /// Forgets half-arrived keyboard and mouse state. What a program calls
     /// after the console has been reset underneath it.
     pub fn reset(d: *ConsoleDecoder) void {
         d.state.reset();
         d.mouse_buttons = 0;
+        d.pending_altgr_ctrl = null;
+        d.altgr_active = false;
+    }
+
+    /// Settles a left-Ctrl press that no right-Alt press followed within
+    /// `altgr_window_ms`.
+    ///
+    /// The decoder does no I/O and owns no clock. A caller that wants
+    /// standalone modifier events calls this when its own timer expires,
+    /// just as `KeyParser.flush` settles a lone Escape byte.
+    pub fn flush(d: *ConsoleDecoder) ?ConsoleEvent {
+        const ev = d.pending_altgr_ctrl orelse return null;
+        d.pending_altgr_ctrl = null;
+        return .{ .key = ev };
     }
 
     /// The event one record stands for, or null.
@@ -478,17 +507,31 @@ pub const ConsoleDecoder = struct {
     pub fn next(d: *ConsoleDecoder, record: ConsoleRecord) ?ConsoleEvent {
         switch (record) {
             .key => |r| {
-                const ev = switch (d.state.decode(
-                    r.virtual_key_code,
-                    r.unicode_char,
-                    r.control_key_state,
-                    r.key_down,
-                )) {
-                    .key => |ev| ev,
-                    .held, .unknown => return null,
-                };
-                if (ev.kind == .release and !d.report_key_up) return null;
-                return .{ .key = ev };
+                if (d.pending_altgr_ctrl) |pending| {
+                    d.pending_altgr_ctrl = null;
+                    if (isAltGrRightAltPress(r)) {
+                        d.altgr_active = true;
+                        return null;
+                    }
+                    return d.decodeKey(r) orelse .{ .key = pending };
+                }
+
+                if (isPossibleAltGrCtrlPress(r)) {
+                    const event = d.decodeKey(r) orelse return null;
+                    d.pending_altgr_ctrl = event.key;
+                    return null;
+                }
+
+                if (d.altgr_active and isAltGrModifierRecord(r)) {
+                    if (r.control_key_state &
+                        (ControlKeyState.left_ctrl | ControlKeyState.right_alt) == 0)
+                    {
+                        d.altgr_active = false;
+                    }
+                    return null;
+                }
+
+                return d.decodeKey(r);
             },
             .mouse => |r| {
                 const ev = mouseEvent(r, d.mouse_buttons);
@@ -502,7 +545,44 @@ pub const ConsoleDecoder = struct {
             .other => return null,
         }
     }
+
+    fn decodeKey(d: *ConsoleDecoder, r: ConsoleKeyRecord) ?ConsoleEvent {
+        const ev = switch (d.state.decode(
+            r.virtual_key_code,
+            r.unicode_char,
+            r.control_key_state,
+            r.key_down,
+        )) {
+            .key => |ev| ev,
+            .held, .unknown => return null,
+        };
+        if (ev.kind == .release and !d.report_key_up) return null;
+        return .{ .key = ev };
+    }
 };
+
+fn isPossibleAltGrCtrlPress(r: ConsoleKeyRecord) bool {
+    const left_ctrl_key = r.virtual_key_code == 0xa2 or
+        (r.virtual_key_code == 0x11 and r.control_key_state & ControlKeyState.enhanced == 0);
+    return r.key_down and r.unicode_char == 0 and left_ctrl_key and
+        r.control_key_state & ControlKeyState.left_ctrl != 0 and
+        r.control_key_state & (ControlKeyState.right_ctrl |
+            ControlKeyState.left_alt | ControlKeyState.right_alt) == 0;
+}
+
+fn isAltGrRightAltPress(r: ConsoleKeyRecord) bool {
+    const right_alt_key = r.virtual_key_code == 0xa5 or
+        (r.virtual_key_code == 0x12 and r.control_key_state & ControlKeyState.enhanced != 0);
+    return r.key_down and r.unicode_char == 0 and right_alt_key and
+        r.control_key_state & ControlKeyState.left_ctrl != 0 and
+        r.control_key_state & ControlKeyState.right_alt != 0;
+}
+
+fn isAltGrModifierRecord(r: ConsoleKeyRecord) bool {
+    const left_ctrl_key = r.virtual_key_code == 0x11 or r.virtual_key_code == 0xa2;
+    const right_alt_key = r.virtual_key_code == 0x12 or r.virtual_key_code == 0xa5;
+    return r.unicode_char == 0 and (left_ctrl_key or right_alt_key);
+}
 
 /// The mouse report a `MOUSE_EVENT_RECORD` stands for.
 ///
@@ -956,6 +1036,85 @@ test "a record reads AltGr as the character, not as control and alt" {
     } }, false).?;
     try std.testing.expectEqual(Key{ .f = 1 }, chord.key.key);
     try std.testing.expect(chord.key.mods.alt and chord.key.mods.ctrl);
+}
+
+test "ConsoleDecoder folds the modifier records that precede AltGr text" {
+    const ctrl = ControlKeyState.left_ctrl;
+    const altgr = ctrl | ControlKeyState.right_alt | ControlKeyState.enhanced;
+    const shifted_altgr = altgr | ControlKeyState.shift;
+
+    const cases = [_]struct {
+        records: []const ConsoleRecord,
+        report_key_up: bool = false,
+        expected_kinds: []const key.Kind,
+        shifted: bool = false,
+    }{
+        .{
+            .records = &.{
+                .{ .key = .{ .key_down = true, .virtual_key_code = 0x11, .control_key_state = ctrl } },
+                .{ .key = .{ .key_down = true, .virtual_key_code = 0x12, .control_key_state = altgr } },
+                .{ .key = .{ .key_down = true, .virtual_key_code = 'Q', .unicode_char = '@', .control_key_state = altgr } },
+            },
+            .expected_kinds = &.{.press},
+        },
+        .{
+            .records = &.{
+                .{ .key = .{ .key_down = true, .virtual_key_code = 0xa2, .control_key_state = ctrl } },
+                .{ .key = .{ .key_down = true, .virtual_key_code = 0xa5, .control_key_state = altgr } },
+                .{ .key = .{ .key_down = true, .virtual_key_code = 'Q', .unicode_char = '@', .control_key_state = altgr } },
+                .{ .key = .{ .key_down = false, .virtual_key_code = 'Q', .unicode_char = '@', .control_key_state = altgr } },
+                .{ .key = .{ .key_down = false, .virtual_key_code = 0xa5, .control_key_state = ctrl } },
+                .{ .key = .{ .key_down = false, .virtual_key_code = 0xa2 } },
+            },
+            .report_key_up = true,
+            .expected_kinds = &.{ .press, .release },
+        },
+        .{
+            .records = &.{
+                .{ .key = .{ .key_down = true, .virtual_key_code = 0x11, .control_key_state = ctrl } },
+                .{ .key = .{ .key_down = true, .virtual_key_code = 0x12, .control_key_state = shifted_altgr } },
+                .{ .key = .{ .key_down = true, .virtual_key_code = 'Q', .unicode_char = '@', .control_key_state = shifted_altgr } },
+            },
+            .expected_kinds = &.{.press},
+            .shifted = true,
+        },
+    };
+
+    // These are record simulations. The test suite cannot read a real
+    // Windows console on every host it runs on.
+    for (cases) |case| {
+        var decoder: ConsoleDecoder = .{ .report_key_up = case.report_key_up };
+        var seen: [8]KeyEvent = undefined;
+        var count: usize = 0;
+        for (case.records) |record| {
+            const event = decoder.next(record) orelse continue;
+            seen[count] = event.key;
+            count += 1;
+        }
+        try std.testing.expectEqual(case.expected_kinds.len, count);
+        for (seen[0..count], case.expected_kinds) |event, kind| {
+            try std.testing.expectEqual(Key{ .char = '@' }, event.key);
+            try std.testing.expectEqual(kind, event.kind);
+            try std.testing.expectEqual(case.shifted, event.mods.shift);
+            try std.testing.expect(!event.mods.ctrl and !event.mods.alt);
+            try std.testing.expectEqualStrings("@", event.text());
+        }
+    }
+}
+
+test "ConsoleDecoder flush settles a Ctrl press outside the AltGr window" {
+    var decoder: ConsoleDecoder = .{};
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 0x11,
+        .control_key_state = ControlKeyState.left_ctrl,
+    } }));
+
+    const event = decoder.flush().?.key;
+    try std.testing.expectEqual(Key.left_ctrl, event.key);
+    try std.testing.expectEqual(key.Kind.press, event.kind);
+    try std.testing.expect(event.mods.ctrl);
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.flush());
 }
 
 test "fuzz ConsoleDecoder" {

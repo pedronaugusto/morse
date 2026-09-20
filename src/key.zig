@@ -3456,7 +3456,7 @@ test "a win32 sequence and a console record decode to the same key" {
                 .key_down = true,
                 .virtual_key_code = case.vk,
                 .control_key_state = state,
-            } }) orelse return error.TestExpectedEqual;
+            } }) orelse records.flush() orelse return error.TestExpectedEqual;
             try std.testing.expectEqual(from_bytes, from_record.key);
         }
     }

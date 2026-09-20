@@ -374,8 +374,10 @@ Three things a console does that nothing else does are handled in both: the
 halves of a UTF-16 surrogate pair are paired into one character; a character
 composed on the keypad, which rides the Alt key *coming up*, is held and
 reported as a press; and AltGr, which sets the right-Alt bit and a control bit
-together, is reported as the character it produced. That is the one piece of
-state either path keeps, and `reset` forgets it.
+together, is reported as the character it produced. `ConsoleDecoder` also
+holds the synthetic Ctrl press that can precede right Alt: call `flush` after
+`ConsoleDecoder.altgr_window_ms` if right Alt has not arrived. `reset` forgets
+all held state.
 
 **A lone `ESC` is settled by you.** It is both the Escape key and the first
 byte of every sequence, so `KeyParser` holds it, `pending()` shows it, and
