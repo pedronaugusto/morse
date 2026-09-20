@@ -802,8 +802,8 @@ pub const Placeholder = struct {
     id: u32,
     /// The placement, carried in the underline colour. Zero writes no
     /// underline colour, and the terminal picks any virtual placement of the
-    /// image.
-    placement: u32 = 0,
+    /// image. The colour has exactly 24 bits, so the type does too.
+    placement: u24 = 0,
     /// Which row of the grid, counting from zero.
     row: u16,
     /// How many cells wide the row is, counting from column zero.
@@ -2137,6 +2137,10 @@ test "a placement id travels in the underline colour" {
         "\x1b[38;2;0;0;1m\x1b[58:2::0:0:7m\u{10EEEE}\u{305}\u{305}\x1b[39m\x1b[59m",
         out.written(),
     );
+}
+
+test "a placeholder placement has exactly the bits its colour carries" {
+    try std.testing.expectEqual(@as(usize, 24), @bitSizeOf(@FieldType(Placeholder, "placement")));
 }
 
 test "a placeholder cell writes the character and its diacritics and no colour" {
