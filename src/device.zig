@@ -1022,6 +1022,7 @@ test "parseVersion returns null on anything it does not recognise" {
         "", // nothing at all
         "\x1bP>|xterm(390)", // no terminator
         "\x1bP>|xterm(390)\x1b", // a terminator cut in half
+        "\x1bP>|x\x07junk\x1b\\", // BEL ended the first control string
         "\x1bP>|", // no terminator, and no name either
         "\x1bP", // the introducer alone
         "\x1bP>xterm(390)\x1b\\", // no `|`

@@ -12,6 +12,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Breaking: `Placeholder.placement` is `u24`, preventing placement IDs from losing their high byte on the wire.
 - `Events.remainder` lets an input iterator hand its unread tail back to the next feed without losing bytes.
 - Breaking: `Frame.image`, `Animate.image` and `Compose.image` are required `AnimationImage` values and cannot emit an animation command without `i` or `I`.
+- Control-string parsers reject input containing an earlier terminator instead of merging separate sequences.
 
 ## [0.4.0] - 2026-09-19
 

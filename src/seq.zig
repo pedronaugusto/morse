@@ -137,9 +137,18 @@ pub fn scanParam(comptime T: type, bytes: []const u8, default: T) ?Scan(T) {
 /// Returns null when neither is there, so a reply cut short by a short read
 /// is never mistaken for a complete one.
 pub fn stripStringTerminator(bytes: []const u8) ?[]const u8 {
-    if (std.mem.endsWith(u8, bytes, st)) return bytes[0 .. bytes.len - st.len];
-    if (bytes.len != 0 and bytes[bytes.len - 1] == bel) return bytes[0 .. bytes.len - 1];
-    return null;
+    const body = if (std.mem.endsWith(u8, bytes, st))
+        bytes[0 .. bytes.len - st.len]
+    else if (bytes.len != 0 and bytes[bytes.len - 1] == bel)
+        bytes[0 .. bytes.len - 1]
+    else
+        return null;
+
+    // Either byte ends or abandons a control string. Seeing one in the body
+    // means the final terminator belongs to a later sequence.
+    if (std.mem.indexOfScalar(u8, body, bel) != null) return null;
+    if (std.mem.indexOfScalar(u8, body, esc) != null) return null;
+    return body;
 }
 
 test "writeInt spells every value the sequences carry" {
@@ -252,4 +261,6 @@ test "stripStringTerminator accepts ST and BEL and nothing else" {
     try std.testing.expect(stripStringTerminator("body") == null);
     try std.testing.expect(stripStringTerminator("body\x1b") == null);
     try std.testing.expect(stripStringTerminator("") == null);
+    try std.testing.expect(stripStringTerminator("one\x07two\x1b\\") == null);
+    try std.testing.expect(stripStringTerminator("one\x1b\\two\x1b\\") == null);
 }
