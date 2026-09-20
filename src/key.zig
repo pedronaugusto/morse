@@ -1028,6 +1028,21 @@ fn ss3Key(final: u8) ?Key {
 /// still a sequence whose length is known, so it comes back whole as
 /// `Event.unhandled` rather than being resynchronised byte by byte.
 fn decodeCsi(bytes: []const u8, report_key_up: bool, console: *win32.ConsoleState) Decoded {
+    // The Linux virtual console spells F1 through F5 with a second `[` in
+    // front of the final. Treat that byte as an intermediate here even
+    // though it lies in the standard final-byte range.
+    if (bytes.len > 2 and bytes[2] == '[') {
+        if (bytes.len == 3) return .incomplete;
+        const final = bytes[3];
+        if (final < 0x40 or final > 0x7e) return .{ .skip = 1 };
+        const whole = bytes[0..4];
+        const number = switch (final) {
+            'A'...'E' => final - 'A' + 1,
+            else => return ready(.{ .unhandled = whole }, whole.len),
+        };
+        return ready(.{ .key = .{ .key = .{ .f = number } } }, whole.len);
+    }
+
     var i: usize = 2;
 
     // A private marker, if there is one: `<` for a mouse report, `?` for a
@@ -1720,6 +1735,22 @@ test "SS3 covers the four low function keys and the keypad" {
     }
 }
 
+test "the Linux console function keys decode from their double bracket form" {
+    const cases = [_][]const u8{
+        "\x1b[[A",
+        "\x1b[[B",
+        "\x1b[[C",
+        "\x1b[[D",
+        "\x1b[[E",
+    };
+    for (cases, 1..) |bytes, number| {
+        const ev = oneKey(bytes).?;
+        try std.testing.expectEqual(Key{ .f = @intCast(number) }, ev.key);
+        try std.testing.expectEqual(Modifiers{}, ev.mods);
+        try std.testing.expectEqualStrings("", ev.text());
+    }
+}
+
 test "an SS3 with a parameter carries modifiers in it" {
     const ev = oneKey("\x1bO5A").?;
     try std.testing.expectEqual(Key.up, ev.key);
@@ -2370,6 +2401,11 @@ test "fuzz KeyParser" {
         corpus.seed("\x1b[97:65:97;2:3;65u"),
         corpus.seed("\x1b[27u"),
         corpus.seed("\x1b[1;5A"),
+        corpus.seed("\x1b[[A"),
+        corpus.seed("\x1b[[B"),
+        corpus.seed("\x1b[[C"),
+        corpus.seed("\x1b[[D"),
+        corpus.seed("\x1b[[E"),
         corpus.seed("\x1b[3;2~"),
         corpus.seed("\x1b[27;5;9~"),
         corpus.seed("\x1b[200~pasted\x1b[201~"),
@@ -2503,6 +2539,8 @@ fn frameEscape(bytes: []const u8) ?usize {
         csi_parameter,
         /// In a `CSI`'s intermediate bytes, and then its final.
         csi_intermediate,
+        /// Past the extra `[` of a Linux virtual-console function key.
+        linux_console_final,
         /// In an `SS3`'s parameter bytes, and then its final.
         ss3,
         /// In a control string.
@@ -2545,6 +2583,11 @@ fn frameEscape(bytes: []const u8) ?usize {
                 }
             },
             .csi_marker => {
+                if (b == '[') {
+                    i += 1;
+                    state = .linux_console_final;
+                    continue;
+                }
                 if (b >= '<' and b <= '?') {
                     marked = true;
                     i += 1;
@@ -2574,6 +2617,10 @@ fn frameEscape(bytes: []const u8) ?usize {
                     if (i + 1 + x10_mouse_fields > bytes.len) return null;
                     return i + 1 + x10_mouse_fields;
                 }
+                return i + 1;
+            },
+            .linux_console_final => {
+                if (b < 0x40 or b > 0x7e) return 1;
                 return i + 1;
             },
             .ss3 => {
@@ -2615,6 +2662,7 @@ fn frameEscape(bytes: []const u8) ?usize {
 /// everybody did, which is where two framers actually differ.
 const framing_pieces = [_][]const u8{
     "\x1b[A",
+    "\x1b[[A",
     "\x1b[1;5C",
     "\x1b[97:65:97;2:3;65u",
     "\x1b[<0;40;12M",
