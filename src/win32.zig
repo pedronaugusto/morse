@@ -217,11 +217,15 @@ pub const ConsoleState = struct {
     /// the moment anything else arrives, because a pair that is not
     /// consecutive is not a pair.
     high_surrogate: ?u16 = null,
+    /// Whether the pending high half arrived as a character composed on an
+    /// Alt key-up record and must therefore become a press when completed.
+    high_surrogate_is_alt_composed: bool = false,
 
     /// Forgets a half-arrived character. What a program calls when the
     /// console has been reset underneath it.
     pub fn reset(st: *ConsoleState) void {
         st.high_surrogate = null;
+        st.high_surrogate_is_alt_composed = false;
     }
 
     /// One key event, from either shape, as a `KeyEvent`.
@@ -253,6 +257,7 @@ pub const ConsoleState = struct {
         // nothing else a program wants arrives on a key release.
         if (!down and isAltKey(vk) and uc != 0 and !isHighSurrogate(uc) and !isLowSurrogate(uc)) {
             st.high_surrogate = null;
+            st.high_surrogate_is_alt_composed = false;
             var ev: KeyEvent = .{ .key = .{ .char = uc }, .kind = .press };
             var utf8: [4]u8 = undefined;
             const n = std.unicode.utf8Encode(@intCast(uc), &utf8) catch 0;
@@ -273,18 +278,24 @@ pub const ConsoleState = struct {
         var unit = uc;
         if (isHighSurrogate(unit)) {
             st.high_surrogate = unit;
+            st.high_surrogate_is_alt_composed = !down and isAltKey(vk);
             return .held;
         }
         if (isLowSurrogate(unit)) {
-            const high = st.high_surrogate orelse return .held;
+            const high = st.high_surrogate orelse {
+                st.high_surrogate_is_alt_composed = false;
+                return .held;
+            };
+            const alt_composed = st.high_surrogate_is_alt_composed;
             st.high_surrogate = null;
+            st.high_surrogate_is_alt_composed = false;
             const cp = 0x10000 +
                 ((@as(u21, high) - 0xd800) << 10) +
                 (@as(u21, unit) - 0xdc00);
             var ev: KeyEvent = .{
                 .key = .{ .char = cp },
-                .mods = modifiers(control_key_state),
-                .kind = if (down) .press else .release,
+                .mods = if (alt_composed) .{} else modifiers(control_key_state),
+                .kind = if (alt_composed or down) .press else .release,
             };
             var utf8: [4]u8 = undefined;
             const n = std.unicode.utf8Encode(cp, &utf8) catch 0;
@@ -294,6 +305,7 @@ pub const ConsoleState = struct {
         // Anything that is not a low surrogate ends a pair that never
         // finished.
         st.high_surrogate = null;
+        st.high_surrogate_is_alt_composed = false;
 
         var mods = modifiers(control_key_state);
 
@@ -904,6 +916,25 @@ test "a record reads the character composed with Alt and the keypad" {
     } }).?;
     try std.testing.expectEqual(Key.kp_1, chord.key.key);
     try std.testing.expect(chord.key.mods.alt and chord.key.mods.ctrl);
+}
+
+test "an astral character composed with Alt is a press" {
+    var decoder: ConsoleDecoder = .{};
+
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+        .key_down = false,
+        .virtual_key_code = 0x12,
+        .unicode_char = 0xd83d,
+    } }));
+
+    const composed = decoder.next(.{ .key = .{
+        .key_down = false,
+        .virtual_key_code = 0x12,
+        .unicode_char = 0xde42,
+    } }).?;
+    try std.testing.expectEqual(Key{ .char = 0x1f642 }, composed.key.key);
+    try std.testing.expectEqual(key.Kind.press, composed.key.kind);
+    try std.testing.expectEqualStrings("\u{1f642}", composed.key.text());
 }
 
 test "a record reads AltGr as the character, not as control and alt" {
