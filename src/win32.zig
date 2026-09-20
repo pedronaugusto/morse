@@ -435,6 +435,9 @@ pub const ConsoleEvent = union(enum) {
 pub const ConsoleDecoder = struct {
     /// What a half-arrived character is held in.
     state: ConsoleState = .{},
+    /// The buttons held after the last mouse record, so a record can name
+    /// the button that changed while another remains down.
+    mouse_buttons: u16 = 0,
     /// Report the key coming up as well as going down. The console reports
     /// both, and a program that wants only what was typed wants only the
     /// downs.
@@ -444,10 +447,11 @@ pub const ConsoleDecoder = struct {
     /// comes out as one.
     report_key_up: bool = false,
 
-    /// Forgets a half-arrived character. What a program calls after the
-    /// console has been reset underneath it.
+    /// Forgets half-arrived keyboard and mouse state. What a program calls
+    /// after the console has been reset underneath it.
     pub fn reset(d: *ConsoleDecoder) void {
         d.state.reset();
+        d.mouse_buttons = 0;
     }
 
     /// The event one record stands for, or null.
@@ -474,7 +478,11 @@ pub const ConsoleDecoder = struct {
                 if (ev.kind == .release and !d.report_key_up) return null;
                 return .{ .key = ev };
             },
-            .mouse => |r| return .{ .mouse = mouseEvent(r) },
+            .mouse => |r| {
+                const ev = mouseEvent(r, d.mouse_buttons);
+                d.mouse_buttons = @truncate(r.button_state);
+                return .{ .mouse = ev };
+            },
             .window_buffer_size => |r| return .{ .resize = .{
                 .rows = r.rows,
                 .cols = r.cols,
@@ -489,7 +497,7 @@ pub const ConsoleDecoder = struct {
 /// Coordinates come across counted from one, which is where every other mouse
 /// report in this package counts from; a console counts from zero. Cells, not
 /// pixels: a console has no pixels.
-fn mouseEvent(r: ConsoleMouseRecord) MouseEvent {
+fn mouseEvent(r: ConsoleMouseRecord, previous_buttons: u16) MouseEvent {
     // The wheel distance is a signed count in the high word, positive away
     // from the user and to the right.
     const distance: i16 = @bitCast(@as(u16, @truncate(r.button_state >> 16)));
@@ -517,22 +525,24 @@ fn mouseEvent(r: ConsoleMouseRecord) MouseEvent {
         return ev;
     }
 
-    // The lowest button still down is the one the report is about. A record
-    // with no button down is a release, which -- as in the X10 encoding --
-    // names no button.
-    const buttons = r.button_state & 0xffff;
-    if (buttons & ConsoleMouseRecord.button_1 != 0) {
+    const buttons: u16 = @truncate(r.button_state);
+    const changed = buttons ^ previous_buttons;
+    // A button record names the bit that changed, not merely the lowest bit
+    // still down. Motion and double-click records describe the buttons that
+    // are held instead.
+    const reported = if (r.event_flags == 0 and changed != 0) changed else buttons;
+    if (reported & ConsoleMouseRecord.button_1 != 0) {
         ev.button = .left;
-    } else if (buttons & ConsoleMouseRecord.button_3 != 0) {
+    } else if (reported & ConsoleMouseRecord.button_3 != 0) {
         ev.button = .middle;
-    } else if (buttons & ConsoleMouseRecord.button_2 != 0) {
+    } else if (reported & ConsoleMouseRecord.button_2 != 0) {
         ev.button = .right;
-    } else if (buttons & ConsoleMouseRecord.button_4 != 0) {
+    } else if (reported & ConsoleMouseRecord.button_4 != 0) {
         ev.button = .button_8;
-    } else if (buttons & ConsoleMouseRecord.button_5 != 0) {
+    } else if (reported & ConsoleMouseRecord.button_5 != 0) {
         ev.button = .button_9;
     }
-    ev.press = buttons != 0;
+    ev.press = reported & buttons != 0;
     return ev;
 }
 
@@ -694,11 +704,32 @@ test "a mouse record names the button that is down, and none on a release" {
         try std.testing.expect(event.mouse.press);
     }
 
-    // Nothing down is a release, which -- as in the oldest wire encoding --
-    // cannot say which button came up.
+    // A decoder that did not see the press has no previous bit to name.
     const release = oneRecord(.{ .mouse = .{} }, false).?;
     try std.testing.expectEqual(mouse.Button.none, release.mouse.button);
     try std.testing.expect(!release.mouse.press);
+}
+
+test "mouse button transitions name the button that changed" {
+    var decoder: ConsoleDecoder = .{};
+
+    const left = decoder.next(.{ .mouse = .{
+        .button_state = ConsoleMouseRecord.button_1,
+    } }).?;
+    try std.testing.expectEqual(mouse.Button.left, left.mouse.button);
+    try std.testing.expect(left.mouse.press);
+
+    const right = decoder.next(.{ .mouse = .{
+        .button_state = ConsoleMouseRecord.button_1 | ConsoleMouseRecord.button_2,
+    } }).?;
+    try std.testing.expectEqual(mouse.Button.right, right.mouse.button);
+    try std.testing.expect(right.mouse.press);
+
+    const released = decoder.next(.{ .mouse = .{
+        .button_state = ConsoleMouseRecord.button_1,
+    } }).?;
+    try std.testing.expectEqual(mouse.Button.right, released.mouse.button);
+    try std.testing.expect(!released.mouse.press);
 }
 
 test "a mouse record says when the pointer moved" {

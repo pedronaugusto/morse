@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- Windows console mouse events name the button that changed while another button remains held.
+
 ## [0.4.0] - 2026-09-19
 
 Four protocols on the writing side, a layout a renderer can put in a cell, one
