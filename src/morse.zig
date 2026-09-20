@@ -470,6 +470,8 @@ pub const GraphicsMedium = graphics.GraphicsMedium;
 pub const GraphicsQuiet = graphics.GraphicsQuiet;
 /// Which image a graphics command is about: an id, a number, or neither.
 pub const GraphicsImage = graphics.GraphicsImage;
+/// An image an animation command must name by id or number.
+pub const AnimationImage = graphics.AnimationImage;
 /// A rectangle of a source image, in pixels.
 pub const GraphicsRect = graphics.GraphicsRect;
 /// What a transmit does with the image once it has it.
@@ -797,6 +799,7 @@ test "the root module re-exports what the README promises" {
     try std.testing.expect(span == .main_cursor and box.top == 1 and which == .text);
 
     const image: GraphicsImage = .{ .id = 1 };
+    const animation_image: AnimationImage = .{ .id = 1 };
     const area: GraphicsRect = .{ .width = 4, .height = 4 };
     const how: GraphicsAction = .store;
     const shown: Placement = .{ .z = -1 };
@@ -816,9 +819,9 @@ test "the root module re-exports what the README promises" {
     try std.testing.expectEqual(GraphicsMedium.direct, GraphicsMedium.direct);
     try std.testing.expectEqual(GraphicsQuiet.answers, GraphicsQuiet.answers);
 
-    const frame: Frame = .{ .image = image, .edit = 2, .gap = 40 };
-    const playing: Animate = .{ .image = image, .state = .running, .loops = 1 };
-    const copying: Compose = .{ .image = image, .source = 1, .destination = 2 };
+    const frame: Frame = .{ .image = animation_image, .edit = 2, .gap = 40 };
+    const playing: Animate = .{ .image = animation_image, .state = .running, .loops = 1 };
+    const copying: Compose = .{ .image = animation_image, .source = 1, .destination = 2 };
     const canvas: GraphicsColor = .{ .r = 0xff, .a = 0xff };
     try std.testing.expect(frame.edit == 2 and frame.gap == 40);
     try std.testing.expect(playing.state == AnimationState.running and playing.loops == 1);

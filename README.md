@@ -306,7 +306,7 @@ with `Transmit`, `Place`, `Placement`, `Delete`, `DeleteTarget`,
 `GraphicsFormat`, `GraphicsMedium`, `GraphicsQuiet`, `GraphicsImage`,
 `GraphicsRect`, `GraphicsAction`, `graphics_chunk_bytes` and
 `graphics_chunk_base64_max`; `transmitFrame`, `animateImage` and
-`composeFrames` for animation, with `Frame`, `Animate`, `Compose`,
+`composeFrames` for animation, with `AnimationImage`, `Frame`, `Animate`, `Compose`,
 `AnimationState`, `GraphicsCompose` and `GraphicsColor`; `placeholderRow`,
 `placeholderCell`, `Placeholder`, `graphics_placeholder`,
 `graphics_placeholder_max` for the Unicode placeholder path.

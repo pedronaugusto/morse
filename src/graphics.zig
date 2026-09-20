@@ -98,6 +98,17 @@ pub const GraphicsImage = union(enum) {
     number: u32,
 };
 
+/// An image an animation command must name.
+///
+/// Animation cannot use image id zero as "assign an id for me", so unlike
+/// `GraphicsImage` this has no `.none`: every command carries `i` or `I`.
+pub const AnimationImage = union(enum) {
+    /// The `i` key: an id the program picked.
+    id: u32,
+    /// The `I` key: the newest image carrying this number.
+    number: u32,
+};
+
 /// A rectangle of the source image, in pixels: the `x`, `y`, `w` and `h`
 /// keys. All zero shows the whole image.
 pub const GraphicsRect = extern struct {
@@ -318,7 +329,7 @@ pub const AnimationState = enum(u8) {
 /// is the image's own pixels rather than anything sent here.
 pub const Frame = struct {
     /// Which image this is a frame of. Not optional.
-    image: GraphicsImage = .none,
+    image: AnimationImage,
     /// The `r` key: which frame to edit, counting from one. Zero makes a
     /// new frame, which is how an animation is built up.
     edit: u32 = 0,
@@ -366,7 +377,7 @@ pub const Frame = struct {
 /// frame to show and start playback at once. `image` is not optional.
 pub const Animate = struct {
     /// Which image's animation this is about.
-    image: GraphicsImage = .none,
+    image: AnimationImage,
     /// The `s` key.
     state: AnimationState = .unchanged,
     /// The `c` key: which frame to show now, counting from one. Zero leaves
@@ -398,7 +409,7 @@ pub const Animate = struct {
 /// that overlap.
 pub const Compose = struct {
     /// Which image's frames these are.
-    image: GraphicsImage = .none,
+    image: AnimationImage,
     /// The `r` key: the frame the pixels come from.
     source: u32 = 0,
     /// The `c` key: the frame they land on.
@@ -507,6 +518,14 @@ fn writePlacement(k: *Keys, p: Placement) Writer.Error!void {
 fn writeImage(k: *Keys, image: GraphicsImage) Writer.Error!void {
     switch (image) {
         .none => {},
+        .id => |v| try k.int('i', v),
+        .number => |v| try k.int('I', v),
+    }
+}
+
+/// Writes the required image of an animation command: `i` or `I`.
+fn writeAnimationImage(k: *Keys, image: AnimationImage) Writer.Error!void {
+    switch (image) {
         .id => |v| try k.int('i', v),
         .number => |v| try k.int('I', v),
     }
@@ -687,7 +706,7 @@ pub fn queryGraphics(w: *Writer, id: u32) Writer.Error!void {
 /// Writes the keys of the first sequence of a frame, after its `a=f`.
 fn writeFrame(k: *Keys, cmd: Frame) Writer.Error!void {
     if (cmd.quiet != .answers) try k.int('q', @intFromEnum(cmd.quiet));
-    try writeImage(k, cmd.image);
+    try writeAnimationImage(k, cmd.image);
     try writeMedia(k, cmd);
     if (cmd.x != 0) try k.int('x', cmd.x);
     if (cmd.y != 0) try k.int('y', cmd.y);
@@ -744,7 +763,7 @@ pub fn animateImage(w: *Writer, cmd: Animate) Writer.Error!void {
     var keys: Keys = .{ .w = w };
     try keys.char('a', 'a');
     if (cmd.quiet != .answers) try keys.int('q', @intFromEnum(cmd.quiet));
-    try writeImage(&keys, cmd.image);
+    try writeAnimationImage(&keys, cmd.image);
     if (cmd.state != .unchanged) try keys.int('s', @intFromEnum(cmd.state));
     if (cmd.frame != 0) try keys.int('r', cmd.frame);
     if (cmd.gap != 0) try keys.signed('z', cmd.gap);
@@ -763,7 +782,7 @@ pub fn composeFrames(w: *Writer, cmd: Compose) Writer.Error!void {
     var keys: Keys = .{ .w = w };
     try keys.char('a', 'c');
     if (cmd.quiet != .answers) try keys.int('q', @intFromEnum(cmd.quiet));
-    try writeImage(&keys, cmd.image);
+    try writeAnimationImage(&keys, cmd.image);
     if (cmd.destination != 0) try keys.int('c', cmd.destination);
     if (cmd.source != 0) try keys.int('r', cmd.source);
     if (cmd.destination_x != 0) try keys.int('x', cmd.destination_x);
@@ -1170,15 +1189,14 @@ fn keySigned(c: Command, name: u8) ?i32 {
     return std.math.cast(i32, if (negative) -scan.value else scan.value);
 }
 
-/// Which image the command names, refusing the `i` and `I` together that
-/// the protocol refuses.
-fn keyImage(c: Command) ?GraphicsImage {
+/// Which required animation image the command names.
+fn keyAnimationImage(c: Command) ?AnimationImage {
     if (c.get('i') != null) {
         if (c.get('I') != null) return null;
         return .{ .id = keyInt(c, 'i') orelse return null };
     }
     if (c.get('I') != null) return .{ .number = keyInt(c, 'I') orelse return null };
-    return .none;
+    return null;
 }
 
 fn keyQuiet(c: Command) ?GraphicsQuiet {
@@ -1237,7 +1255,7 @@ fn readAnimation(bytes: []const u8) ?Animation {
     const action = c.get('a') orelse return null;
     if (action.len != 1) return null;
 
-    const image = keyImage(c) orelse return null;
+    const image = keyAnimationImage(c) orelse return null;
     const quiet = keyQuiet(c) orelse return null;
 
     return switch (action[0]) {
@@ -1752,6 +1770,13 @@ test "a frame with every key writes them in the documented order" {
     }, "/name");
 }
 
+test "an animation command image cannot represent no image" {
+    inline for (.{ Frame, Animate, Compose }) |CommandType| {
+        const Image = @FieldType(CommandType, "image");
+        try std.testing.expectEqual(@as(usize, 2), @typeInfo(Image).@"union".fields.len);
+    }
+}
+
 test "the gap of a frame is written on both sides of zero, and not at zero" {
     // A positive gap is milliseconds; a negative one makes the frame
     // gapless, which is a frame that exists only to be another frame's
@@ -1989,6 +2014,9 @@ test "readAnimation refuses what is not an animation command" {
         "\x1b_Ga=d,d=a\x1b\\", // a delete
         "\x1b_Ga=T,i=1;\x1b\\", // a transmit that displays
         "\x1b_Ga=x,i=1\x1b\\", // an action the protocol does not name
+        "\x1b_Ga=f;\x1b\\", // every animation action requires an image
+        "\x1b_Ga=a\x1b\\",
+        "\x1b_Ga=c\x1b\\",
     };
     for (rejected) |bytes| try std.testing.expect(readAnimation(bytes) == null);
 }
@@ -2010,11 +2038,10 @@ test "fuzz the animation round trip" {
             const d = std.mem.readInt(u32, bytes[12..16], .little);
             const e = std.mem.readInt(u32, bytes[16..20], .little);
 
-            const image: GraphicsImage = switch (@as(u2, @truncate(a))) {
-                0 => .none,
-                1 => .{ .id = b },
-                else => .{ .number = c },
-            };
+            const image: AnimationImage = if (a & 1 == 0)
+                .{ .id = b }
+            else
+                .{ .number = c };
             const quiet: GraphicsQuiet = @enumFromInt(@as(u8, @truncate(a >> 2)) % 3);
             const mode: GraphicsCompose = if (a & 0x10 != 0) .overwrite else .blend;
 
