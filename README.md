@@ -511,7 +511,18 @@ a graphics command, an OSC 66 — the suite carries a reader of that grammar so
 the round trip is against the bytes rather than against the writer twice.
 `src/bench.zig` measures what a renderer pays for a style diff, a cursor move,
 a megabyte of pixels and a megabyte of input, and fails the build if any of
-them grows past its budget. `KeyParser` is fuzzed fed in two pieces, so the
+them grows past its budget. The byte figures are exact on every machine: the
+eighty-one-pair style matrix costs 1,312 bytes and a 200×60 frame of style
+changes 8,515. The times below are one run of the suite in ReleaseFast on an
+Apple M3 Max, printed by `zig build test`, so a reader can print their own:
+
+| what | cost |
+|---|---|
+| `diffStyle`, two calls | 73 ns |
+| `cursorTo` | 12 ns |
+| `KeyParser.feed`, mixed keys and text | 3.6 ns a byte, 276 MB/s |
+| `KeyParser.feed`, text | 1.4–1.8 GB/s by buffer size |
+| `transmitImage`, one megabyte | 1.4 ms, 757 MB/s, 0.22 % framing | `KeyParser` is fuzzed fed in two pieces, so the
 split lands anywhere a real read could have, and its framing is checked
 against a second framer written from the same grammar as a state machine —
 two implementations that share no line, and a disagreement about where a

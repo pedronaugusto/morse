@@ -4,12 +4,47 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.5.0] - 2026-09-20
+
+A pass over every finding of a second read, two of them shapes in the graphics
+writer that could only be fixed by changing a type, and the two key
+vocabularies the input side still lacked.
+
+### Breaking
+
+- **`Placeholder.placement` is a `u24`.** A placement id is carried in the
+  underline colour, which has twenty-four bits; a thirty-two-bit field emitted
+  its low bits and two placements could alias. The field is now the width
+  the protocol carries.
+- **An animation command names its image.** The animation frame and control
+  commands took an optional image and emitted nothing to name it when it was
+  left out, which a terminal ignores. The image is a required field.
+
+### Added
 
 - Linux virtual-console F1–F5 sequences decode as function-key presses.
-- rxvt modifier finals decode shifted and controlled cursor, editing, and function keys.
+- rxvt modifier finals decode shifted and controlled cursor, editing, and
+  function keys.
+- `Events` exposes the input it did not consume, so a feed stopped early can
+  be resumed from its tail without losing bytes.
+
+### Changed
+
+- The capability probe keeps its timeout armed after the DA1 reply and routes
+  the replies that arrive after it: a multiplexer can answer DA1 locally
+  before an earlier forwarded query returns from the terminal behind it.
+
+### Fixed
+
+- A control string whose body already ended in BEL and carried a later ST was
+  accepted as one sequence; the shared terminator rule now refuses it.
+- An Alt composition of an astral character on the Windows console arrived as
+  a release across its two UTF-16 halves and was dropped; it is a press.
 - Windows console AltGr record pairs produce only their composed character.
-- Windows console mouse events name the button that changed while another button remains held.
+- Windows console mouse events name the button that changed while another
+  button remains held.
+- The conformance step requires its full count of assertions, so a check
+  removed by mistake fails the build rather than passing quietly.
 - Startup probes keep collecting after DA1 so multiplexed replies that take a longer path are not lost.
 - Windows console input reports astral characters composed with Alt as presses.
 - Breaking: `Placeholder.placement` is `u24`, preventing placement IDs from losing their high byte on the wire.
