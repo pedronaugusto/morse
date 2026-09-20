@@ -1502,5 +1502,6 @@ test "a mode morse does not name still goes through setMode" {
 //=========================================================================
 
 test "how many claims this file made" {
+    try std.testing.expectEqual(@as(usize, 1050), checks);
     std.debug.print("conformance: {d} assertions against the emulator\n", .{checks});
 }
