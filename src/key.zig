@@ -973,12 +973,16 @@ fn decodeSs3(bytes: []const u8) Decoded {
     const len = i + 1;
     const whole = bytes[0..len];
 
-    const key = ss3Key(final) orelse return ready(.{ .unhandled = whole }, len);
-    var ev: KeyEvent = .{ .key = key };
-
     // Unlike CSI, where the modifiers are the second parameter, an SS3 that
     // carries modifiers at all carries them as its only one.
     const params = scanParams(bytes[2..i]) orelse return ready(.{ .unhandled = whole }, len);
+    if (rxvtCursorKey(final)) |key| {
+        if (params.count != 0) return ready(.{ .unhandled = whole }, len);
+        return ready(.{ .key = .{ .key = key, .mods = .{ .ctrl = true } } }, len);
+    }
+
+    const key = ss3Key(final) orelse return ready(.{ .unhandled = whole }, len);
+    var ev: KeyEvent = .{ .key = key };
     if (!applyModifiers(&ev, params, 0)) return ready(.{ .unhandled = whole }, len);
 
     return ready(.{ .key = ev }, len);
@@ -1021,6 +1025,17 @@ fn ss3Key(final: u8) ?Key {
     };
 }
 
+/// The arrow named by the lowercase cursor finals rxvt uses for modifiers.
+fn rxvtCursorKey(final: u8) ?Key {
+    return switch (final) {
+        'a' => .up,
+        'b' => .down,
+        'c' => .right,
+        'd' => .left,
+        else => null,
+    };
+}
+
 /// Frames a `CSI` sequence and, when it is one, reads the key out of it.
 ///
 /// Framing and reading are separate on purpose: a sequence with a private
@@ -1058,6 +1073,20 @@ fn decodeCsi(bytes: []const u8, report_key_up: bool, console: *win32.ConsoleStat
     const param_start = i;
     while (i < bytes.len and bytes[i] >= 0x30 and bytes[i] <= 0x3f) : (i += 1) {}
     const param_end = i;
+
+    // rxvt uses `$` as a final byte after a numbered key, although `$` is an
+    // intermediate in the standard CSI grammar. Private sequences still use
+    // it as that intermediate, including the mode replies parsed below.
+    if (!private and param_end > param_start and i < bytes.len and bytes[i] == '$') {
+        const len = i + 1;
+        const whole = bytes[0..len];
+        const params = scanParams(bytes[param_start..param_end]) orelse
+            return ready(.{ .unhandled = whole }, len);
+        const event = rxvtNumberedEvent('$', params) orelse
+            return ready(.{ .unhandled = whole }, len);
+        return ready(event, len);
+    }
+
     while (i < bytes.len and bytes[i] >= 0x20 and bytes[i] <= 0x2f) : (i += 1) {}
     const intermediate_end = i;
 
@@ -1164,6 +1193,14 @@ fn csiEvent(final: u8, params: Params) ?Event {
     switch (final) {
         'u' => return kittyEvent(params),
         '~' => return tildeEvent(params),
+        '^', '@' => return rxvtNumberedEvent(final, params),
+        'a', 'b', 'c', 'd' => {
+            if (params.count != 0) return null;
+            return .{ .key = .{
+                .key = rxvtCursorKey(final).?,
+                .mods = .{ .shift = true },
+            } };
+        },
         'A', 'B', 'C', 'D', 'E', 'F', 'H', 'P', 'Q', 'S' => {
             const key = ss3Key(final).?;
             var ev: KeyEvent = .{ .key = key };
@@ -1184,6 +1221,19 @@ fn csiEvent(final: u8, params: Params) ?Event {
         // with modifiers sends `CSI 13 ; mods ~` instead, for this reason.
         else => return null,
     }
+}
+
+/// Reads rxvt's numbered-key modifier finals: shift, control, and both.
+fn rxvtNumberedEvent(final: u8, params: Params) ?Event {
+    if (params.count != 1 or params.get(0, 1) != null) return null;
+    const key = tildeKey(params.get(0, 0) orelse return null) orelse return null;
+    const mods: Modifiers = switch (final) {
+        '$' => .{ .shift = true },
+        '^' => .{ .ctrl = true },
+        '@' => .{ .shift = true, .ctrl = true },
+        else => return null,
+    };
+    return .{ .key = .{ .key = key, .mods = mods } };
 }
 
 /// Reads a `CSI number ~` sequence: the numbered function and editing keys,
@@ -1780,6 +1830,58 @@ test "the numbered keys decode from their CSI tilde form" {
     };
     for (cases) |case| {
         try std.testing.expectEqual(case.key, oneKey(case.bytes).?.key);
+    }
+}
+
+test "rxvt modifier finals decode numbered editing keys" {
+    const cases = [_]struct { bytes: []const u8, key: Key, mods: Modifiers }{
+        .{ .bytes = "\x1b[2$", .key = .insert, .mods = .{ .shift = true } },
+        .{ .bytes = "\x1b[5^", .key = .page_up, .mods = .{ .ctrl = true } },
+        .{
+            .bytes = "\x1b[3@",
+            .key = .delete,
+            .mods = .{ .shift = true, .ctrl = true },
+        },
+    };
+    for (cases) |case| {
+        const ev = oneKey(case.bytes).?;
+        try std.testing.expectEqual(case.key, ev.key);
+        try std.testing.expectEqual(case.mods, ev.mods);
+    }
+}
+
+test "rxvt modifier finals decode numbered function keys" {
+    const cases = [_]struct { bytes: []const u8, key: Key, mods: Modifiers }{
+        .{ .bytes = "\x1b[23$", .key = .{ .f = 11 }, .mods = .{ .shift = true } },
+        .{ .bytes = "\x1b[11^", .key = .{ .f = 1 }, .mods = .{ .ctrl = true } },
+        .{
+            .bytes = "\x1b[23@",
+            .key = .{ .f = 11 },
+            .mods = .{ .shift = true, .ctrl = true },
+        },
+    };
+    for (cases) |case| {
+        const ev = oneKey(case.bytes).?;
+        try std.testing.expectEqual(case.key, ev.key);
+        try std.testing.expectEqual(case.mods, ev.mods);
+    }
+}
+
+test "rxvt lowercase cursor finals decode shift and control arrows" {
+    const cases = [_]struct { bytes: []const u8, key: Key, mods: Modifiers }{
+        .{ .bytes = "\x1b[a", .key = .up, .mods = .{ .shift = true } },
+        .{ .bytes = "\x1b[b", .key = .down, .mods = .{ .shift = true } },
+        .{ .bytes = "\x1b[c", .key = .right, .mods = .{ .shift = true } },
+        .{ .bytes = "\x1b[d", .key = .left, .mods = .{ .shift = true } },
+        .{ .bytes = "\x1bOa", .key = .up, .mods = .{ .ctrl = true } },
+        .{ .bytes = "\x1bOb", .key = .down, .mods = .{ .ctrl = true } },
+        .{ .bytes = "\x1bOc", .key = .right, .mods = .{ .ctrl = true } },
+        .{ .bytes = "\x1bOd", .key = .left, .mods = .{ .ctrl = true } },
+    };
+    for (cases) |case| {
+        const ev = oneKey(case.bytes).?;
+        try std.testing.expectEqual(case.key, ev.key);
+        try std.testing.expectEqual(case.mods, ev.mods);
     }
 }
 
@@ -2406,6 +2508,10 @@ test "fuzz KeyParser" {
         corpus.seed("\x1b[[C"),
         corpus.seed("\x1b[[D"),
         corpus.seed("\x1b[[E"),
+        corpus.seed("\x1b[2$"),
+        corpus.seed("\x1b[5^"),
+        corpus.seed("\x1b[3@"),
+        corpus.seed("\x1b[a\x1bOa"),
         corpus.seed("\x1b[3;2~"),
         corpus.seed("\x1b[27;5;9~"),
         corpus.seed("\x1b[200~pasted\x1b[201~"),
@@ -2598,6 +2704,8 @@ fn frameEscape(bytes: []const u8) ?usize {
                 if (b >= 0x30 and b <= 0x3f) {
                     parameterised = true;
                     i += 1;
+                } else if (b == '$' and !marked and parameterised) {
+                    return i + 1;
                 } else {
                     state = .csi_intermediate;
                 }
@@ -2663,6 +2771,11 @@ fn frameEscape(bytes: []const u8) ?usize {
 const framing_pieces = [_][]const u8{
     "\x1b[A",
     "\x1b[[A",
+    "\x1b[2$",
+    "\x1b[5^",
+    "\x1b[3@",
+    "\x1b[a",
+    "\x1bOa",
     "\x1b[1;5C",
     "\x1b[97:65:97;2:3;65u",
     "\x1b[<0;40;12M",
@@ -2723,6 +2836,12 @@ test "the two framers agree on the sequences in a stream" {
         try std.testing.expectEqual(@as(u8, seq.esc), bytes[frame.start]);
         at = frame.start + frame.len;
     }
+}
+
+test "rxvt finals do not change the framing of dollar intermediates" {
+    const bytes = "\x1b[2$" ++ "\x1b[5^" ++ "\x1b[3@" ++
+        "\x1b[a" ++ "\x1bOa" ++ "\x1b[?2026;1$y";
+    try std.testing.expectEqual(@as(usize, 6), try checkFraming(bytes));
 }
 
 /// Builds one stream out of `chosen`: the high bit of each byte picks a raw

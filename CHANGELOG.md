@@ -7,6 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 - Linux virtual-console F1–F5 sequences decode as function-key presses.
+- rxvt modifier finals decode shifted and controlled cursor, editing, and function keys.
 - Windows console mouse events name the button that changed while another button remains held.
 - Startup probes keep collecting after DA1 so multiplexed replies that take a longer path are not lost.
 - Windows console input reports astral characters composed with Alt as presses.
