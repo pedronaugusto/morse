@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Startup probes keep collecting after DA1 so multiplexed replies that take a longer path are not lost.
 - Windows console input reports astral characters composed with Alt as presses.
 - Breaking: `Placeholder.placement` is `u24`, preventing placement IDs from losing their high byte on the wire.
+- `Events.remainder` lets an input iterator hand its unread tail back to the next feed without losing bytes.
 
 ## [0.4.0] - 2026-09-19
 

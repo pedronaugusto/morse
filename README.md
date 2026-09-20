@@ -357,6 +357,10 @@ bytes it dropped, and the stream picked up at the end of that sequence
 rather than in the middle of it, where a base64 payload reads as a few
 hundred keys nobody typed.
 
+Drain each `Events` iterator before the next `feed`; if a consumer stops
+early, `remainder()` returns the part of that read not yet copied into the
+parser so it can be passed to the next `feed` without losing stream order.
+
 **The Windows console arrives in two shapes, and both come out as `Key`.** A
 terminal in win32 input mode (`win32Input`, mode 9001) sends every key as
 `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`, which `KeyParser` decodes: the repeat

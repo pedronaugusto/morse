@@ -501,10 +501,10 @@ pub const KeyParser = struct {
 
     /// Hands `bytes` to the parser and returns the events they complete.
     ///
-    /// **Run the returned iterator to null before the next call.** It is what
-    /// moves bytes out of `bytes` and into the parser, so an iterator
-    /// abandoned early leaves the rest of that read unparsed and the next
-    /// `feed` replaces it. The natural read loop does the right thing:
+    /// Run the returned iterator to null before the next call, or keep its
+    /// `Events.remainder` and pass that slice to the next `feed`. The iterator
+    /// is what moves bytes out of `bytes` and into the parser; the natural
+    /// read loop drains it:
     ///
     /// ```zig
     /// var events = parser.feed(buf[0..n]);
@@ -596,6 +596,16 @@ pub const Events = struct {
     parser: *KeyParser,
     /// What is left of the bytes handed to `feed`.
     fresh: []const u8,
+
+    /// The part of the slice passed to `feed` that has not entered the parser.
+    ///
+    /// This makes stopping an iterator early recoverable. Bytes already
+    /// copied into the parser remain there; pass this slice to the next
+    /// `feed` before any newer input and iteration resumes in stream order.
+    /// The slice borrows from the original input and has the same lifetime.
+    pub fn remainder(it: *const Events) []const u8 {
+        return it.fresh;
+    }
 
     /// The next event, or null when what is left is a partial sequence — or
     /// nothing.
@@ -2065,6 +2075,23 @@ test "a feed longer than the buffer drains through it" {
     }
     try std.testing.expectEqual(@as(usize, input.len), seen);
     try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
+}
+
+test "an abandoned iterator exposes the unread tail for a later feed" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+
+    const input = "a" ** KeyParser.min_buffer ++ "b";
+    var first = parser.feed(input);
+    const run = first.next().?.text;
+    try std.testing.expectEqual(@as(usize, KeyParser.min_buffer), run.len);
+
+    const unread = first.remainder();
+    try std.testing.expectEqualStrings("b", unread);
+
+    var resumed = parser.feed(unread);
+    try std.testing.expectEqual(Key{ .char = 'b' }, resumed.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), resumed.next());
 }
 
 test "a lone escape is held, never guessed at" {
