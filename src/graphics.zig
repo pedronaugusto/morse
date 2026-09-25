@@ -984,11 +984,9 @@ pub const GraphicsResponse = struct {
 
 /// Reads a kitty graphics response: `APC G key=value,... ; message ST`.
 ///
-/// This package writes no graphics commands: transmitting an image is a
-/// protocol with chunking, formats and placement rules of its own, and it is
-/// not bytes this package can usefully name. The response is parsed because a
-/// program that does write one needs to know whether it worked, and because a
-/// response arriving on the input stream has to be told apart from a key.
+/// A program that sends an image asking for an answer needs to know whether
+/// it worked, and a response arriving on the input stream has to be told
+/// apart from a key; this reads it for both.
 ///
 /// Keys other than `i`, `I` and `p` are read past rather than refused, since
 /// the protocol adds them; a key repeated within one response is refused,

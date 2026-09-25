@@ -1249,7 +1249,7 @@ test "the startup probe is one write and a stream of answers" {
     defer v.deinit();
 
     v.resetReplies();
-    try (morse.Probe{}).write(v.w());
+    try (morse.Probe{ .graphics_id = 31 }).write(v.w());
     v.feed();
 
     // The answers come back as one byte stream carrying replies of four

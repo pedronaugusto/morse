@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking
+
+- **`Probe.graphics_id` has no default.** The graphics question's answer is
+  told from an answer about a picture by this id alone, and the default of 31
+  sat inside the range a program is as likely as not to use for its own
+  pictures. The program now picks one it never sends a picture under.
+
+### Changed
+
+- `parseGraphicsResponse`'s documentation no longer says this package writes
+  no graphics commands, which stopped being true when it began to.
+
 ## [0.5.0] - 2026-09-20
 
 A pass over every finding of a second read, two of them shapes in the graphics

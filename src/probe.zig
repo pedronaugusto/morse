@@ -131,9 +131,11 @@ pub const Probe = struct {
     /// The image id the one-pixel graphics query carries.
     ///
     /// It is echoed back in the answer, so it is how that answer is told
-    /// from a response to some other graphics command: pick one the program
-    /// will not use for a picture.
-    graphics_id: u32 = 31,
+    /// from a response to some other graphics command. There is no default:
+    /// the program picks one it will never send a picture under, because an
+    /// id it also uses for a picture makes the picture's answers read as the
+    /// probe's.
+    graphics_id: u32,
 
     /// Writes every question this probe asks, slow forwarded questions first
     /// and DA1 last.
@@ -257,7 +259,7 @@ test "a whole probe is one write, with DA1 last" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const probe: Probe = .{};
+    const probe: Probe = .{ .graphics_id = 31 };
     try probe.write(&out.writer);
     const bytes = out.written();
 
@@ -297,7 +299,7 @@ test "the order is the order the questions are declared in" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const probe: Probe = .{};
+    const probe: Probe = .{ .graphics_id = 31 };
     try probe.write(&out.writer);
     const bytes = out.written();
 
@@ -343,6 +345,7 @@ test "a probe that asks nothing still asks for the device attributes" {
     defer out.deinit();
 
     const probe: Probe = .{
+        .graphics_id = 31,
         .cursor_position = false,
         .foreground_color = false,
         .background_color = false,
@@ -371,11 +374,11 @@ test "a probe that asks nothing still asks for the device attributes" {
 test "a field turned off leaves exactly that question out" {
     var whole: Writer.Allocating = .init(std.testing.allocator);
     defer whole.deinit();
-    try (Probe{}).write(&whole.writer);
+    try (Probe{ .graphics_id = 31 }).write(&whole.writer);
 
     var without: Writer.Allocating = .init(std.testing.allocator);
     defer without.deinit();
-    try (Probe{ .graphics = false }).write(&without.writer);
+    try (Probe{ .graphics_id = 31, .graphics = false }).write(&without.writer);
 
     var only: Writer.Allocating = .init(std.testing.allocator);
     defer only.deinit();
@@ -449,7 +452,7 @@ test "a probe routes a forwarded reply that arrives after DA1" {
 
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    try (Probe{}).write(&out.writer);
+    try (Probe{ .graphics_id = 31 }).write(&out.writer);
 
     const replies = "\x1b[12;40R" ++
         "a" ++

@@ -121,8 +121,10 @@ try morse.clipboardWrite(w, .clipboard, "copied by morse");
 // Ask the terminal what it is: seventeen questions in one write, with
 // slow forwarded questions first and DA1 last. DA1 proves the input path
 // works, but a multiplexer may answer it before a forwarded OSC reply.
-// Keep the timeout armed, or finish after an explicit quiet period.
-try (morse.Probe{}).write(w);
+// Keep the timeout armed, or finish after an explicit quiet period. The
+// graphics question carries an image id, and the program picks one it
+// never sends a picture under.
+try (morse.Probe{ .graphics_id = 1 }).write(w);
 
 // A question the probe does not ask, because it needs a name. None of
 // these is guaranteed an answer either.

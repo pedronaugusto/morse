@@ -702,7 +702,7 @@ test "the root module re-exports what the README promises" {
     try colorScheme.set(w, true);
     try queryColorScheme(w);
 
-    try (Probe{}).write(w);
+    try (Probe{ .graphics_id = 1 }).write(w);
     try std.testing.expect(probeMatches("\x1b[?62;52;c", .device_attributes));
     try std.testing.expect(!probeMatches("\x1b[?62;52;c", .cursor_position));
     try std.testing.expect(Probe.Question.device_attributes == .device_attributes);
