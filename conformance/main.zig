@@ -1409,6 +1409,7 @@ test "the startup probe is one write and a stream of answers" {
         .in_band_resize,
         .kitty_keyboard,
         .graphics,
+        .truecolor,
         .version,
         .text_area_cells,
         .cell_pixels,
@@ -1618,6 +1619,6 @@ test "a mode morse does not name still goes through setMode" {
 //=========================================================================
 
 test "how many claims this file made" {
-    try std.testing.expectEqual(@as(usize, 3776), checks);
+    try std.testing.expectEqual(@as(usize, 3779), checks);
     std.debug.print("conformance: {d} assertions against the emulator\n", .{checks});
 }

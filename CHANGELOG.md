@@ -20,6 +20,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   program that asked for mode 1016, since the report cannot say so.
   `Reply.parse` reads a sequence a program framed itself, and
   `probeAnswered` says which question of a `Probe` an event answers.
+- **`Probe` asks whether the terminal takes 24-bit colour.** A new
+  `truecolor` question, on by default, asks XTGETTCAP for `Tc` and `RGB`
+  among the identifying questions; a reply naming either, known or not,
+  answers it. The whole probe is eighteen questions in 151 bytes.
 
 - **`Probe.graphics_id` has no default.** The graphics question's answer is
   told from an answer about a picture by this id alone, and the default of 31

@@ -117,7 +117,7 @@ pub fn main() !void {
     // base64 encoded on the fly -- no allocation, no buffer sized to the text.
     try morse.clipboardWrite(w, .clipboard, "copied by morse");
 
-    // Ask the terminal what it is: seventeen questions in one write, with
+    // Ask the terminal what it is: eighteen questions in one write, with
     // slow forwarded questions first and DA1 last. DA1 proves the input path
     // works, but a multiplexer may answer it before a forwarded OSC reply.
     // Keep the timeout armed, or finish after an explicit quiet period. The

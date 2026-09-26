@@ -41,6 +41,7 @@ const key = @import("key.zig");
 const mode = @import("mode.zig");
 const multicursor = @import("multicursor.zig");
 const query = @import("query.zig");
+const tcap = @import("tcap.zig");
 
 const Writer = std.Io.Writer;
 
@@ -82,6 +83,10 @@ pub const Probe = struct {
         graphics,
         /// What the terminal can do with extra cursors.
         extra_cursors,
+        /// Whether it takes 24-bit colour: the `Tc` and `RGB` capabilities
+        /// (XTGETTCAP), each asked on its own because a terminal that knows
+        /// one need not know the other.
+        truecolor,
         /// What the terminal calls itself (XTVERSION).
         version,
         /// How many rows and columns the text area has.
@@ -120,6 +125,8 @@ pub const Probe = struct {
     graphics: bool = true,
     /// Ask what the terminal can do with extra cursors.
     extra_cursors: bool = true,
+    /// Ask whether the terminal takes 24-bit colour.
+    truecolor: bool = true,
     /// Ask what the terminal calls itself.
     version: bool = true,
     /// Ask how big the text area is, in cells.
@@ -161,6 +168,10 @@ pub const Probe = struct {
         if (p.modify_other_keys) try mode.queryModifyKeys(w, .other_keys);
         if (p.graphics) try graphics.queryGraphics(w, p.graphics_id);
         if (p.extra_cursors) try multicursor.queryExtraCursorSupport(w);
+        if (p.truecolor) {
+            try tcap.queryCapability(w, "Tc");
+            try tcap.queryCapability(w, "RGB");
+        }
 
         if (p.version) try device.queryVersion(w);
         if (p.text_area_cells) try device.queryWindowSize(w, .text_area_cells);
@@ -187,6 +198,7 @@ pub const Probe = struct {
             .modify_other_keys => p.modify_other_keys,
             .graphics => p.graphics,
             .extra_cursors => p.extra_cursors,
+            .truecolor => p.truecolor,
             .version => p.version,
             .text_area_cells => p.text_area_cells,
             .cell_pixels => p.cell_pixels,
@@ -227,6 +239,7 @@ pub fn matches(reply: []const u8, question: Probe.Question) bool {
             false,
         .graphics => graphics.parseGraphicsResponse(reply) != null,
         .extra_cursors => multicursor.parseExtraCursorSupport(reply) != null,
+        .truecolor => if (tcap.parseCapabilityReply(reply)) |c| namesTruecolor(c) else false,
         .version => device.parseVersion(reply) != null,
         .text_area_cells => windowSizeFor(reply, .text_area_cells),
         .cell_pixels => windowSizeFor(reply, .cell_pixels),
@@ -265,6 +278,7 @@ pub fn answered(event: key.Event) ?Probe.Question {
             .modify_keys => |m| if (m.resource == .other_keys) .modify_other_keys else null,
             .graphics => .graphics,
             .extra_cursor_support => .extra_cursors,
+            .capability => |c| if (namesTruecolor(c)) .truecolor else null,
             .version => .version,
             .window_size => |w| switch (w.what) {
                 .text_area_cells => .text_area_cells,
@@ -277,6 +291,18 @@ pub fn answered(event: key.Event) ?Probe.Question {
         },
         else => null,
     };
+}
+
+/// Whether a capability reply is about `Tc` or `RGB`, known or not: a
+/// refusal answers the question too.
+fn namesTruecolor(reply: tcap.CapabilityReply) bool {
+    var it = reply.iterator();
+    while (it.next()) |capability| {
+        var name: [8]u8 = undefined;
+        const n = capability.decodeName(&name) catch continue;
+        if (std.mem.eql(u8, n, "Tc") or std.mem.eql(u8, n, "RGB")) return true;
+    }
+    return false;
 }
 
 /// Whether `reply` is a colour report about `target`.
@@ -309,7 +335,7 @@ test "a whole probe is one write, with DA1 last" {
     const bytes = out.written();
 
     // Pinned exactly, because the point of the thing is that it is one
-    // write of a known size rather than seventeen round trips.
+    // write of a known size rather than eighteen round trips.
     try std.testing.expectEqualStrings(
         "\x1b[6n" ++
             "\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\" ++
@@ -319,14 +345,15 @@ test "a whole probe is one write, with DA1 last" {
             "\x1b[?4m" ++
             "\x1b_Ga=q,i=31,f=24,s=1,v=1;AAAA\x1b\\" ++
             "\x1b[> q" ++
+            "\x1bP+q5463\x1b\\\x1bP+q524742\x1b\\" ++
             "\x1b[>0q" ++
             "\x1b[18t\x1b[16t" ++
             "\x1b[>c" ++
             "\x1b[c",
         bytes,
     );
-    try std.testing.expectEqual(@as(usize, 129), bytes.len);
-    try std.testing.expectEqual(@as(usize, 17), every_question.len);
+    try std.testing.expectEqual(@as(usize, 151), bytes.len);
+    try std.testing.expectEqual(@as(usize, 18), every_question.len);
 
     // DA1 is last in the write, though a multiplexer need not reply in order.
     try std.testing.expect(std.mem.endsWith(u8, bytes, "\x1b[c"));
@@ -377,6 +404,10 @@ fn writeOne(w: *Writer, question: Probe.Question, graphics_id: u32) Writer.Error
         .modify_other_keys => try mode.queryModifyKeys(w, .other_keys),
         .graphics => try graphics.queryGraphics(w, graphics_id),
         .extra_cursors => try multicursor.queryExtraCursorSupport(w),
+        .truecolor => {
+            try tcap.queryCapability(w, "Tc");
+            try tcap.queryCapability(w, "RGB");
+        },
         .version => try device.queryVersion(w),
         .text_area_cells => try device.queryWindowSize(w, .text_area_cells),
         .cell_pixels => try device.queryWindowSize(w, .cell_pixels),
@@ -403,6 +434,7 @@ test "a probe that asks nothing still asks for the device attributes" {
         .modify_other_keys = false,
         .graphics = false,
         .extra_cursors = false,
+        .truecolor = false,
         .version = false,
         .text_area_cells = false,
         .cell_pixels = false,
@@ -450,6 +482,7 @@ test "matches routes every answer to the question that asked it" {
         .{ .reply = "\x1b[>4;2m", .question = .modify_other_keys },
         .{ .reply = "\x1b_Gi=31;OK\x1b\\", .question = .graphics },
         .{ .reply = "\x1b[>1;2;3;29;30;40;100;101 q", .question = .extra_cursors },
+        .{ .reply = "\x1bP0+r5463\x1b\\", .question = .truecolor },
         .{ .reply = "\x1bP>|name(390)\x1b\\", .question = .version },
         .{ .reply = "\x1b[8;24;80t", .question = .text_area_cells },
         .{ .reply = "\x1b[6;16;8t", .question = .cell_pixels },
@@ -510,7 +543,7 @@ test "a probe routes a forwarded reply that arrives after DA1" {
     var storage: [256]u8 = undefined;
     var parser: key.KeyParser = .init(&storage);
 
-    var seen: [17]bool = @splat(false);
+    var seen: [18]bool = @splat(false);
     var keys: usize = 0;
     var input_path_works = false;
 

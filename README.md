@@ -118,7 +118,7 @@ try morse.notify(w, "Build finished", "0 errors");
 // base64 encoded on the fly -- no allocation, no buffer sized to the text.
 try morse.clipboardWrite(w, .clipboard, "copied by morse");
 
-// Ask the terminal what it is: seventeen questions in one write, with
+// Ask the terminal what it is: eighteen questions in one write, with
 // slow forwarded questions first and DA1 last. DA1 proves the input path
 // works, but a multiplexer may answer it before a forwarded OSC reply.
 // Keep the timeout armed, or finish after an explicit quiet period. The
@@ -404,7 +404,7 @@ first through a multiplexer. What to do with that is yours: no timeout, no
 cache, no fallback lives here.
 
 **A startup probe is one write and one waiting window.** `Probe.write` asks
-seventeen questions in 129 bytes, ordered with the slow paths first: the
+eighteen questions in 151 bytes, ordered with the slow paths first: the
 cursor position leads, so a terminal that bleeds an unrecognised
 sequence bleeds it in front of everything; the OSC colour queries next,
 because a multiplexer forwards those and they take the long way round; DA2
@@ -413,7 +413,8 @@ terminal answers it. DA1 proves the input path works, but is not a completion
 sentinel: a multiplexer can answer it locally while an earlier OSC query is
 still travelling outward. Keep the overall timeout armed, or finish after an
 explicit quiet period restarted by each reply; only then read silence as a
-no. `probeMatches(reply, question)` routes each reply.
+no. `probeAnswered(event)` routes each event the parser reads, and
+`probeMatches(reply, question)` a sequence framed elsewhere.
 
 **`Style` is an `extern struct`, and so is every record in this package.**
 A renderer keeps a style in every cell, and a cell that is `extern` is a row
