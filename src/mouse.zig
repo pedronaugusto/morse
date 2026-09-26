@@ -580,23 +580,32 @@ test "fuzz parseMouse" {
             try encodeMouse(&w, ev);
             try std.testing.expectEqual(ev, parseMouse(w.buffered()).?);
 
-            // And the conversion the parser's caller reaches for next.
+            // And the conversion the parser's caller reaches for next: the
+            // cell it lands in is the one that holds the pixel, a pixel of
+            // 0 being the first, as `toCells` documents.
             var pixel = ev;
             pixel.pixels = true;
             const cells = toCells(pixel, 8, 16);
-            try std.testing.expect(cells.x >= 1 and cells.x <= ev.x);
-            try std.testing.expect(cells.y >= 1 and cells.y <= ev.y);
+            const px: u64 = @max(ev.x, 1);
+            const py: u64 = @max(ev.y, 1);
+            try std.testing.expect(cells.x >= 1 and (@as(u64, cells.x) - 1) * 8 < px and px <= @as(u64, cells.x) * 8);
+            try std.testing.expect(cells.y >= 1 and (@as(u64, cells.y) - 1) * 16 < py and py <= @as(u64, cells.y) * 16);
         }
-    }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[<0;10;5M"),
-        corpus.seed("\x1b[<62;7;9m"),
-        corpus.seed("\x1b[<64;1;1M"),
-        corpus.seed("\x1b[<131;4294967295;4294967295m"),
-        corpus.seed("\x1b[<192;1;1M"),
-        corpus.seed("\x1b[<0;99999999999;5M"),
-        corpus.seed("\x1b[<0;10;5"),
-        corpus.seed("\x1b[0;10;5M"),
-    } });
+    }.one, .{
+        .corpus = &.{
+            corpus.seed("\x1b[<0;10;5M"),
+            corpus.seed("\x1b[<62;7;9m"),
+            corpus.seed("\x1b[<64;1;1M"),
+            corpus.seed("\x1b[<131;4294967295;4294967295m"),
+            corpus.seed("\x1b[<192;1;1M"),
+            corpus.seed("\x1b[<0;99999999999;5M"),
+            corpus.seed("\x1b[<0;10;5"),
+            corpus.seed("\x1b[0;10;5M"),
+            // A pixel of 0, which lands in the first cell: what the fuzzer found
+            // the old property got wrong.
+            corpus.seed("\x1b[<0;0;0M"),
+        },
+    });
 }
 
 test "parseMouseX10 reads a press, its coordinates and its modifiers" {
