@@ -118,7 +118,7 @@ try morse.notify(w, "Build finished", "0 errors");
 // base64 encoded on the fly -- no allocation, no buffer sized to the text.
 try morse.clipboardWrite(w, .clipboard, "copied by morse");
 
-// Ask the terminal what it is: eighteen questions in one write, with
+// Ask the terminal what it is: nineteen questions in one write, with
 // slow forwarded questions first and DA1 last. DA1 proves the input path
 // works, but a multiplexer may answer it before a forwarded OSC reply.
 // Keep the timeout armed, or finish after an explicit quiet period. The
@@ -404,7 +404,7 @@ first through a multiplexer. What to do with that is yours: no timeout, no
 cache, no fallback lives here.
 
 **A startup probe is one write and one waiting window.** `Probe.write` asks
-eighteen questions in 151 bytes, ordered with the slow paths first: the
+nineteen questions in 160 bytes, ordered with the slow paths first: the
 cursor position leads, so a terminal that bleeds an unrecognised
 sequence bleeds it in front of everything; the OSC colour queries next,
 because a multiplexer forwards those and they take the long way round; DA2
@@ -555,7 +555,7 @@ agrees. This step builds a terminal emulator from source, feeds it every
 writer, and asks the emulator what it did — the cursor, the modes, the style,
 the screen after each erase and scroll, the image storage, the cell under a
 hyperlink — then sends the emulator's own replies back through the parsers
-here. 3,775 assertions, and two named skips: this emulator has neither
+here. 3,780 assertions, and two named skips: this emulator has neither
 superscript nor a multiple cursors protocol, so `Style.script` and
 `extraCursors` stand on their byte-exact tests alone. The emulator is a lazy
 dependency, pinned to a commit and reached by this step alone, so a program

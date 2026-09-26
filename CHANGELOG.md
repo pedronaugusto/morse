@@ -23,7 +23,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`Probe` asks whether the terminal takes 24-bit colour.** A new
   `truecolor` question, on by default, asks XTGETTCAP for `Tc` and `RGB`
   among the identifying questions; a reply naming either, known or not,
-  answers it. The whole probe is eighteen questions in 151 bytes.
+  answers it.
+- **`Probe` asks whether a mouse report can count pixels.** A new
+  `mouse_pixels` question, on by default, asks DECRQM for mode 1016 beside
+  the other mode questions, so a program learns it can ask for
+  `Mouse.Encoding.sgr_pixels` before it does. The whole probe is nineteen
+  questions in 160 bytes.
 
 - **`Probe.graphics_id` has no default.** The graphics question's answer is
   told from an answer about a picture by this id alone, and the default of 31

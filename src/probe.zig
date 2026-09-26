@@ -75,6 +75,8 @@ pub const Probe = struct {
         unicode_core,
         /// Whether resizes are reported in band (mode 2048).
         in_band_resize,
+        /// Whether a mouse report can count pixels (mode 1016).
+        mouse_pixels,
         /// Which kitty keyboard flags are in effect.
         kitty_keyboard,
         /// What `modifyOtherKeys` is set to.
@@ -116,6 +118,8 @@ pub const Probe = struct {
     unicode_core: bool = true,
     /// Ask whether resizes are reported in band.
     in_band_resize: bool = true,
+    /// Ask whether a mouse report can count pixels.
+    mouse_pixels: bool = true,
     /// Ask which kitty keyboard flags are in effect.
     kitty_keyboard: bool = true,
     /// Ask what `modifyOtherKeys` is set to.
@@ -163,6 +167,7 @@ pub const Probe = struct {
         if (p.sync_output) try query.queryMode(w, mode.syncOutput.number);
         if (p.unicode_core) try query.queryMode(w, mode.unicodeCore.number);
         if (p.in_band_resize) try query.queryMode(w, mode.inBandResize.number);
+        if (p.mouse_pixels) try query.queryMode(w, mode.Mouse.Encoding.sgr_pixels.number());
 
         if (p.kitty_keyboard) try mode.kittyKeyboardQuery(w);
         if (p.modify_other_keys) try mode.queryModifyKeys(w, .other_keys);
@@ -194,6 +199,7 @@ pub const Probe = struct {
             .sync_output => p.sync_output,
             .unicode_core => p.unicode_core,
             .in_band_resize => p.in_band_resize,
+            .mouse_pixels => p.mouse_pixels,
             .kitty_keyboard => p.kitty_keyboard,
             .modify_other_keys => p.modify_other_keys,
             .graphics => p.graphics,
@@ -232,6 +238,7 @@ pub fn matches(reply: []const u8, question: Probe.Question) bool {
         .sync_output => modeReplyFor(reply, mode.syncOutput.number),
         .unicode_core => modeReplyFor(reply, mode.unicodeCore.number),
         .in_band_resize => modeReplyFor(reply, mode.inBandResize.number),
+        .mouse_pixels => modeReplyFor(reply, mode.Mouse.Encoding.sgr_pixels.number()),
         .kitty_keyboard => device.parseKittyKeyboardReply(reply) != null,
         .modify_other_keys => if (device.parseModifyKeysReply(reply)) |r|
             r.resource == .other_keys
@@ -272,6 +279,8 @@ pub fn answered(event: key.Event) ?Probe.Question {
                 .unicode_core
             else if (m.mode == mode.inBandResize.number)
                 .in_band_resize
+            else if (m.mode == mode.Mouse.Encoding.sgr_pixels.number())
+                .mouse_pixels
             else
                 null,
             .kitty_keyboard => .kitty_keyboard,
@@ -335,12 +344,12 @@ test "a whole probe is one write, with DA1 last" {
     const bytes = out.written();
 
     // Pinned exactly, because the point of the thing is that it is one
-    // write of a known size rather than eighteen round trips.
+    // write of a known size rather than nineteen round trips.
     try std.testing.expectEqualStrings(
         "\x1b[6n" ++
             "\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\" ++
             "\x1b[?996n" ++
-            "\x1b[?2026$p\x1b[?2027$p\x1b[?2048$p" ++
+            "\x1b[?2026$p\x1b[?2027$p\x1b[?2048$p\x1b[?1016$p" ++
             "\x1b[?u" ++
             "\x1b[?4m" ++
             "\x1b_Ga=q,i=31,f=24,s=1,v=1;AAAA\x1b\\" ++
@@ -352,8 +361,8 @@ test "a whole probe is one write, with DA1 last" {
             "\x1b[c",
         bytes,
     );
-    try std.testing.expectEqual(@as(usize, 151), bytes.len);
-    try std.testing.expectEqual(@as(usize, 18), every_question.len);
+    try std.testing.expectEqual(@as(usize, 160), bytes.len);
+    try std.testing.expectEqual(@as(usize, 19), every_question.len);
 
     // DA1 is last in the write, though a multiplexer need not reply in order.
     try std.testing.expect(std.mem.endsWith(u8, bytes, "\x1b[c"));
@@ -400,6 +409,7 @@ fn writeOne(w: *Writer, question: Probe.Question, graphics_id: u32) Writer.Error
         .sync_output => try query.queryMode(w, mode.syncOutput.number),
         .unicode_core => try query.queryMode(w, mode.unicodeCore.number),
         .in_band_resize => try query.queryMode(w, mode.inBandResize.number),
+        .mouse_pixels => try query.queryMode(w, mode.Mouse.Encoding.sgr_pixels.number()),
         .kitty_keyboard => try mode.kittyKeyboardQuery(w),
         .modify_other_keys => try mode.queryModifyKeys(w, .other_keys),
         .graphics => try graphics.queryGraphics(w, graphics_id),
@@ -430,6 +440,7 @@ test "a probe that asks nothing still asks for the device attributes" {
         .sync_output = false,
         .unicode_core = false,
         .in_band_resize = false,
+        .mouse_pixels = false,
         .kitty_keyboard = false,
         .modify_other_keys = false,
         .graphics = false,
@@ -478,6 +489,7 @@ test "matches routes every answer to the question that asked it" {
         .{ .reply = "\x1b[?2026;1$y", .question = .sync_output },
         .{ .reply = "\x1b[?2027;4$y", .question = .unicode_core },
         .{ .reply = "\x1b[?2048;2$y", .question = .in_band_resize },
+        .{ .reply = "\x1b[?1016;2$y", .question = .mouse_pixels },
         .{ .reply = "\x1b[?29u", .question = .kitty_keyboard },
         .{ .reply = "\x1b[>4;2m", .question = .modify_other_keys },
         .{ .reply = "\x1b_Gi=31;OK\x1b\\", .question = .graphics },
@@ -543,7 +555,7 @@ test "a probe routes a forwarded reply that arrives after DA1" {
     var storage: [256]u8 = undefined;
     var parser: key.KeyParser = .init(&storage);
 
-    var seen: [18]bool = @splat(false);
+    var seen: [@typeInfo(Probe.Question).@"enum".fields.len]bool = @splat(false);
     var keys: usize = 0;
     var input_path_works = false;
 
