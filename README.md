@@ -538,7 +538,7 @@ agrees. This step builds a terminal emulator from source, feeds it every
 writer, and asks the emulator what it did — the cursor, the modes, the style,
 the screen after each erase and scroll, the image storage, the cell under a
 hyperlink — then sends the emulator's own replies back through the parsers
-here. 1,050 assertions, and two named skips: this emulator has neither
+here. 1,068 assertions, and two named skips: this emulator has neither
 superscript nor a multiple cursors protocol, so `Style.script` and
 `extraCursors` stand on their byte-exact tests alone. The emulator is a lazy
 dependency, pinned to a commit and reached by this step alone, so a program

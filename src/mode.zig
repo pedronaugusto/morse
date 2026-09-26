@@ -186,8 +186,16 @@ pub const Mouse = packed struct {
 };
 
 /// Sets every mouse mode at once: each field of `modes` gets its own `h` or
-/// `l`, in ascending mode number, so what is asked for goes on and everything
-/// else goes off.
+/// `l`, so what is asked for goes on and everything else goes off.
+///
+/// Every `l` is written before any `h`. A terminal keeps which motion it
+/// reports (1000, 1002, 1003) as one setting and the encoding (1006, 1015,
+/// 1016) as another, and resetting any mode of a setting resets the setting:
+/// `1002h` then `1003l` leaves no mouse reports at all, and `1006h` then
+/// `1015l` leaves the X10 encoding. So the modes that go off go first, and
+/// of those that go on, the richer comes last and is what the terminal
+/// keeps: drag over press, any motion over drag, SGR over rxvt, SGR pixels
+/// over SGR.
 ///
 /// That is the point of taking the whole set rather than one flag: a program
 /// wanting press and wheel reports without a report per pointer cell says
@@ -203,13 +211,19 @@ pub const Mouse = packed struct {
 /// rxvt reports until it is told to stop, and a call that could not say `l`
 /// for 1015 could not stop it.
 pub fn mouse(w: *Writer, modes: Mouse) Writer.Error!void {
-    try setMode(w, 1000, modes.press);
-    try setMode(w, 1002, modes.drag);
-    try setMode(w, 1003, modes.any_motion);
-    try setMode(w, 1004, modes.focus);
-    try setMode(w, 1006, modes.sgr);
-    try setMode(w, 1015, modes.rxvt);
-    try setMode(w, 1016, modes.sgr_pixels);
+    // In the order each goes on: the motions, focus, then the encodings
+    // with the one the terminal should keep last.
+    const order = [_]struct { u16, bool }{
+        .{ 1000, modes.press },
+        .{ 1002, modes.drag },
+        .{ 1003, modes.any_motion },
+        .{ 1004, modes.focus },
+        .{ 1015, modes.rxvt },
+        .{ 1006, modes.sgr },
+        .{ 1016, modes.sgr_pixels },
+    };
+    for (order) |m| if (!m[1]) try setMode(w, m[0], false);
+    for (order) |m| if (m[1]) try setMode(w, m[0], true);
 }
 
 /// Turns off every mouse mode `mouse` can turn on. What a program runs on the
@@ -550,7 +564,7 @@ test "mouse gives each flag its own h or l" {
 
     try mouse(&out.writer, .{ .press = true, .sgr = true });
     try std.testing.expectEqualStrings(
-        "\x1b[?1000h\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006h\x1b[?1015l\x1b[?1016l",
+        "\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1015l\x1b[?1016l\x1b[?1000h\x1b[?1006h",
         out.written(),
     );
 }
@@ -561,7 +575,7 @@ test "mouseOff turns every mouse mode off" {
 
     try mouseOff(&out.writer);
     try std.testing.expectEqualStrings(
-        "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006l\x1b[?1015l\x1b[?1016l",
+        "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1015l\x1b[?1006l\x1b[?1016l",
         out.written(),
     );
 }
@@ -580,7 +594,7 @@ test "every mouse flag on turns on every mode" {
         .focus = true,
     });
     try std.testing.expectEqualStrings(
-        "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1006h\x1b[?1015h\x1b[?1016h",
+        "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1015h\x1b[?1006h\x1b[?1016h",
         out.written(),
     );
 }
@@ -593,7 +607,7 @@ test "mouse can ask for the rxvt encoding, and turns it off otherwise" {
     // and the state a terminal has to be put back out of.
     try mouse(&out.writer, .{ .press = true, .rxvt = true });
     try std.testing.expectEqualStrings(
-        "\x1b[?1000h\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006l\x1b[?1015h\x1b[?1016l",
+        "\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006l\x1b[?1016l\x1b[?1000h\x1b[?1015h",
         out.written(),
     );
 }

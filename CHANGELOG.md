@@ -18,6 +18,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `parseGraphicsResponse`'s documentation no longer says this package writes
   no graphics commands, which stopped being true when it began to.
 
+### Fixed
+
+- **`mouse` could turn the mouse off while turning it on.** It wrote each
+  mode's `h` or `l` in ascending order, but a terminal keeps the motion it
+  reports (1000, 1002, 1003) as one setting and the encoding (1006, 1015,
+  1016) as another, and a mode written off resets its setting: asking for
+  press, drag and SGR wrote `1002h` then `1003l`, which leaves no mouse
+  reports at all, and `1006h` then `1015l` left the X10 encoding. Every `l`
+  now goes first, and of the modes that go on the richer goes last: drag over
+  press, any motion over drag, SGR over rxvt, SGR pixels over SGR. The
+  conformance suite now checks what the emulator reports after each of a run
+  of calls, not only each mode's own flag.
+
 ## [0.5.0] - 2026-09-20
 
 A pass over every finding of a second read, two of them shapes in the graphics

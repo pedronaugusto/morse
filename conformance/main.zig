@@ -365,6 +365,34 @@ test "the mouse modes go on and off together" {
     }
 }
 
+test "the mouse reports what was asked for, whatever came before" {
+    var v: Vt = undefined;
+    try v.init(80, 24);
+    defer v.deinit();
+
+    // The terminal keeps the motion reported and the encoding as one
+    // setting each; a mode written off after another on resets it. Every
+    // step here is a set a program asks for after the one before.
+    const Step = struct { morse.Mouse, @TypeOf(v.term.flags.mouse_event), @TypeOf(v.term.flags.mouse_format) };
+    const steps = [_]Step{
+        .{ .{ .press = true, .drag = true, .sgr = true, .focus = true }, .button, .sgr },
+        .{ .{ .press = true, .sgr = true, .focus = true }, .normal, .sgr },
+        .{ .{ .press = true, .drag = true, .sgr = true }, .button, .sgr },
+        .{ .{ .press = true, .any_motion = true, .sgr = true }, .any, .sgr },
+        .{ .{ .press = true, .sgr = true, .sgr_pixels = true }, .normal, .sgr_pixels },
+        .{ .{ .press = true, .sgr = true, .rxvt = true }, .normal, .sgr },
+        .{ .{ .press = true, .rxvt = true }, .normal, .urxvt },
+        .{ .{ .press = true, .sgr = true }, .normal, .sgr },
+        .{ .{}, .none, .x10 },
+    };
+    for (steps) |step| {
+        try morse.mouse(v.w(), step[0]);
+        v.feed();
+        try checkEqual(step[1], v.term.flags.mouse_event);
+        try checkEqual(step[2], v.term.flags.mouse_format);
+    }
+}
+
 test "the win32 input mode is one this emulator does not implement" {
     var v: Vt = undefined;
     try v.init(80, 24);
@@ -1502,6 +1530,6 @@ test "a mode morse does not name still goes through setMode" {
 //=========================================================================
 
 test "how many claims this file made" {
-    try std.testing.expectEqual(@as(usize, 1050), checks);
+    try std.testing.expectEqual(@as(usize, 1068), checks);
     std.debug.print("conformance: {d} assertions against the emulator\n", .{checks});
 }
