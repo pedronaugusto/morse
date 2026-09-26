@@ -27,9 +27,9 @@ const w = &out;
 try morse.altScreen.set(w, true);
 try morse.cursorVisible.set(w, false);
 
-// Ask for mouse press and wheel reports in SGR form -- and, by saying so
-// in one call, for no report per cell the pointer crosses.
-try morse.mouse(w, .{ .press = true, .sgr = true });
+// Mouse press and wheel reports, spelled in SGR: one motion and one
+// encoding, whatever the terminal was left in before.
+try morse.mouse(w, .{ .motion = .press, .encoding = .sgr });
 
 // Keys in the kitty protocol, pushed so exiting restores what was there,
 // and pasted text bracketed so it can be told from typing.
@@ -276,7 +276,7 @@ fetches it.
 `cursorVisible`, `unicodeCore`, `inBandResize`, `autoWrap`, `win32Input`,
 `colorScheme` — each a type with
 `set(w, on)` and a `number` — plus `setMode` for any mode morse does not name,
-and `Mouse` / `mouse` / `mouseOff`.
+and `Mouse` (`Mouse.Motion`, `Mouse.Encoding`) / `mouse` / `mouseOff`.
 
 **Keyboard protocol, cursor and pointer.** `KittyFlags`, `kittyKeyboardPush`,
 `kittyKeyboardPop`, `kittyKeyboardSet` / `KittyFlagChange`,
@@ -433,17 +433,25 @@ everything-on style is `CSI 0 m` rather than thirty-eight bytes of off codes.
 Both are priced with `Writer.Discarding`, which runs the code that writes the
 bytes, so there is no second encoder to keep in step. You keep `from`.
 
-**The mouse modes are one call.** `mouse` writes
-an `h` or an `l` for each of the seven DEC private modes, so `mouse(w, .{ .press
-= true, .sgr = true })` is press and wheel reports and nothing else, whatever
-was on before. `Mouse.focus` is mode 1004, the same mode as `focusEvents`, so
-a call leaving it false turns focus reporting off. `Mouse.rxvt` is mode 1015
-and goes off the same way, because a terminal left in it keeps sending rxvt
-reports until something says otherwise. SGR is the one to ask for;
-`parseMouseX10` and `parseMouseRxvt` read what a terminal in mode 1000 or 1015
-sends meanwhile. Modes 1006 and 1016 are byte-identical, so `parseMouse`
-always reports cells and leaves `MouseEvent.pixels` false: set it yourself and
-call `toCells` with your cell size. Both count from 1.
+**The mouse is one motion and one encoding.** A terminal keeps the mouse as
+two settings, not as a switch per mode: what the pointer reports (1000 press,
+1002 drag, 1003 any motion) and how the report is spelled (1006 SGR, 1016 SGR
+pixels, 1015 rxvt). Turning on 1002 replaces 1000, and turning off any mode
+of a setting resets the whole setting. `Mouse` has the same shape, a `motion`
+and an `encoding` (SGR by default), and `mouse(w, .{ .motion = .drag })`
+puts the terminal in exactly that state whatever was on before: every other
+mode of both settings off, X10 (9) and UTF-8 (1005) included, then one `h`
+for the motion and one for the encoding. That holds on the terminals that
+keep a flag per mode as well, where only the offs clear what something
+earlier left on. `mouseOff` turns every mode of both settings off. Focus
+reports (1004) are not the mouse; `focusEvents` switches them.
+
+The X10 and UTF-8 encodings cannot be asked for: X10 caps a coordinate at 223
+and names no button on a release, and UTF-8 cannot be framed without knowing
+it was asked for. `parseMouseX10` and `parseMouseRxvt` read what a terminal
+left in X10 or rxvt sends meanwhile. Modes 1006 and 1016 are byte-identical,
+so `parseMouse` always reports cells and leaves `MouseEvent.pixels` false:
+set it yourself and call `toCells` with your cell size. Both count from 1.
 
 **An image is chunked by the protocol's rule, not by a buffer.**
 `transmitImage` base64-encodes the pixels straight into the writer in the
@@ -538,7 +546,7 @@ agrees. This step builds a terminal emulator from source, feeds it every
 writer, and asks the emulator what it did — the cursor, the modes, the style,
 the screen after each erase and scroll, the image storage, the cell under a
 hyperlink — then sends the emulator's own replies back through the parsers
-here. 1,068 assertions, and two named skips: this emulator has neither
+here. 3,775 assertions, and two named skips: this emulator has neither
 superscript nor a multiple cursors protocol, so `Style.script` and
 `extraCursors` stand on their byte-exact tests alone. The emulator is a lazy
 dependency, pinned to a commit and reached by this step alone, so a program

@@ -26,9 +26,9 @@ pub fn main() !void {
     try morse.altScreen.set(w, true);
     try morse.cursorVisible.set(w, false);
 
-    // Ask for mouse press and wheel reports in SGR form -- and, by saying so
-    // in one call, for no report per cell the pointer crosses.
-    try morse.mouse(w, .{ .press = true, .sgr = true });
+    // Mouse press and wheel reports, spelled in SGR: one motion and one
+    // encoding, whatever the terminal was left in before.
+    try morse.mouse(w, .{ .motion = .press, .encoding = .sgr });
 
     // Keys in the kitty protocol, pushed so exiting restores what was there,
     // and pasted text bracketed so it can be told from typing.

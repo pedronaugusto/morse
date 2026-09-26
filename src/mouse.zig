@@ -5,9 +5,10 @@
 //! `parseMouse` cannot tell them apart and always reports cells. A program
 //! knows which mode it asked for; see `MouseEvent.pixels` and `toCells`.
 //!
-//! The original X10 encoding is read too, by `parseMouseX10`, but is never
-//! asked for -- `mouse` always offers SGR. It is here because a terminal put
-//! into mode 1000, 1002 or 1003 *without* mode 1006 reports in it, and a
+//! The original X10 encoding is read too, by `parseMouseX10`, but can never
+//! be asked for -- `Mouse.Encoding` has no X10, and `mouse` always turns one
+//! of the others on. It is here because a terminal put into mode 1000, 1002
+//! or 1003 by something else, *without* an encoding, reports in it, and a
 //! sequence that cannot be read still has to be framed: three arbitrary bytes
 //! mistaken for three keypresses is a worse failure than a report this
 //! package declines to interpret. Its own limits are why SGR exists -- it
@@ -16,8 +17,8 @@
 //! The rxvt encoding (mode 1015) is read too, by `parseMouseRxvt`, and for
 //! the same reason: it is the X10 report with its three fields spelled as
 //! decimal numbers instead of biased bytes, which lifts the 223 cap without
-//! answering the other objection -- a release still names no button. It is
-//! never asked for either.
+//! answering the other objection -- a release still names no button.
+//! `Mouse.Encoding.rxvt` asks for it; SGR is the one to ask for.
 //!
 //! The UTF-8 encoding (mode 1005) is not read. It is the same report with the
 //! coordinates spelled as codepoints rather than bytes, which makes its length
@@ -198,8 +199,8 @@ pub const x10_max = 255 - x10_bias;
 /// Reads the original X10 mouse report: `CSI M b x y`, where each of the
 /// three bytes carries its value plus 32.
 ///
-/// This is what a terminal in mode 1000, 1002 or 1003 sends when mode 1006
-/// was not also asked for. `mouse` always asks for 1006, so a program that
+/// This is what a terminal in mode 1000, 1002 or 1003 sends when no encoding
+/// was asked for. `mouse` always turns an encoding on, so a program that
 /// sets its modes through this package never sees one; it is read because a
 /// terminal left in that state by something earlier still sends them, and
 /// `KeyParser` frames them either way.
@@ -248,10 +249,11 @@ pub fn parseMouseX10(bytes: []const u8) ?MouseEvent {
 /// The X10 report with the fields widened: the same button code, the same
 /// bias, the same "a release names no button", but spelled in decimal, so a
 /// coordinate is not capped at `x10_max` and a terminal wider than 223
-/// columns can report the whole of it. `mouse` never asks for it -- SGR says
-/// which button came up and this does not -- and it is read for the same
-/// reason the X10 form is: a terminal left in mode 1015 by something earlier
-/// still sends them, and `KeyParser` frames them either way.
+/// columns can report the whole of it. What a terminal sends after
+/// `mouse` with `Mouse.Encoding.rxvt`, which is there for a program that has
+/// its reason: SGR says which button came up and this does not. It is read
+/// for the X10 form's reason too: a terminal left in mode 1015 by something
+/// earlier still sends them, and `KeyParser` frames them either way.
 ///
 /// Returns null for a field below the bias, for a button code that does not
 /// fit in the byte it came from, and for the SGR and X10 forms -- each of the

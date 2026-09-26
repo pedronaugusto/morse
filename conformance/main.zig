@@ -325,36 +325,101 @@ test "every named mode is set and reset as DECRQM sees it" {
     }
 }
 
-test "the mouse modes go on and off together" {
+/// The emulator's mouse, whole: the motion it reports, the encoding it
+/// spells reports in, and which of the eight mouse modes DECRQM would call
+/// set. The first two are one setting each; the modes are a flag each, the
+/// way a terminal that keeps them independently holds them.
+const MouseState = struct {
+    event: @FieldType(@FieldType(Terminal, "flags"), "mouse_event"),
+    format: @FieldType(@FieldType(Terminal, "flags"), "mouse_format"),
+    modes: [8]bool,
+};
+
+/// The eight modes of the two settings: the motions, then the encodings.
+const mouse_modes = [_]vt.Mode{
+    .mouse_event_x10,
+    .mouse_event_normal,
+    .mouse_event_button,
+    .mouse_event_any,
+    .mouse_format_utf8,
+    .mouse_format_sgr,
+    .mouse_format_urxvt,
+    .mouse_format_sgr_pixels,
+};
+
+fn mouseState(v: *Vt) MouseState {
+    var modes: [8]bool = undefined;
+    for (mouse_modes, &modes) |mode, *on| on.* = v.term.modes.get(mode);
+    return .{
+        .event = v.term.flags.mouse_event,
+        .format = v.term.flags.mouse_format,
+        .modes = modes,
+    };
+}
+
+/// What the emulator should hold after `mouse(w, m)`: that motion, that
+/// encoding, and those two modes alone.
+fn mouseExpected(m: morse.Mouse) MouseState {
+    var modes: [8]bool = @splat(false);
+    for (mouse_modes, &modes) |mode, *on| {
+        const number = @intFromEnum(mode);
+        on.* = number == m.motion.number() or number == m.encoding.number();
+    }
+    return .{
+        .event = switch (m.motion) {
+            .press => .normal,
+            .drag => .button,
+            .any => .any,
+        },
+        .format = switch (m.encoding) {
+            .sgr => .sgr,
+            .sgr_pixels => .sgr_pixels,
+            .rxvt => .urxvt,
+        },
+        .modes = modes,
+    };
+}
+
+const mouse_off: MouseState = .{ .event = .none, .format = .x10, .modes = @splat(false) };
+
+/// Leaves the emulator in the state `subset` of the eight modes turned on in
+/// order would: some other program's leftovers.
+fn mouseLeftovers(v: *Vt, subset: usize) !void {
+    try morse.mouseOff(v.w());
+    for (mouse_modes, 0..) |mode, i| {
+        if (subset & (@as(usize, 1) << @intCast(i)) != 0) try morse.setMode(v.w(), @intFromEnum(mode), true);
+    }
+    v.feed();
+}
+
+/// Every mouse a program can ask for.
+fn everyMouse() [9]morse.Mouse {
+    var all: [9]morse.Mouse = undefined;
+    var n: usize = 0;
+    for (std.enums.values(morse.Mouse.Motion)) |motion| {
+        for (std.enums.values(morse.Mouse.Encoding)) |encoding| {
+            all[n] = .{ .motion = motion, .encoding = encoding };
+            n += 1;
+        }
+    }
+    return all;
+}
+
+test "the mouse modes DECRQM sees are the one motion and the one encoding asked for" {
     var v: Vt = undefined;
     try v.init(80, 24);
     defer v.deinit();
 
-    const numbers = [_]u16{ 1000, 1002, 1003, 1004, 1006, 1015, 1016 };
+    const numbers = [_]u16{ 9, 1000, 1002, 1003, 1005, 1006, 1015, 1016 };
 
-    try morse.mouse(v.w(), .{
-        .press = true,
-        .drag = true,
-        .any_motion = true,
-        .sgr = true,
-        .sgr_pixels = true,
-        .rxvt = true,
-        .focus = true,
-    });
+    // Everything on first, as a careless program might leave it.
+    for (numbers) |number| try morse.setMode(v.w(), number, true);
+    v.feed();
+
+    try morse.mouse(v.w(), .{ .motion = .press });
     v.feed();
     for (numbers) |number| {
-        try checkEqual(morse.ModeState.set, try modeState(&v, number));
-    }
-
-    // One call that names two modes leaves the other five off, which is the
-    // whole reason `mouse` writes all seven.
-    try morse.mouse(v.w(), .{ .press = true, .sgr = true });
-    v.feed();
-    for (numbers) |number| {
-        const expected: morse.ModeState = if (number == 1000 or number == 1006)
-            .set
-        else
-            .reset;
+        const expected: morse.ModeState = if (number == 1000 or number == 1006) .set else .reset;
         try checkEqual(expected, try modeState(&v, number));
     }
 
@@ -365,32 +430,64 @@ test "the mouse modes go on and off together" {
     }
 }
 
-test "the mouse reports what was asked for, whatever came before" {
+test "the mouse is what was asked for, whatever any program left on" {
     var v: Vt = undefined;
     try v.init(80, 24);
     defer v.deinit();
 
-    // The terminal keeps the motion reported and the encoding as one
-    // setting each; a mode written off after another on resets it. Every
-    // step here is a set a program asks for after the one before.
-    const Step = struct { morse.Mouse, @TypeOf(v.term.flags.mouse_event), @TypeOf(v.term.flags.mouse_format) };
-    const steps = [_]Step{
-        .{ .{ .press = true, .drag = true, .sgr = true, .focus = true }, .button, .sgr },
-        .{ .{ .press = true, .sgr = true, .focus = true }, .normal, .sgr },
-        .{ .{ .press = true, .drag = true, .sgr = true }, .button, .sgr },
-        .{ .{ .press = true, .any_motion = true, .sgr = true }, .any, .sgr },
-        .{ .{ .press = true, .sgr = true, .sgr_pixels = true }, .normal, .sgr_pixels },
-        .{ .{ .press = true, .sgr = true, .rxvt = true }, .normal, .sgr },
-        .{ .{ .press = true, .rxvt = true }, .normal, .urxvt },
-        .{ .{ .press = true, .sgr = true }, .normal, .sgr },
-        .{ .{}, .none, .x10 },
-    };
-    for (steps) |step| {
-        try morse.mouse(v.w(), step[0]);
+    // Every subset of the eight modes, switched on in order, is every state
+    // the two settings can be in and every set of flags besides.
+    for (0..256) |subset| {
+        for (everyMouse()) |m| {
+            try mouseLeftovers(&v, subset);
+            try morse.mouse(v.w(), m);
+            v.feed();
+            try checkEqual(mouseExpected(m), mouseState(&v));
+        }
+        try mouseLeftovers(&v, subset);
+        try morse.mouseOff(v.w());
         v.feed();
-        try checkEqual(step[1], v.term.flags.mouse_event);
-        try checkEqual(step[2], v.term.flags.mouse_format);
+        try checkEqual(mouse_off, mouseState(&v));
     }
+}
+
+test "every change of motion and of encoding lands, one call after another" {
+    var v: Vt = undefined;
+    try v.init(80, 24);
+    defer v.deinit();
+
+    // From every mouse to every other, and to off and back, in a run: the
+    // way a program that changes its mind per view calls it.
+    for (everyMouse()) |from| {
+        for (everyMouse()) |to| {
+            try morse.mouse(v.w(), from);
+            v.feed();
+            try checkEqual(mouseExpected(from), mouseState(&v));
+            try morse.mouse(v.w(), to);
+            v.feed();
+            try checkEqual(mouseExpected(to), mouseState(&v));
+        }
+        try morse.mouseOff(v.w());
+        v.feed();
+        try checkEqual(mouse_off, mouseState(&v));
+    }
+}
+
+test "focus reports are their own mode and the mouse leaves them alone" {
+    var v: Vt = undefined;
+    try v.init(80, 24);
+    defer v.deinit();
+
+    try morse.focusEvents.set(v.w(), true);
+    try morse.mouse(v.w(), .{ .motion = .any, .encoding = .rxvt });
+    try morse.mouseOff(v.w());
+    v.feed();
+    try checkEqual(morse.ModeState.set, try modeState(&v, morse.focusEvents.number));
+
+    try morse.focusEvents.set(v.w(), false);
+    try morse.mouse(v.w(), .{ .motion = .drag });
+    v.feed();
+    try checkEqual(morse.ModeState.reset, try modeState(&v, morse.focusEvents.number));
 }
 
 test "the win32 input mode is one this emulator does not implement" {
@@ -1530,6 +1627,6 @@ test "a mode morse does not name still goes through setMode" {
 //=========================================================================
 
 test "how many claims this file made" {
-    try std.testing.expectEqual(@as(usize, 1068), checks);
+    try std.testing.expectEqual(@as(usize, 3775), checks);
     std.debug.print("conformance: {d} assertions against the emulator\n", .{checks});
 }

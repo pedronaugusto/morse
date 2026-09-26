@@ -159,77 +159,115 @@ pub const colorScheme = PrivateMode(2031);
 /// the glyph lands where it was asked for.
 pub const autoWrap = PrivateMode(7);
 
-/// Which mouse reports a program wants. Every field is one DEC private mode,
-/// switched independently by `mouse`.
-pub const Mouse = packed struct {
-    /// Button press and release reports (mode 1000), wheel included.
-    press: bool = false,
-    /// Motion reports while a button is held (mode 1002) — drag.
-    drag: bool = false,
-    /// Motion reports whether or not a button is held (mode 1003). The
-    /// noisiest mode there is: a report per cell the pointer crosses.
-    any_motion: bool = false,
-    /// SGR extended coordinates (mode 1006), which `parseMouse` reads. Any
-    /// program wanting coordinates past column 223 needs this.
-    sgr: bool = false,
-    /// SGR coordinates in pixels rather than cells (mode 1016). Same report
-    /// shape as `sgr`; `toCells` converts what comes back.
-    sgr_pixels: bool = false,
-    /// The rxvt encoding (mode 1015), which `parseMouseRxvt` reads. The X10
-    /// report with its three fields spelled in decimal, so it carries a
-    /// column past the 223 the biased byte caps at — but a release in it
-    /// still names no button, which is why `sgr` is the one to ask for. A
-    /// terminal offered both sends SGR.
-    rxvt: bool = false,
-    /// Focus in and out reports (mode 1004), the same mode as `focusEvents`.
-    focus: bool = false,
+/// Which mouse reports a program wants: what the pointer reports, and how
+/// the report is spelled.
+///
+/// This is the shape a terminal keeps it in. A terminal holds one motion
+/// setting and one encoding setting, not a switch per DEC private mode:
+/// turning on 1002 replaces 1000 rather than joining it, and turning off any
+/// mode of a setting puts the whole setting back to its default. So the
+/// mouse is one motion and one encoding, and there is no value of this type
+/// a terminal cannot be in.
+///
+/// Mouse reports off altogether is not a value of this type but the other
+/// call, `mouseOff`: the one state where neither setting means anything.
+pub const Mouse = packed struct(u32) {
+    /// What the pointer reports.
+    motion: Motion,
+    /// How each report is spelled. SGR unless there is a reason.
+    encoding: Encoding = .sgr,
+
+    /// What the pointer reports, each a superset of the one before. The
+    /// values are the DEC private modes that ask for them.
+    pub const Motion = enum(u16) {
+        /// Button presses and releases, wheel included (mode 1000).
+        press = 1000,
+        /// That, and motion while a button is held (mode 1002): a drag.
+        drag = 1002,
+        /// That, and motion with no button held (mode 1003). The noisiest
+        /// setting there is: a report per cell the pointer crosses.
+        any = 1003,
+
+        /// The DEC private mode that asks for this motion, ready to hand to
+        /// `queryMode`.
+        pub fn number(m: Motion) u16 {
+            return @intFromEnum(m);
+        }
+    };
+
+    /// How a report is spelled, each one `parseMouse` or `parseMouseRxvt`
+    /// reads at any column. The values are the DEC private modes that ask
+    /// for them.
+    ///
+    /// Two encodings a terminal has are not here, and `mouse` turns both off.
+    /// The X10 form -- no mode at all, the default a terminal falls back to
+    /// -- caps a coordinate at 223 and names no button on a release, and the
+    /// UTF-8 form (mode 1005) cannot be framed without knowing it was asked
+    /// for.
+    pub const Encoding = enum(u16) {
+        /// SGR (mode 1006): `CSI < b ; x ; y M`, a release as `m` naming its
+        /// button, coordinates in cells with no cap. What `parseMouse` reads.
+        sgr = 1006,
+        /// The SGR report counting pixels rather than cells (mode 1016).
+        /// Byte-identical to `sgr` on the wire, so the program that asked
+        /// for it sets `MouseEvent.pixels` and calls `toCells`.
+        sgr_pixels = 1016,
+        /// The rxvt form (mode 1015): the X10 report spelled in decimal,
+        /// uncapped, but a release still names no button. What
+        /// `parseMouseRxvt` reads; SGR is the one to ask for.
+        rxvt = 1015,
+
+        /// The DEC private mode that asks for this encoding, ready to hand to
+        /// `queryMode`.
+        pub fn number(e: Encoding) u16 {
+            return @intFromEnum(e);
+        }
+    };
 };
 
-/// Sets every mouse mode at once: each field of `modes` gets its own `h` or
-/// `l`, so what is asked for goes on and everything else goes off.
+/// Every DEC private mode of the motion setting: X10 press-only reporting
+/// (9), then 1000, 1002 and 1003. Mode 9 is no `Mouse.Motion` -- it reports a
+/// press and nothing else -- but a terminal can be left in it.
+const motion_modes = [_]u16{ 9, 1000, 1002, 1003 };
+
+/// Every DEC private mode of the encoding setting: UTF-8 (1005), SGR (1006),
+/// rxvt (1015) and SGR pixels (1016).
+const encoding_modes = [_]u16{ 1005, 1006, 1015, 1016 };
+
+/// Puts the terminal's mouse in exactly the state `m` names, whatever it was
+/// in before.
 ///
-/// Every `l` is written before any `h`. A terminal keeps which motion it
-/// reports (1000, 1002, 1003) as one setting and the encoding (1006, 1015,
-/// 1016) as another, and resetting any mode of a setting resets the setting:
-/// `1002h` then `1003l` leaves no mouse reports at all, and `1006h` then
-/// `1015l` leaves the X10 encoding. So the modes that go off go first, and
-/// of those that go on, the richer comes last and is what the terminal
-/// keeps: drag over press, any motion over drag, SGR over rxvt, SGR pixels
-/// over SGR.
+/// Every other mode of each setting goes off first, then the motion and the
+/// encoding go on, one `h` each. That is right under both of the ways
+/// terminals keep these modes. Most keep one setting each, where any `l`
+/// resets the setting and the last `h` is what counts: the offs leave the
+/// defaults and the two `h`s replace them. A few keep a flag per mode, where
+/// only the offs can clear a mode something earlier left on: after them the
+/// two named here are the only flags set. Either way nothing can come after
+/// an `h` and undo it, which is what goes wrong when the `h`s and `l`s are
+/// written in mode-number order.
 ///
-/// That is the point of taking the whole set rather than one flag: a program
-/// wanting press and wheel reports without a report per pointer cell says
-/// `.{ .press = true, .sgr = true }` and is not left with mode 1003 still on
-/// from some earlier call.
+/// So a program never has to know what was on before, and never asks for
+/// press reports without also saying which motion it does not want: a call
+/// is the whole mouse.
 ///
-/// The same reach is why `Mouse.focus` is here: mode 1004 is also
-/// `focusEvents`, and a call that leaves `focus` false turns it off. A program
-/// that wants focus reports must say so here, not only through `focusEvents`.
-///
-/// It is why `Mouse.rxvt` is here too. A program has little reason to ask for
-/// mode 1015, but a terminal left in it by something earlier keeps sending
-/// rxvt reports until it is told to stop, and a call that could not say `l`
-/// for 1015 could not stop it.
-pub fn mouse(w: *Writer, modes: Mouse) Writer.Error!void {
-    // In the order each goes on: the motions, focus, then the encodings
-    // with the one the terminal should keep last.
-    const order = [_]struct { u16, bool }{
-        .{ 1000, modes.press },
-        .{ 1002, modes.drag },
-        .{ 1003, modes.any_motion },
-        .{ 1004, modes.focus },
-        .{ 1015, modes.rxvt },
-        .{ 1006, modes.sgr },
-        .{ 1016, modes.sgr_pixels },
-    };
-    for (order) |m| if (!m[1]) try setMode(w, m[0], false);
-    for (order) |m| if (m[1]) try setMode(w, m[0], true);
+/// Focus reporting is not the mouse and is not touched here: `focusEvents`
+/// switches it.
+pub fn mouse(w: *Writer, m: Mouse) Writer.Error!void {
+    for (motion_modes) |mode| if (mode != m.motion.number()) try setMode(w, mode, false);
+    for (encoding_modes) |mode| if (mode != m.encoding.number()) try setMode(w, mode, false);
+    try setMode(w, m.motion.number(), true);
+    try setMode(w, m.encoding.number(), true);
 }
 
-/// Turns off every mouse mode `mouse` can turn on. What a program runs on the
-/// way out.
+/// Turns mouse reporting off: every mode of the motion setting and of the
+/// encoding setting, so the terminal is left reporting nothing and spelling
+/// it the default way, whoever turned what on. What a program writes on the
+/// way out when it does not know what it turned on; one that does can turn
+/// off the motion and the encoding it asked for and nothing else.
 pub fn mouseOff(w: *Writer) Writer.Error!void {
-    try mouse(w, .{});
+    for (motion_modes) |mode| try setMode(w, mode, false);
+    for (encoding_modes) |mode| try setMode(w, mode, false);
 }
 
 /// The five flags of the kitty keyboard protocol, in the bit order the
@@ -558,58 +596,141 @@ test "setMode reaches a mode morse does not name" {
     try std.testing.expectEqualStrings("\x1b[?7h\x1b[?65534l", out.written());
 }
 
-test "mouse gives each flag its own h or l" {
+test "mouse turns every other mode off, then one motion and one encoding on" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try mouse(&out.writer, .{ .press = true, .sgr = true });
+    try mouse(&out.writer, .{ .motion = .press });
     try std.testing.expectEqualStrings(
-        "\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1015l\x1b[?1016l\x1b[?1000h\x1b[?1006h",
+        "\x1b[?9l\x1b[?1002l\x1b[?1003l" ++ // the other motions
+            "\x1b[?1005l\x1b[?1015l\x1b[?1016l" ++ // the other encodings
+            "\x1b[?1000h\x1b[?1006h",
         out.written(),
     );
 }
 
-test "mouseOff turns every mouse mode off" {
+test "mouse writes the drag motion and the pixel encoding the same way" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    try mouse(&out.writer, .{ .motion = .drag, .encoding = .sgr_pixels });
+    try std.testing.expectEqualStrings(
+        "\x1b[?9l\x1b[?1000l\x1b[?1003l" ++
+            "\x1b[?1005l\x1b[?1006l\x1b[?1015l" ++
+            "\x1b[?1002h\x1b[?1016h",
+        out.written(),
+    );
+}
+
+test "mouseOff turns off every mode of both settings" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
     try mouseOff(&out.writer);
     try std.testing.expectEqualStrings(
-        "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1015l\x1b[?1006l\x1b[?1016l",
+        "\x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l" ++
+            "\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l",
         out.written(),
     );
 }
 
-test "every mouse flag on turns on every mode" {
-    var out: Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
-
-    try mouse(&out.writer, .{
-        .press = true,
-        .drag = true,
-        .any_motion = true,
-        .sgr = true,
-        .sgr_pixels = true,
-        .rxvt = true,
-        .focus = true,
-    });
-    try std.testing.expectEqualStrings(
-        "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1015h\x1b[?1006h\x1b[?1016h",
-        out.written(),
-    );
+test "the motions and encodings carry the modes they document" {
+    try std.testing.expectEqual(@as(u16, 1000), Mouse.Motion.press.number());
+    try std.testing.expectEqual(@as(u16, 1002), Mouse.Motion.drag.number());
+    try std.testing.expectEqual(@as(u16, 1003), Mouse.Motion.any.number());
+    try std.testing.expectEqual(@as(u16, 1006), Mouse.Encoding.sgr.number());
+    try std.testing.expectEqual(@as(u16, 1016), Mouse.Encoding.sgr_pixels.number());
+    try std.testing.expectEqual(@as(u16, 1015), Mouse.Encoding.rxvt.number());
+    try std.testing.expectEqual(Mouse.Encoding.sgr, (Mouse{ .motion = .press }).encoding);
 }
 
-test "mouse can ask for the rxvt encoding, and turns it off otherwise" {
-    var out: Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
+/// The two ways a terminal keeps the mouse modes, folded over the bytes
+/// `mouse` and `mouseOff` write.
+const MouseModel = struct {
+    /// One setting each: the last `h` is the motion, and any `l` of a
+    /// motion mode puts it back to none -- 0 here. The same for the encoding,
+    /// where 0 is the X10 default.
+    motion: u16 = 0,
+    encoding: u16 = 0,
+    /// A flag per mode, each switched by its own `h` and `l` alone, in the
+    /// order of `motion_modes` then `encoding_modes`.
+    flags: u8 = 0,
 
-    // Mode 1015 on its own: what a program reading `parseMouseRxvt` asks for,
-    // and the state a terminal has to be put back out of.
-    try mouse(&out.writer, .{ .press = true, .rxvt = true });
-    try std.testing.expectEqualStrings(
-        "\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006l\x1b[?1016l\x1b[?1000h\x1b[?1015h",
-        out.written(),
-    );
+    fn flagOf(mode: u16) ?u3 {
+        for (motion_modes ++ encoding_modes, 0..) |m, i| if (m == mode) return @intCast(i);
+        return null;
+    }
+
+    fn isMotion(mode: u16) bool {
+        return std.mem.indexOfScalar(u16, &motion_modes, mode) != null;
+    }
+
+    fn apply(model: *MouseModel, bytes: []const u8) !void {
+        var rest = bytes;
+        while (rest.len != 0) {
+            try std.testing.expect(std.mem.startsWith(u8, rest, seq.csi ++ "?"));
+            rest = rest[3..];
+            const end = std.mem.indexOfAny(u8, rest, "hl").?;
+            const mode = try std.fmt.parseInt(u16, rest[0..end], 10);
+            const on = rest[end] == 'h';
+            rest = rest[end + 1 ..];
+
+            const bit = @as(u8, 1) << (flagOf(mode) orelse return error.NotAMouseMode);
+            if (on) model.flags |= bit else model.flags &= ~bit;
+            const setting = if (isMotion(mode)) &model.motion else &model.encoding;
+            setting.* = if (on) mode else 0;
+        }
+    }
+};
+
+test "mouse leaves exactly what it names, from any state, under both ways of keeping the modes" {
+    // Every state a terminal can have been left in: any subset of the eight
+    // modes, turned on in order, which is every one-setting state as well.
+    for (0..256) |subset| {
+        for (std.enums.values(Mouse.Motion)) |motion| {
+            for (std.enums.values(Mouse.Encoding)) |encoding| {
+                var before: Writer.Allocating = .init(std.testing.allocator);
+                defer before.deinit();
+                for (motion_modes ++ encoding_modes, 0..) |mode, i| {
+                    if (subset & (@as(usize, 1) << @intCast(i)) != 0) try setMode(&before.writer, mode, true);
+                }
+                var model: MouseModel = .{};
+                try model.apply(before.written());
+
+                var out: Writer.Allocating = .init(std.testing.allocator);
+                defer out.deinit();
+                try mouse(&out.writer, .{ .motion = motion, .encoding = encoding });
+                try model.apply(out.written());
+
+                try std.testing.expectEqual(motion.number(), model.motion);
+                try std.testing.expectEqual(encoding.number(), model.encoding);
+                const want = (@as(u8, 1) << MouseModel.flagOf(motion.number()).?) |
+                    (@as(u8, 1) << MouseModel.flagOf(encoding.number()).?);
+                try std.testing.expectEqual(want, model.flags);
+
+                // And off from there is off both ways.
+                var off: Writer.Allocating = .init(std.testing.allocator);
+                defer off.deinit();
+                try mouseOff(&off.writer);
+                try model.apply(off.written());
+                try std.testing.expectEqual(MouseModel{}, model);
+            }
+        }
+    }
+}
+
+test "mouseOff turns the mouse off from any state" {
+    for (0..256) |subset| {
+        var before: Writer.Allocating = .init(std.testing.allocator);
+        defer before.deinit();
+        for (motion_modes ++ encoding_modes, 0..) |mode, i| {
+            if (subset & (@as(usize, 1) << @intCast(i)) != 0) try setMode(&before.writer, mode, true);
+        }
+        try mouseOff(&before.writer);
+        var model: MouseModel = .{};
+        try model.apply(before.written());
+        try std.testing.expectEqual(MouseModel{}, model);
+    }
 }
 
 test "kitty flags are the bits the protocol numbers" {
@@ -843,7 +964,7 @@ test "no writer here puts two modes in one sequence" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try mouse(&out.writer, .{ .press = true, .sgr = true });
+    try mouse(&out.writer, .{ .motion = .press });
     try altScreen.set(&out.writer, true);
     try syncOutput.set(&out.writer, true);
     try setMode(&out.writer, 25, false);
@@ -857,5 +978,5 @@ test "no writer here puts two modes in one sequence" {
         try std.testing.expect(std.mem.indexOfScalar(u8, body[0..end], ';') == null);
         rest = body[end + 1 ..];
     }
-    try std.testing.expectEqual(@as(usize, 10), count);
+    try std.testing.expectEqual(@as(usize, 11), count);
 }

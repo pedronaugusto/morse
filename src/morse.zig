@@ -149,11 +149,11 @@ pub const autoWrap = mode.autoWrap;
 /// Unasked reports when the terminal's palette turns light or dark
 /// (mode 2031).
 pub const colorScheme = mode.colorScheme;
-/// Which mouse reports a program wants.
+/// Which mouse reports a program wants: one motion and one encoding.
 pub const Mouse = mode.Mouse;
-/// Sets every mouse mode at once, each flag its own `h` or `l`.
+/// Puts the mouse in exactly the state a `Mouse` names, whatever was on.
 pub const mouse = mode.mouse;
-/// Turns off every mouse mode `mouse` can turn on.
+/// Turns mouse reporting off, every mode of both settings.
 pub const mouseOff = mode.mouseOff;
 
 //=========================================================================
@@ -628,7 +628,7 @@ test "the root module re-exports what the README promises" {
     try syncOutput.set(w, true);
     try focusEvents.set(w, true);
     try cursorVisible.set(w, false);
-    try mouse(w, .{ .press = true });
+    try mouse(w, .{ .motion = .press });
     try mouseOff(w);
     try kittyKeyboardPush(w, .{ .disambiguate_escape_codes = true });
     try kittyKeyboardPop(w);
@@ -913,12 +913,12 @@ test "the root module re-exports what the README promises" {
     const shape: CursorShape = .block;
     const hand: PointerShape = .not_allowed;
     const flags: KittyFlags = .{};
-    const modes: Mouse = .{};
+    const modes: Mouse = .{ .motion = .drag };
     const report: ModeReport = .{ .mode = 1, .state = .set };
     const position: CursorPosition = .{ .row = 1, .col = 1 };
     const paged: ExtendedCursorPosition = .{ .row = 1, .col = 1, .page = 1 };
     const ev: MouseEvent = .{ .button = .left, .x = 1, .y = 1, .press = true };
-    try std.testing.expect(shape == .block and flags.bits() == 0 and !modes.press);
+    try std.testing.expect(shape == .block and flags.bits() == 0 and modes.encoding == .sgr);
     try std.testing.expectEqualStrings("not-allowed", hand.name());
     try std.testing.expect(report.mode == 1 and position.row == 1 and ev.x == 1);
     try std.testing.expect(paged.page == 1);

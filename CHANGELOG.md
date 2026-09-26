@@ -12,24 +12,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   told from an answer about a picture by this id alone, and the default of 31
   sat inside the range a program is as likely as not to use for its own
   pictures. The program now picks one it never sends a picture under.
+- **`Mouse` is one motion and one encoding.** It was seven independent flags,
+  one per DEC private mode, and a terminal does not keep the mouse that way:
+  it holds one motion setting (1000, 1002, 1003) and one encoding setting
+  (1006, 1015, 1016), and a mode written off resets its whole setting. So
+  `mouse` could turn the mouse off while turning it on -- press, drag and SGR
+  wrote `1002h` then `1003l`, which leaves no reports at all, and `1006h`
+  then `1015l` left the X10 encoding. `Mouse` is now
+  `{ motion: Motion, encoding: Encoding = .sgr }`, with `Motion` one of
+  `press`, `drag`, `any` and `Encoding` one of `sgr`, `sgr_pixels`, `rxvt`,
+  each carrying its mode `number()`. `mouse` writes every other mode of both
+  settings off -- X10 (9) and UTF-8 (1005) included -- then one `h` for the
+  motion and one for the encoding, which is exact on the terminals that keep
+  one setting each and on those that keep a flag per mode. `mouseOff` turns
+  all eight off. `.{ .press = true, .sgr = true }` becomes
+  `.{ .motion = .press }`, and `.drag = true` becomes `.motion = .drag`.
+- **Focus reports left `Mouse`.** `Mouse.focus` switched mode 1004, the same
+  mode as `focusEvents`, so a mouse call could turn focus reports off by
+  leaving it out. `focusEvents` is now the one way, and no mouse call touches
+  mode 1004.
 
 ### Changed
 
 - `parseGraphicsResponse`'s documentation no longer says this package writes
   no graphics commands, which stopped being true when it began to.
-
-### Fixed
-
-- **`mouse` could turn the mouse off while turning it on.** It wrote each
-  mode's `h` or `l` in ascending order, but a terminal keeps the motion it
-  reports (1000, 1002, 1003) as one setting and the encoding (1006, 1015,
-  1016) as another, and a mode written off resets its setting: asking for
-  press, drag and SGR wrote `1002h` then `1003l`, which leaves no mouse
-  reports at all, and `1006h` then `1015l` left the X10 encoding. Every `l`
-  now goes first, and of the modes that go on the richer goes last: drag over
-  press, any motion over drag, SGR over rxvt, SGR pixels over SGR. The
-  conformance suite now checks what the emulator reports after each of a run
-  of calls, not only each mode's own flag.
+- The conformance step checks the emulator's whole mouse after `mouse` and
+  `mouseOff` from every state other programs can leave the eight modes in,
+  and across every change from one mouse to another: the motion and encoding
+  in effect, and which modes it would report set.
 
 ## [0.5.0] - 2026-09-20
 
