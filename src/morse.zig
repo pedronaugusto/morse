@@ -33,6 +33,7 @@ const notifications = @import("notify.zig");
 const osc = @import("osc.zig");
 const probing = @import("probe.zig");
 const query = @import("query.zig");
+const replies = @import("reply.zig");
 const status = @import("status.zig");
 const style = @import("style.zig");
 const tcap = @import("tcap.zig");
@@ -236,6 +237,8 @@ pub const parseColorSchemeReply = query.parseColorSchemeReply;
 pub const Probe = probing.Probe;
 /// Whether a reply answers a particular question.
 pub const probeMatches = probing.matches;
+/// Which question of a probe an event from `KeyParser` answers.
+pub const probeAnswered = probing.answered;
 
 //=========================================================================
 // Mouse reports.
@@ -350,6 +353,9 @@ pub const Kind = key.Kind;
 pub const KeyEvent = key.KeyEvent;
 /// One thing that arrived on the terminal's input.
 pub const Event = key.Event;
+/// The terminal's answer to a question, read: what `Event.reply` carries.
+/// `Reply.parse` reads one from a whole sequence a program framed itself.
+pub const Reply = replies.Reply;
 /// How big the terminal became, as an in-band resize report gives it.
 pub const Resize = key.Resize;
 /// A byte stream turned into events, over a buffer the caller owns.
@@ -588,6 +594,7 @@ test {
     _ = @import("osc.zig");
     _ = @import("probe.zig");
     _ = @import("query.zig");
+    _ = @import("reply.zig");
     _ = @import("seq.zig");
     _ = @import("status.zig");
     _ = @import("style.zig");

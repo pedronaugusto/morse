@@ -37,6 +37,7 @@ const std = @import("std");
 const corpus = @import("corpus.zig");
 const device = @import("device.zig");
 const graphics = @import("graphics.zig");
+const key = @import("key.zig");
 const mode = @import("mode.zig");
 const multicursor = @import("multicursor.zig");
 const query = @import("query.zig");
@@ -231,6 +232,50 @@ pub fn matches(reply: []const u8, question: Probe.Question) bool {
         .cell_pixels => windowSizeFor(reply, .cell_pixels),
         .secondary_device_attributes => device.parseSecondaryDeviceAttributes(reply) != null,
         .device_attributes => device.parseDeviceAttributes(reply) != null,
+    };
+}
+
+/// Which question an event from `KeyParser` answers, or null for one that
+/// answers none: a key, a mouse report, a reply to something asked outside
+/// the probe.
+///
+/// The same routing as `matches`, read off the typed event rather than the
+/// bytes, so a program that reads its input as events asks this and never
+/// parses a reply twice. Whether a graphics answer is the probe's is the
+/// program's to check against `Probe.graphics_id`.
+pub fn answered(event: key.Event) ?Probe.Question {
+    return switch (event) {
+        .color_scheme => .color_scheme,
+        .reply => |r| switch (r) {
+            .cursor_position => .cursor_position,
+            .color => |c| switch (c.target) {
+                .foreground => .foreground_color,
+                .background => .background_color,
+                .cursor => .cursor_color,
+            },
+            .mode => |m| if (m.mode == mode.syncOutput.number)
+                .sync_output
+            else if (m.mode == mode.unicodeCore.number)
+                .unicode_core
+            else if (m.mode == mode.inBandResize.number)
+                .in_band_resize
+            else
+                null,
+            .kitty_keyboard => .kitty_keyboard,
+            .modify_keys => |m| if (m.resource == .other_keys) .modify_other_keys else null,
+            .graphics => .graphics,
+            .extra_cursor_support => .extra_cursors,
+            .version => .version,
+            .window_size => |w| switch (w.what) {
+                .text_area_cells => .text_area_cells,
+                .cell_pixels => .cell_pixels,
+                else => null,
+            },
+            .secondary_device_attributes => .secondary_device_attributes,
+            .device_attributes => .device_attributes,
+            else => null,
+        },
+        else => null,
     };
 }
 
@@ -445,10 +490,9 @@ test "a reply to nothing the probe asked matches no question at all" {
 
 test "a probe routes a forwarded reply that arrives after DA1" {
     // The whole of it, end to end: the questions in one write, the answers
-    // framed off one byte stream by the parser that frames the keys, and
-    // each handed to the question that asked it. With a keypress in among
-    // them, because that is how they really arrive.
-    const key = @import("key.zig");
+    // framed and read off one byte stream by the parser that frames the
+    // keys, and each handed to the question that asked it. With a keypress
+    // in among them, because that is how they really arrive.
 
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
@@ -466,34 +510,52 @@ test "a probe routes a forwarded reply that arrives after DA1" {
     var storage: [256]u8 = undefined;
     var parser: key.KeyParser = .init(&storage);
 
-    var answered: [17]bool = @splat(false);
+    var seen: [17]bool = @splat(false);
     var keys: usize = 0;
     var input_path_works = false;
 
     var events = parser.feed(replies);
-    while (events.next()) |event| switch (event) {
-        .key => keys += 1,
-        .unhandled => |reply| {
-            for (every_question, 0..) |question, i| {
-                if (matches(reply, question)) {
-                    answered[i] = true;
-                    if (question == .device_attributes) input_path_works = true;
-                }
-            }
-        },
-        else => {},
-    };
+    while (events.next()) |event| {
+        if (event == .key) keys += 1;
+        const question = answered(event) orelse continue;
+        seen[@intFromEnum(question)] = true;
+        if (question == .device_attributes) input_path_works = true;
+    }
 
     // DA1 established the input path, and the later OSC reply still belongs
     // to this probe. Only the caller's timeout or quiescence period ends it.
     try std.testing.expect(input_path_works);
     try std.testing.expectEqual(@as(usize, 1), keys);
-    try std.testing.expectEqual(@as(usize, 5), std.mem.count(bool, &answered, &.{true}));
-    try std.testing.expect(answered[@intFromEnum(Probe.Question.cursor_position)]);
-    try std.testing.expect(answered[@intFromEnum(Probe.Question.background_color)]);
-    try std.testing.expect(answered[@intFromEnum(Probe.Question.sync_output)]);
-    try std.testing.expect(!answered[@intFromEnum(Probe.Question.foreground_color)]);
-    try std.testing.expect(!answered[@intFromEnum(Probe.Question.graphics)]);
+    try std.testing.expectEqual(@as(usize, 5), std.mem.count(bool, &seen, &.{true}));
+    try std.testing.expect(seen[@intFromEnum(Probe.Question.cursor_position)]);
+    try std.testing.expect(seen[@intFromEnum(Probe.Question.background_color)]);
+    try std.testing.expect(seen[@intFromEnum(Probe.Question.sync_output)]);
+    try std.testing.expect(!seen[@intFromEnum(Probe.Question.foreground_color)]);
+    try std.testing.expect(!seen[@intFromEnum(Probe.Question.graphics)]);
+}
+
+test "the question an event answers is the question its bytes match" {
+    // Every reply shape the probe asks for, and a few it does not: read as
+    // an event, each answers the question its bytes match and no other.
+    const samples = [_][]const u8{
+        "\x1b[12;40R",              "\x1b]10;rgb:1/2/3\x1b\\", "\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\",
+        "\x1b]12;rgb:ff/ff/ff\x07", "\x1b[?997;1n",            "\x1b[?2026;2$y",
+        "\x1b[?2027;1$y",           "\x1b[?2048;2$y",          "\x1b[?29u",
+        "\x1b[>4;2m",               "\x1b_Gi=31;OK\x1b\\",     "\x1b[>1;29 q",
+        "\x1bP>|name(390)\x1b\\",   "\x1b[8;24;80t",           "\x1b[6;16;8t",
+        "\x1b[>1;4000;48c",         "\x1b[?62;52;c",           "\x1b[<0;4;5M",
+        "\x1b[?1049;1$y",           "\x1b[4;480;720t",
+    };
+    for (samples) |bytes| {
+        var storage: [128]u8 = undefined;
+        var parser: key.KeyParser = .init(&storage);
+        var events = parser.feed(bytes);
+        const event = events.next().?;
+        const want: ?Probe.Question = for (every_question) |q| {
+            if (matches(bytes, q)) break q;
+        } else null;
+        try std.testing.expectEqual(want, answered(event));
+    }
 }
 
 test "fuzz matches" {

@@ -150,17 +150,19 @@ pub fn main() !void {
         // A run of printable text -- pasted, or typed faster than a read.
         // One event and a borrowed slice, not one `KeyEvent` per character.
         .text => |text| std.debug.print("text:       {s}\n", .{text}),
-        // Anything framed but not a key: a mouse report, a reply, an OSC.
-        // `probeMatches` says which question a reply answers, so the
-        // routing is a lookup rather than a table of shapes in here.
-        .unhandled => |bytes| if (morse.probeMatches(bytes, .device_attributes)) {
-            std.debug.print("terminal:   class {d}\n", .{
-                morse.parseDeviceAttributes(bytes).?.class,
-            });
-        } else if (morse.parseMouse(bytes)) |click| std.debug.print(
+        // The mouse, read: which button, where, and which modifiers.
+        .mouse => |click| std.debug.print(
             "click:      {s} at {d},{d}\n",
             .{ @tagName(click.button), click.x, click.y },
         ),
+        // An answer to a question, read. `probeAnswered` says which question
+        // of a probe it answers, so routing is a lookup, not a parse.
+        .reply => |reply| switch (reply) {
+            .device_attributes => |da| std.debug.print("terminal:   class {d}\n", .{da.class}),
+            else => {},
+        },
+        // Framed, and not a key or an answer: an OSC nobody asked for.
+        .unhandled => {},
         // A terminal asked for in-band resize says so here rather than
         // through a signal.
         .resize => |size| std.debug.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),

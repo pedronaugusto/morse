@@ -151,17 +151,19 @@ while (events.next()) |event| switch (event) {
     // A run of printable text -- pasted, or typed faster than a read.
     // One event and a borrowed slice, not one `KeyEvent` per character.
     .text => |text| std.debug.print("text:       {s}\n", .{text}),
-    // Anything framed but not a key: a mouse report, a reply, an OSC.
-    // `probeMatches` says which question a reply answers, so the
-    // routing is a lookup rather than a table of shapes in here.
-    .unhandled => |bytes| if (morse.probeMatches(bytes, .device_attributes)) {
-        std.debug.print("terminal:   class {d}\n", .{
-            morse.parseDeviceAttributes(bytes).?.class,
-        });
-    } else if (morse.parseMouse(bytes)) |click| std.debug.print(
+    // The mouse, read: which button, where, and which modifiers.
+    .mouse => |click| std.debug.print(
         "click:      {s} at {d},{d}\n",
         .{ @tagName(click.button), click.x, click.y },
     ),
+    // An answer to a question, read. `probeAnswered` says which question
+    // of a probe it answers, so routing is a lookup, not a parse.
+    .reply => |reply| switch (reply) {
+        .device_attributes => |da| std.debug.print("terminal:   class {d}\n", .{da.class}),
+        else => {},
+    },
+    // Framed, and not a key or an answer: an OSC nobody asked for.
+    .unhandled => {},
     // A terminal asked for in-band resize says so here rather than
     // through a signal.
     .resize => |size| std.debug.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),
@@ -346,10 +348,16 @@ and is empty for a report like `CSI 97 u`, which names a key without saying
 what it typed.
 
 **One parser frames the input, and holds the only state here.** `KeyParser`
-decides where each sequence ends, decodes the keys, and hands everything else
-back whole as `Event.unhandled` for `parseMouse`, `parseColorReply` or
-whichever parser reads it, so an unrecognised reply never resynchronises the
-stream a byte at a time. A run of printable text — a paste, or typing faster
+decides where each sequence ends and reads what it framed: a key is
+`Event.key`, a mouse report `Event.mouse`, and an answer to anything this
+package asks is `Event.reply`, a `Reply` holding the answer as a value — a
+mode's state, a colour, a size, a graphics acknowledgement, the terminal's
+name — so a program never parses a reply a second time and never copies one
+to read it later. Whether SGR mouse reports are in pixels is not in the
+report, so a program that asked for them sets `KeyParser.mouse_pixels`. What
+is framed and answers nothing asked comes back whole as `Event.unhandled`, so
+an unrecognised sequence never resynchronises the stream a byte at a time.
+`probeAnswered` says which question of a `Probe` an event answers. A run of printable text — a paste, or typing faster
 than a read — comes back as one `Event.text` borrowing the same buffer; a
 single printable codepoint is a keypress and comes back as `Event.key`. You
 own the buffer: `min_buffer` covers keys, but an OSC 52 reply is as long as

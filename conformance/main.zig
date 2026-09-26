@@ -1378,28 +1378,19 @@ test "the startup probe is one write and a stream of answers" {
     v.feed();
 
     // The answers come back as one byte stream carrying replies of four
-    // shapes, so they are framed the way a program frames them: by the
-    // parser that frames its keys.
+    // shapes, so they are framed and read the way a program reads them: by
+    // the parser that frames its keys, as typed replies.
     var input: [4096]u8 = undefined;
     var keys: morse.KeyParser = .init(&input);
     var events = keys.feed(v.replies());
 
     var answered: std.EnumSet(morse.Probe.Question) = .initEmpty();
-    while (events.next()) |event| switch (event) {
-        .unhandled => |bytes| {
-            // A reply answers at most one question.
-            var matched: usize = 0;
-            for (std.enums.values(morse.Probe.Question)) |question| {
-                if (morse.probeMatches(bytes, question)) {
-                    matched += 1;
-                    answered.insert(question);
-                }
-            }
-            try check(matched <= 1);
-        },
-        .color_scheme => answered.insert(.color_scheme),
-        else => {},
-    };
+    while (events.next()) |event| {
+        // Every answer the emulator sent is read as an answer: nothing it
+        // says back to the probe is left as bytes for the program.
+        try check(event != .unhandled);
+        if (morse.probeAnswered(event)) |question| answered.insert(question);
+    }
 
     // DA1 is the sentinel the whole order is built around: if it did not
     // come back, nothing about the rest of this is safe to read.
@@ -1627,6 +1618,6 @@ test "a mode morse does not name still goes through setMode" {
 //=========================================================================
 
 test "how many claims this file made" {
-    try std.testing.expectEqual(@as(usize, 3775), checks);
+    try std.testing.expectEqual(@as(usize, 3776), checks);
     std.debug.print("conformance: {d} assertions against the emulator\n", .{checks});
 }

@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
+- **`KeyParser` reads what it frames.** A mouse report is `Event.mouse`, and
+  an answer to anything this package asks -- DECRPM, DA1, DA2, XTVERSION,
+  the kitty keyboard flags, `modifyOtherKeys`, OSC 4, 10, 11 and 12, the
+  window and cell sizes, a graphics response, the cursor position,
+  XTGETTCAP, OSC 52 and the extra-cursor replies -- is `Event.reply`, a new
+  `Reply` union holding the answer as the parser that reads it returns it.
+  `Event.unhandled` is left for a sequence that answers nothing asked. A
+  program that matched `.unhandled` and called a parser matches the arm
+  instead. `KeyParser.mouse_pixels` marks SGR reports as pixels for a
+  program that asked for mode 1016, since the report cannot say so.
+  `Reply.parse` reads a sequence a program framed itself, and
+  `probeAnswered` says which question of a `Probe` an event answers.
+
 - **`Probe.graphics_id` has no default.** The graphics question's answer is
   told from an answer about a picture by this id alone, and the default of 31
   sat inside the range a program is as likely as not to use for its own

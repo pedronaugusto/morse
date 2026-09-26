@@ -35,7 +35,9 @@
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
+const mouse = @import("mouse.zig");
 const query = @import("query.zig");
+const replies = @import("reply.zig");
 const seq = @import("seq.zig");
 const win32 = @import("win32.zig");
 
@@ -379,9 +381,17 @@ pub const Event = union(enum) {
     /// `queryColorScheme`, so a program that asked once and then asked to be
     /// told sees both here and needs to tell neither apart.
     color_scheme: ColorScheme,
-    /// A complete sequence the parser framed but does not read as input: a
-    /// mouse report, a reply to a query, an OSC or DCS the terminal sent
-    /// back. Hand it to the parser that does read it.
+    /// The mouse moved, or a button went down or came up: an SGR report
+    /// (mode 1006, or 1016 in pixels when `KeyParser.mouse_pixels` says
+    /// so), an rxvt one (1015) or a legacy X10 one.
+    mouse: mouse.MouseEvent,
+    /// The terminal's answer to a question: a mode's state, its colours, a
+    /// size, a graphics acknowledgement, its identity, a capability. See
+    /// `Reply`. Where it carries bytes it borrows them from the parser's
+    /// buffer, on the same terms as `unhandled`; the rest is a value.
+    reply: replies.Reply,
+    /// A complete sequence the parser framed and cannot read: nothing this
+    /// package asks for is answered this way, and neither is any key.
     ///
     /// Borrowed from the parser's buffer, and valid only until the next call
     /// to `Events.next`, `KeyParser.feed` or `KeyParser.flush`. Copy it if it
@@ -478,6 +488,11 @@ pub const KeyParser = struct {
     /// protocols: a kitty release arrives only when the terminal was asked
     /// for event types, and is always reported.
     report_key_up: bool = false,
+    /// Whether SGR mouse reports are in pixels, which is mode 1016 and not
+    /// something the report itself says: the encoding is the same as 1006.
+    /// A program that asked for `Mouse.Encoding.sgr_pixels` sets this, and
+    /// the parser marks each `MouseEvent` it reads as `pixels`.
+    mouse_pixels: bool = false,
     /// A key still owed repeats, and how many. One win32 sequence can stand
     /// for several keypresses.
     repeating: ?KeyEvent = null,
@@ -568,6 +583,24 @@ pub const KeyParser = struct {
         return null;
     }
 
+    /// A framed sequence read as the mouse report or the reply it is, when
+    /// it is one; anything else as it came.
+    fn read(p: *const KeyParser, event: Event) Event {
+        const bytes = switch (event) {
+            .unhandled => |b| b,
+            else => return event,
+        };
+        if (mouse.parseMouse(bytes)) |m| {
+            var ev = m;
+            ev.pixels = p.mouse_pixels;
+            return .{ .mouse = ev };
+        }
+        if (mouse.parseMouseX10(bytes)) |m| return .{ .mouse = m };
+        if (mouse.parseMouseRxvt(bytes)) |m| return .{ .mouse = m };
+        if (replies.Reply.parse(bytes)) |r| return .{ .reply = r };
+        return event;
+    }
+
     /// Throws away whatever is pending. What a program calls after it has
     /// been suspended, or after the terminal has been reset underneath it,
     /// because the bytes from before are no longer part of anything.
@@ -650,7 +683,7 @@ pub const Events = struct {
                         },
                         else => {},
                     };
-                    return done.event;
+                    return p.read(done.event);
                 },
                 .skip => |n| {
                     p.start += n;
@@ -1608,6 +1641,25 @@ fn expectUnhandled(bytes: []const u8) !void {
     try std.testing.expectEqual(@as(?Event, null), events.next());
 }
 
+/// Asserts that `bytes` is framed whole and read as a reply of `tag`.
+fn expectReply(bytes: []const u8, tag: std.meta.Tag(replies.Reply)) !void {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+    var events = parser.feed(bytes);
+    const first = events.next() orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(tag, std.meta.activeTag(first.reply));
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+    try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
+}
+
+/// The one mouse report `bytes` is framed and read as.
+fn oneMouse(bytes: []const u8) !mouse.MouseEvent {
+    var buffer: [8]Event = undefined;
+    const events = collect(bytes, &buffer);
+    if (events.len != 1) return error.TestExpectedEqual;
+    return events[0].mouse;
+}
+
 test "a printable byte is a character, and carries itself as text" {
     const ev = oneKey("a").?;
     try std.testing.expectEqual(Key{ .char = 'a' }, ev.key);
@@ -2047,24 +2099,50 @@ test "a paste is a start, the text as one run, and an end" {
     try std.testing.expectEqual(@as(?Event, null), events.next());
 }
 
-test "a sequence that is not a key comes back whole" {
+test "a reply is framed whole and read as the answer it is" {
+    const cases = [_]struct { bytes: []const u8, tag: std.meta.Tag(replies.Reply) }{
+        .{ .bytes = "\x1b[?2026;1$y", .tag = .mode },
+        .{ .bytes = "\x1b[12;40R", .tag = .cursor_position },
+        .{ .bytes = "\x1b[?12;40;1R", .tag = .extended_cursor_position },
+        .{ .bytes = "\x1b[?1u", .tag = .kitty_keyboard },
+        .{ .bytes = "\x1b[?62;1;6c", .tag = .device_attributes },
+        .{ .bytes = "\x1b[>0;276;0c", .tag = .secondary_device_attributes },
+        .{ .bytes = "\x1b]52;c;aGk=\x1b\\", .tag = .clipboard },
+        .{ .bytes = "\x1b]11;rgb:0000/0000/0000\x1b\\", .tag = .color },
+        .{ .bytes = "\x1bP>|xterm(390)\x1b\\", .tag = .version },
+        .{ .bytes = "\x1bP1+r436f=323536\x1b\\", .tag = .capability },
+        .{ .bytes = "\x1bP0+r436f\x1b\\", .tag = .capability },
+        .{ .bytes = "\x1b_Gi=31;OK\x1b\\", .tag = .graphics },
+    };
+    for (cases) |case| try expectReply(case.bytes, case.tag);
+}
+
+test "a mouse report is framed whole and read" {
+    const sgr = try oneMouse("\x1b[<0;40;12M");
+    try std.testing.expectEqual(@as(u32, 40), sgr.x);
+    try std.testing.expectEqual(@as(u32, 12), sgr.y);
+    try std.testing.expect(sgr.press and !sgr.pixels);
+    // Both fields carry their value plus 32.
+    const rxvt = try oneMouse("\x1b[32;72;44M");
+    try std.testing.expectEqual(@as(u32, 40), rxvt.x);
+    try std.testing.expectEqual(@as(u32, 12), rxvt.y);
+}
+
+test "a report in pixels is marked so when the parser is told" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+    parser.mouse_pixels = true;
+    var events = parser.feed("\x1b[<0;400;120M");
+    const m = events.next().?.mouse;
+    try std.testing.expect(m.pixels);
+    try std.testing.expectEqual(@as(u32, 400), m.x);
+}
+
+test "a sequence that is neither a key nor an answer comes back whole" {
     const cases = [_][]const u8{
-        "\x1b[<0;40;12M", // an SGR mouse report
-        "\x1b[32;72;44M", // an rxvt mouse report
-        "\x1b[?2026;1$y", // a mode report
-        "\x1b[12;40R", // a cursor position report
-        "\x1b[?12;40;1R", // the DEC extended one, which carries a page
-        "\x1b[?1u", // a kitty keyboard flags reply
-        "\x1b[?62;1;6c", // primary device attributes
-        "\x1b[>0;276;0c", // secondary device attributes
-        "\x1b]52;c;aGk=\x1b\\", // a clipboard reply
-        "\x1b]11;rgb:0000/0000/0000\x1b\\", // a background colour reply
-        "\x1bP>|xterm(390)\x1b\\", // XTVERSION
-        "\x1bP1+r436f=323536\x1b\\", // an XTGETTCAP reply
-        "\x1bP0+r436f\x1b\\", // an XTGETTCAP refusal
-        "\x1b_Gi=31;OK\x1b\\", // a kitty graphics response
         "\x1b]2;title\x07", // an OSC ended by BEL
         "\x1b(B", // a character set designation
+        "\x1b[2M", // delete lines, which no terminal sends as input
     };
     for (cases) |bytes| try expectUnhandled(bytes);
 }
@@ -2077,7 +2155,7 @@ test "an rxvt mouse report is framed whole, and the key behind it survives" {
     // nothing the sequence does not already say -- unlike the X10 form, whose
     // three fields are counted rather than read.
     var events = parser.feed("\x1b[32;72;44Ma");
-    try std.testing.expectEqualStrings("\x1b[32;72;44M", events.next().?.unhandled);
+    try std.testing.expectEqual(@as(u32, 40), events.next().?.mouse.x);
     try std.testing.expectEqual(Key{ .char = 'a' }, events.next().?.key.key);
     try std.testing.expectEqual(@as(?Event, null), events.next());
 }
@@ -2090,10 +2168,8 @@ test "an XTGETTCAP reply is framed whole, and the key behind it survives" {
     // escape sequence cannot end the reply carrying it. The framing has to
     // hold for the whole of it, or the bytes after it arrive as keypresses.
     var events = parser.feed("\x1bP1+r6b656e64=1b4f46\x1b\\a");
-    try std.testing.expectEqualStrings(
-        "\x1bP1+r6b656e64=1b4f46\x1b\\",
-        events.next().?.unhandled,
-    );
+    const reply = events.next().?.reply.capability;
+    try std.testing.expect(reply.known);
     try std.testing.expectEqual(Key{ .char = 'a' }, events.next().?.key.key);
     try std.testing.expectEqual(@as(?Event, null), events.next());
 }
@@ -2107,15 +2183,26 @@ test "an XTGETTCAP reply cut in half is held until the rest of it arrives" {
     try std.testing.expectEqual(@as(usize, 12), parser.pending().len);
 
     var events = parser.feed("3536\x1b\\");
-    try std.testing.expectEqualStrings("\x1bP1+r436f=323536\x1b\\", events.next().?.unhandled);
+    try std.testing.expect(events.next().?.reply.capability.known);
     try std.testing.expectEqual(@as(?Event, null), events.next());
 }
 
-test "an unhandled sequence and the key after it both come out" {
+test "a mouse report and the key after it both come out, and so does an unread sequence" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+    var events = parser.feed("\x1b[<0;40;12Ma\x1b]2;t\x07b");
+    try std.testing.expectEqual(@as(u32, 40), events.next().?.mouse.x);
+    try std.testing.expectEqual(Key{ .char = 'a' }, events.next().?.key.key);
+    try std.testing.expectEqualStrings("\x1b]2;t\x07", events.next().?.unhandled);
+    try std.testing.expectEqual(Key{ .char = 'b' }, events.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), events.next());
+}
+
+test "a mouse report and the key after it both come out" {
     var storage: [KeyParser.min_buffer]u8 = undefined;
     var parser: KeyParser = .init(&storage);
     var events = parser.feed("\x1b[<0;40;12Ma");
-    try std.testing.expectEqualStrings("\x1b[<0;40;12M", events.next().?.unhandled);
+    try std.testing.expectEqual(@as(u32, 12), events.next().?.mouse.y);
     try std.testing.expectEqual(Key{ .char = 'a' }, events.next().?.key.key);
     try std.testing.expectEqual(@as(?Event, null), events.next());
 }
@@ -2934,7 +3021,8 @@ test "fuzz the framing against a second framer" {
 test "an X10 mouse report is framed whole, not split into keypresses" {
     // The regression this framing exists for: without it the three biased
     // bytes are handed to the key decoder as space, A and A.
-    try expectUnhandled("\x1b[M\x20\x41\x41");
+    const m = try oneMouse("\x1b[M\x20\x41\x41");
+    try std.testing.expectEqual(@as(u32, 0x41 - 32), m.x);
 }
 
 test "an X10 mouse report does not swallow what follows it" {
@@ -2942,7 +3030,7 @@ test "an X10 mouse report does not swallow what follows it" {
     var parser: KeyParser = .init(&storage);
     var events = parser.feed("\x1b[M\x20\x41\x41hi");
 
-    try std.testing.expectEqualStrings("\x1b[M\x20\x41\x41", events.next().?.unhandled);
+    try std.testing.expectEqual(@as(u32, 0x41 - 32), events.next().?.mouse.y);
     try std.testing.expectEqualStrings("hi", events.next().?.text);
     try std.testing.expectEqual(@as(?Event, null), events.next());
 }
@@ -2966,7 +3054,7 @@ test "an X10 mouse report split across reads is held until it is whole" {
         try std.testing.expectEqual(split, parser.pending().len);
 
         var second = parser.feed(whole[split..]);
-        try std.testing.expectEqualStrings(whole, second.next().?.unhandled);
+        try std.testing.expectEqual(@as(u32, 0x41 - 32), second.next().?.mouse.x);
         try std.testing.expectEqual(@as(?Event, null), second.next());
     }
 }
@@ -2993,11 +3081,11 @@ test "an in-band resize report without pixels leaves them zero" {
     try std.testing.expectEqual(@as(u32, 0), event.resize.xpixels);
 }
 
-test "a window report that is not the in-band resize is handed back whole" {
-    // Every other CSI t is a reply to something the program asked for, so it
-    // goes to parseWindowSize rather than coming out as an event here.
-    try expectUnhandled("\x1b[8;24;80t");
-    try expectUnhandled("\x1b[6;16;8t");
+test "a window report that is not the in-band resize is read as a size" {
+    // Every other CSI t with a size is a reply to something the program
+    // asked for, and comes out as that answer.
+    try expectReply("\x1b[8;24;80t", .window_size);
+    try expectReply("\x1b[6;16;8t", .window_size);
     try expectUnhandled("\x1b[t");
     // 48 with too few or too many fields is not a report this parser claims.
     try expectUnhandled("\x1b[48;24t");
