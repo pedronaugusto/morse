@@ -433,7 +433,34 @@ pub const ConsoleEvent = union(enum) {
     resize: Resize,
 };
 
-/// Console input records turned into events, one at a time.
+/// The events one console record stands for, in order: none, one or two.
+///
+/// Two when a left-Ctrl press the decoder was holding in case it was half of
+/// AltGr turns out not to be: the Ctrl press comes out first, then whatever
+/// the record that settled it stands for. Take every event before the next
+/// `ConsoleDecoder.feed`; the iterator is a value and owns them.
+pub const ConsoleEvents = struct {
+    /// The events, of which the first `len` are set. Read them with `next`.
+    events: [2]ConsoleEvent = undefined,
+    /// How many there are.
+    len: u2 = 0,
+    /// How many `next` has handed back.
+    index: u2 = 0,
+
+    /// The next event of this record, or null when there are no more.
+    pub fn next(it: *ConsoleEvents) ?ConsoleEvent {
+        if (it.index == it.len) return null;
+        defer it.index += 1;
+        return it.events[it.index];
+    }
+
+    fn push(it: *ConsoleEvents, event: ConsoleEvent) void {
+        it.events[it.len] = event;
+        it.len += 1;
+    }
+};
+
+/// Console input records turned into events.
 ///
 /// It keeps the little state a console keyboard needs — see `ConsoleState` —
 /// which is why it is a value and not a function: a character outside the
@@ -443,7 +470,7 @@ pub const ConsoleEvent = union(enum) {
 ///
 /// No allocation, no call into an operating system, and no console handle.
 /// Read the records with `ReadConsoleInputW` or whatever wrapper you prefer,
-/// copy each one into a `ConsoleRecord`, and hand it to `next`.
+/// copy each one into a `ConsoleRecord`, and hand it to `feed`.
 pub const ConsoleDecoder = struct {
     /// How long a caller holds a possible synthetic Ctrl press before
     /// settling it with `flush`, in milliseconds.
@@ -468,10 +495,12 @@ pub const ConsoleDecoder = struct {
     /// comes out as one.
     report_key_up: bool = false,
     /// A left-Ctrl press held for `altgr_window_ms` in case the right-Alt
-    /// half of AltGr follows it.
+    /// half of AltGr follows it. Any record other than that right-Alt press
+    /// settles it as a Ctrl press, reported before the record's own event.
     pending_altgr_ctrl: ?KeyEvent = null,
-    /// The synthetic modifier pair has arrived and its releases must be
-    /// hidden as well as its presses.
+    /// The synthetic modifier pair has arrived, and the records of its two
+    /// keys -- left Ctrl and right Alt, repeats and releases -- are hidden
+    /// until a record says neither is held. Every other key is reported.
     altgr_active: bool = false,
 
     /// Forgets half-arrived keyboard and mouse state. What a program calls
@@ -495,55 +524,69 @@ pub const ConsoleDecoder = struct {
         return .{ .key = ev };
     }
 
-    /// The event one record stands for, or null.
+    /// The events one record stands for, in the order they happened.
     ///
-    /// Null for a record that stands for nothing a program acts on: a menu
+    /// None for a record that stands for nothing a program acts on: a menu
     /// or focus record, a key event that names no key, half of a character
     /// still waiting for the rest of itself, and the key coming up unless
-    /// `report_key_up` is set.
+    /// `report_key_up` is set. Two when the record settles a held left-Ctrl
+    /// press as a Ctrl press (see `ConsoleEvents`).
     ///
     /// `repeat_count` is not expanded here. One record can stand for several
     /// keypresses, and the field is on the record for a caller to read.
-    pub fn next(d: *ConsoleDecoder, record: ConsoleRecord) ?ConsoleEvent {
+    pub fn feed(d: *ConsoleDecoder, record: ConsoleRecord) ConsoleEvents {
+        var out: ConsoleEvents = .{};
         switch (record) {
             .key => |r| {
                 if (d.pending_altgr_ctrl) |pending| {
                     d.pending_altgr_ctrl = null;
                     if (isAltGrRightAltPress(r)) {
                         d.altgr_active = true;
-                        return null;
+                        return out;
                     }
-                    return d.decodeKey(r) orelse .{ .key = pending };
+                    // Not AltGr, so the Ctrl press was one. It happened
+                    // before this record, and this record is read on the
+                    // same terms as any other -- another Ctrl press is held
+                    // in its turn.
+                    out.push(.{ .key = pending });
                 }
-
-                if (isPossibleAltGrCtrlPress(r)) {
-                    const event = d.decodeKey(r) orelse return null;
-                    d.pending_altgr_ctrl = event.key;
-                    return null;
-                }
-
-                if (d.altgr_active and isAltGrModifierRecord(r)) {
-                    if (r.control_key_state &
-                        (ControlKeyState.left_ctrl | ControlKeyState.right_alt) == 0)
-                    {
-                        d.altgr_active = false;
-                    }
-                    return null;
-                }
-
-                return d.decodeKey(r);
+                if (d.keyEvent(r)) |event| out.push(event);
             },
             .mouse => |r| {
+                // A mouse record is never half of AltGr either.
+                if (d.flush()) |pending| out.push(pending);
                 const ev = mouseEvent(r, d.mouse_buttons);
                 d.mouse_buttons = @truncate(r.button_state);
-                return .{ .mouse = ev };
+                out.push(.{ .mouse = ev });
             },
-            .window_buffer_size => |r| return .{ .resize = .{
-                .rows = r.rows,
-                .cols = r.cols,
-            } },
-            .other => return null,
+            .window_buffer_size => |r| {
+                if (d.flush()) |pending| out.push(pending);
+                out.push(.{ .resize = .{ .rows = r.rows, .cols = r.cols } });
+            },
+            .other => {},
         }
+        return out;
+    }
+
+    /// A key record read with no Ctrl press held.
+    fn keyEvent(d: *ConsoleDecoder, r: ConsoleKeyRecord) ?ConsoleEvent {
+        if (isPossibleAltGrCtrlPress(r)) {
+            const event = d.decodeKey(r) orelse return null;
+            d.pending_altgr_ctrl = event.key;
+            return null;
+        }
+
+        if (d.altgr_active) {
+            const held = r.control_key_state &
+                (ControlKeyState.left_ctrl | ControlKeyState.right_alt) != 0;
+            // A record that says neither key is held ends AltGr, whether or
+            // not it is one of its keys: the releases can be lost, to a
+            // window that lost focus while AltGr was down.
+            if (!held) d.altgr_active = false;
+            if (isAltGrKeyRecord(r)) return null;
+        }
+
+        return d.decodeKey(r);
     }
 
     fn decodeKey(d: *ConsoleDecoder, r: ConsoleKeyRecord) ?ConsoleEvent {
@@ -578,9 +621,16 @@ fn isAltGrRightAltPress(r: ConsoleKeyRecord) bool {
         r.control_key_state & ControlKeyState.right_alt != 0;
 }
 
-fn isAltGrModifierRecord(r: ConsoleKeyRecord) bool {
-    const left_ctrl_key = r.virtual_key_code == 0x11 or r.virtual_key_code == 0xa2;
-    const right_alt_key = r.virtual_key_code == 0x12 or r.virtual_key_code == 0xa5;
+/// A record of one of AltGr's own two keys, left Ctrl or right Alt, going
+/// either way. By side: the unsided `VK_CONTROL` and `VK_MENU` are the left
+/// Ctrl without the enhanced bit and the right Alt with it, so right Ctrl and
+/// left Alt, pressed while AltGr is held, are keys of their own.
+fn isAltGrKeyRecord(r: ConsoleKeyRecord) bool {
+    const enhanced = r.control_key_state & ControlKeyState.enhanced != 0;
+    const left_ctrl_key = r.virtual_key_code == 0xa2 or
+        (r.virtual_key_code == 0x11 and !enhanced);
+    const right_alt_key = r.virtual_key_code == 0xa5 or
+        (r.virtual_key_code == 0x12 and enhanced);
     return r.unicode_char == 0 and (left_ctrl_key or right_alt_key);
 }
 
@@ -640,10 +690,20 @@ fn mouseEvent(r: ConsoleMouseRecord, previous_buttons: u16) MouseEvent {
 
 /// One record through a decoder of its own, for a test about a single
 /// record. A character that takes two records needs a decoder that lives
-/// across both, and those tests make one.
+/// across both, and those tests make one. A decoder that has held nothing
+/// has nothing to settle, so one record is at most one event.
 fn oneRecord(record: ConsoleRecord, key_up: bool) ?ConsoleEvent {
     var decoder: ConsoleDecoder = .{ .report_key_up = key_up };
-    return decoder.next(record);
+    return single(&decoder, record);
+}
+
+/// The event one record stands for, for a test in which no record stands for
+/// two. One that does is a failure of the test, not of the decoder.
+fn single(decoder: *ConsoleDecoder, record: ConsoleRecord) ?ConsoleEvent {
+    var events = decoder.feed(record);
+    const event = events.next() orelse return null;
+    if (events.next() != null) @panic("a record stood for two events");
+    return event;
 }
 
 test "a key record comes through as the key it names" {
@@ -805,19 +865,19 @@ test "a mouse record names the button that is down, and none on a release" {
 test "mouse button transitions name the button that changed" {
     var decoder: ConsoleDecoder = .{};
 
-    const left = decoder.next(.{ .mouse = .{
+    const left = single(&decoder, .{ .mouse = .{
         .button_state = ConsoleMouseRecord.button_1,
     } }).?;
     try std.testing.expectEqual(mouse.Button.left, left.mouse.button);
     try std.testing.expect(left.mouse.press);
 
-    const right = decoder.next(.{ .mouse = .{
+    const right = single(&decoder, .{ .mouse = .{
         .button_state = ConsoleMouseRecord.button_1 | ConsoleMouseRecord.button_2,
     } }).?;
     try std.testing.expectEqual(mouse.Button.right, right.mouse.button);
     try std.testing.expect(right.mouse.press);
 
-    const released = decoder.next(.{ .mouse = .{
+    const released = single(&decoder, .{ .mouse = .{
         .button_state = ConsoleMouseRecord.button_1,
     } }).?;
     try std.testing.expectEqual(mouse.Button.right, released.mouse.button);
@@ -916,12 +976,12 @@ test "a record pairs the halves of a character outside the basic plane" {
     var decoder: ConsoleDecoder = .{};
 
     // The high half alone is not a codepoint and not a key.
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), single(&decoder, .{ .key = .{
         .key_down = true,
         .unicode_char = 0xd83d,
     } }));
 
-    const paired = decoder.next(.{ .key = .{
+    const paired = single(&decoder, .{ .key = .{
         .key_down = true,
         .unicode_char = 0xde42,
     } }).?;
@@ -930,11 +990,11 @@ test "a record pairs the halves of a character outside the basic plane" {
 
     // A half that never finds its other is dropped when anything else
     // arrives, rather than joining the next character.
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), single(&decoder, .{ .key = .{
         .key_down = true,
         .unicode_char = 0xd83d,
     } }));
-    const after = decoder.next(.{ .key = .{
+    const after = single(&decoder, .{ .key = .{
         .key_down = true,
         .virtual_key_code = 'A',
         .unicode_char = 'a',
@@ -942,18 +1002,18 @@ test "a record pairs the halves of a character outside the basic plane" {
     try std.testing.expectEqual(Key{ .char = 'a' }, after.key.key);
 
     // And a low half with nothing in front of it is nothing.
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), single(&decoder, .{ .key = .{
         .key_down = true,
         .unicode_char = 0xde42,
     } }));
 
     // `reset` forgets a half-arrived character.
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), single(&decoder, .{ .key = .{
         .key_down = true,
         .unicode_char = 0xd83d,
     } }));
     decoder.reset();
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), single(&decoder, .{ .key = .{
         .key_down = true,
         .unicode_char = 0xde42,
     } }));
@@ -963,7 +1023,7 @@ test "a record reads the character composed with Alt and the keypad" {
     var decoder: ConsoleDecoder = .{};
 
     // Alt down is a keypress; the keypad digits under it are not.
-    const alt_down = decoder.next(.{ .key = .{
+    const alt_down = single(&decoder, .{ .key = .{
         .key_down = true,
         .virtual_key_code = 0x12,
         .control_key_state = ControlKeyState.left_alt,
@@ -971,7 +1031,7 @@ test "a record reads the character composed with Alt and the keypad" {
     try std.testing.expectEqual(Key.left_alt, alt_down.key.key);
 
     for ([_]u16{ 0x61, 0x67 }) |digit| {
-        try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+        try std.testing.expectEqual(@as(?ConsoleEvent, null), single(&decoder, .{ .key = .{
             .key_down = true,
             .virtual_key_code = digit,
             .control_key_state = ControlKeyState.left_alt,
@@ -979,7 +1039,7 @@ test "a record reads the character composed with Alt and the keypad" {
     }
 
     // The character rides the Alt key coming up, and it is a press.
-    const composed = decoder.next(.{ .key = .{
+    const composed = single(&decoder, .{ .key = .{
         .key_down = false,
         .virtual_key_code = 0x12,
         .unicode_char = 0xe9,
@@ -989,7 +1049,7 @@ test "a record reads the character composed with Alt and the keypad" {
     try std.testing.expectEqualStrings("\u{e9}", composed.key.text());
 
     // A keypad digit with Alt and something else is a chord, and reported.
-    const chord = decoder.next(.{ .key = .{
+    const chord = single(&decoder, .{ .key = .{
         .key_down = true,
         .virtual_key_code = 0x61,
         .control_key_state = ControlKeyState.left_alt | ControlKeyState.left_ctrl,
@@ -1001,13 +1061,13 @@ test "a record reads the character composed with Alt and the keypad" {
 test "an astral character composed with Alt is a press" {
     var decoder: ConsoleDecoder = .{};
 
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), single(&decoder, .{ .key = .{
         .key_down = false,
         .virtual_key_code = 0x12,
         .unicode_char = 0xd83d,
     } }));
 
-    const composed = decoder.next(.{ .key = .{
+    const composed = single(&decoder, .{ .key = .{
         .key_down = false,
         .virtual_key_code = 0x12,
         .unicode_char = 0xde42,
@@ -1087,9 +1147,11 @@ test "ConsoleDecoder folds the modifier records that precede AltGr text" {
         var seen: [8]KeyEvent = undefined;
         var count: usize = 0;
         for (case.records) |record| {
-            const event = decoder.next(record) orelse continue;
-            seen[count] = event.key;
-            count += 1;
+            var events = decoder.feed(record);
+            while (events.next()) |event| {
+                seen[count] = event.key;
+                count += 1;
+            }
         }
         try std.testing.expectEqual(case.expected_kinds.len, count);
         for (seen[0..count], case.expected_kinds) |event, kind| {
@@ -1104,7 +1166,7 @@ test "ConsoleDecoder folds the modifier records that precede AltGr text" {
 
 test "ConsoleDecoder flush settles a Ctrl press outside the AltGr window" {
     var decoder: ConsoleDecoder = .{};
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.next(.{ .key = .{
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), single(&decoder, .{ .key = .{
         .key_down = true,
         .virtual_key_code = 0x11,
         .control_key_state = ControlKeyState.left_ctrl,
@@ -1115,6 +1177,176 @@ test "ConsoleDecoder flush settles a Ctrl press outside the AltGr window" {
     try std.testing.expectEqual(key.Kind.press, event.kind);
     try std.testing.expect(event.mods.ctrl);
     try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.flush());
+}
+
+/// Every event `records` stand for, through one decoder, then what `flush`
+/// settles after the last of them.
+fn feedAll(decoder: *ConsoleDecoder, records: []const ConsoleRecord, out: []ConsoleEvent) []ConsoleEvent {
+    var count: usize = 0;
+    for (records) |record| {
+        var events = decoder.feed(record);
+        while (events.next()) |event| {
+            out[count] = event;
+            count += 1;
+        }
+    }
+    if (decoder.flush()) |event| {
+        out[count] = event;
+        count += 1;
+    }
+    return out[0..count];
+}
+
+const ctrl_press: ConsoleRecord = .{ .key = .{
+    .key_down = true,
+    .virtual_key_code = 0x11,
+    .control_key_state = ControlKeyState.left_ctrl,
+} };
+
+fn expectCtrlPressEvent(event: ConsoleEvent) !void {
+    try std.testing.expectEqual(Key.left_ctrl, event.key.key);
+    try std.testing.expectEqual(key.Kind.press, event.key.kind);
+    try std.testing.expect(event.key.mods.ctrl);
+}
+
+test "ConsoleDecoder reports a held Ctrl press before the key it modifies" {
+    // The Ctrl press is held in case right Alt follows. What follows is C,
+    // so the press was a press, and it comes out ahead of control and C.
+    var decoder: ConsoleDecoder = .{};
+    var out: [4]ConsoleEvent = undefined;
+    const events = feedAll(&decoder, &.{ ctrl_press, .{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 'C',
+        .unicode_char = 0x03,
+        .control_key_state = ControlKeyState.left_ctrl,
+    } } }, &out);
+    try std.testing.expectEqual(@as(usize, 2), events.len);
+    try expectCtrlPressEvent(events[0]);
+    try std.testing.expectEqual(Key{ .char = 'c' }, events[1].key.key);
+    try std.testing.expect(events[1].key.mods.ctrl);
+}
+
+test "ConsoleDecoder reports a Ctrl tap as a press and then its release" {
+    const ctrl_release: ConsoleRecord = .{ .key = .{ .virtual_key_code = 0x11 } };
+
+    var reporting: ConsoleDecoder = .{ .report_key_up = true };
+    var out: [4]ConsoleEvent = undefined;
+    const both = feedAll(&reporting, &.{ ctrl_press, ctrl_release }, &out);
+    try std.testing.expectEqual(@as(usize, 2), both.len);
+    try expectCtrlPressEvent(both[0]);
+    try std.testing.expectEqual(Key.left_ctrl, both[1].key.key);
+    try std.testing.expectEqual(key.Kind.release, both[1].key.kind);
+
+    var pressing: ConsoleDecoder = .{};
+    const press = feedAll(&pressing, &.{ ctrl_press, ctrl_release }, &out);
+    try std.testing.expectEqual(@as(usize, 1), press.len);
+    try expectCtrlPressEvent(press[0]);
+}
+
+test "ConsoleDecoder reports every press of a Ctrl key held down" {
+    // A held key repeats. Each repeat is held in its turn and settled by the
+    // next, so three presses in are three out, in order.
+    var decoder: ConsoleDecoder = .{};
+    var out: [4]ConsoleEvent = undefined;
+    const events = feedAll(&decoder, &.{ ctrl_press, ctrl_press, ctrl_press }, &out);
+    try std.testing.expectEqual(@as(usize, 3), events.len);
+    for (events) |event| try expectCtrlPressEvent(event);
+}
+
+test "ConsoleDecoder settles a held Ctrl press before a mouse or size record" {
+    var out: [4]ConsoleEvent = undefined;
+
+    var clicked: ConsoleDecoder = .{};
+    const click = feedAll(&clicked, &.{ ctrl_press, .{ .mouse = .{
+        .button_state = ConsoleMouseRecord.button_1,
+        .control_key_state = ControlKeyState.left_ctrl,
+    } } }, &out);
+    try std.testing.expectEqual(@as(usize, 2), click.len);
+    try expectCtrlPressEvent(click[0]);
+    try std.testing.expectEqual(mouse.Button.left, click[1].mouse.button);
+    try std.testing.expect(click[1].mouse.ctrl);
+
+    var sized: ConsoleDecoder = .{};
+    const size = feedAll(&sized, &.{ ctrl_press, .{ .window_buffer_size = .{
+        .cols = 80,
+        .rows = 24,
+    } } }, &out);
+    try std.testing.expectEqual(@as(usize, 2), size.len);
+    try expectCtrlPressEvent(size[0]);
+    try std.testing.expectEqual(@as(u16, 80), size[1].resize.cols);
+
+    // A menu or focus record stands for nothing, and settles nothing.
+    var focused: ConsoleDecoder = .{};
+    var none = focused.feed(ctrl_press);
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), none.next());
+    none = focused.feed(.other);
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), none.next());
+    try expectCtrlPressEvent(focused.flush().?);
+}
+
+test "ConsoleDecoder hides only AltGr's own keys while it is held" {
+    const altgr = ControlKeyState.left_ctrl | ControlKeyState.right_alt;
+    const enhanced = ControlKeyState.enhanced;
+    const altgr_pair = [_]ConsoleRecord{
+        ctrl_press,
+        .{ .key = .{ .key_down = true, .virtual_key_code = 0x12, .control_key_state = altgr | enhanced } },
+    };
+    var out: [8]ConsoleEvent = undefined;
+
+    // Its own keys repeating, while it is held: nothing.
+    var repeating: ConsoleDecoder = .{};
+    try std.testing.expectEqual(@as(usize, 0), feedAll(&repeating, &(altgr_pair ++ [_]ConsoleRecord{
+        .{ .key = .{ .key_down = true, .virtual_key_code = 0x11, .control_key_state = altgr } },
+        .{ .key = .{ .key_down = true, .virtual_key_code = 0x12, .control_key_state = altgr | enhanced } },
+    }), &out).len);
+
+    // Right Ctrl is the unsided code with the enhanced bit, and left Alt the
+    // unsided code without it. Neither is AltGr's, and both are reported.
+    var right_ctrl: ConsoleDecoder = .{};
+    const ctrl = feedAll(&right_ctrl, &(altgr_pair ++ [_]ConsoleRecord{.{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 0x11,
+        .control_key_state = altgr | ControlKeyState.right_ctrl | enhanced,
+    } }}), &out);
+    try std.testing.expectEqual(@as(usize, 1), ctrl.len);
+    try std.testing.expectEqual(key.Kind.press, ctrl[0].key.kind);
+    try std.testing.expect(ctrl[0].key.mods.ctrl);
+
+    var left_alt: ConsoleDecoder = .{};
+    const alt = feedAll(&left_alt, &(altgr_pair ++ [_]ConsoleRecord{.{ .key = .{
+        .key_down = true,
+        .virtual_key_code = 0x12,
+        .control_key_state = altgr | ControlKeyState.left_alt,
+    } }}), &out);
+    try std.testing.expectEqual(@as(usize, 1), alt.len);
+    try std.testing.expectEqual(Key.left_alt, alt[0].key.key);
+    try std.testing.expectEqual(key.Kind.press, alt[0].key.kind);
+}
+
+test "ConsoleDecoder lets AltGr go when a record says it is not held" {
+    // AltGr's releases went to another window. The next record says neither
+    // key is down, and after it right Alt is a key of its own again.
+    var decoder: ConsoleDecoder = .{};
+    var out: [4]ConsoleEvent = undefined;
+    const events = feedAll(&decoder, &.{
+        ctrl_press,
+        .{ .key = .{
+            .key_down = true,
+            .virtual_key_code = 0x12,
+            .control_key_state = ControlKeyState.left_ctrl | ControlKeyState.right_alt |
+                ControlKeyState.enhanced,
+        } },
+        .{ .key = .{ .key_down = true, .virtual_key_code = 'A', .unicode_char = 'a' } },
+        .{ .key = .{
+            .key_down = true,
+            .virtual_key_code = 0xa5,
+            .control_key_state = ControlKeyState.right_alt | ControlKeyState.enhanced,
+        } },
+    }, &out);
+    try std.testing.expectEqual(@as(usize, 2), events.len);
+    try std.testing.expectEqual(Key{ .char = 'a' }, events[0].key.key);
+    try std.testing.expectEqual(Key.right_alt, events[1].key.key);
+    try std.testing.expect(events[1].key.mods.alt);
 }
 
 test "fuzz ConsoleDecoder" {
@@ -1192,23 +1424,31 @@ test "fuzz ConsoleDecoder" {
 test "fuzz a run of records through one decoder" {
     // The property: a decoder that keeps state across records never panics,
     // never overflows, and never hands back a surrogate half as a key --
-    // whatever order the halves and the Alt compositions arrive in.
+    // whatever order the halves and the Alt compositions arrive in. And a
+    // left-Ctrl press it holds for AltGr is never lost: unless the record
+    // after it is AltGr's right-Alt press, the Ctrl press is the first thing
+    // that record gives back, or what `flush` gives back after the last one.
     try std.testing.fuzz({}, struct {
         fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var input: [64]u8 = undefined;
             const bytes = input[0..smith.sliceWithHash(&input, 0)];
 
             var decoder: ConsoleDecoder = .{ .report_key_up = bytes.len % 2 == 0 };
+            var ctrl_held = false;
             var rest = bytes;
             while (rest.len >= 8) : (rest = rest[8..]) {
-                const record: ConsoleRecord = .{ .key = .{
+                const r: ConsoleKeyRecord = .{
                     .key_down = rest[0] & 1 != 0,
                     .virtual_key_code = std.mem.readInt(u16, rest[1..3], .little),
                     .unicode_char = std.mem.readInt(u16, rest[3..5], .little),
                     .control_key_state = std.mem.readInt(u16, rest[5..7], .little),
-                } };
-                const event = decoder.next(record) orelse continue;
-                switch (event) {
+                };
+                const ctrl_due = ctrl_held and !isAltGrRightAltPress(r);
+                ctrl_held = isPossibleAltGrCtrlPress(r);
+
+                var events = decoder.feed(.{ .key = r });
+                if (ctrl_due) try expectCtrlPress(events.next());
+                while (events.next()) |event| switch (event) {
                     .key => |ev| {
                         try std.testing.expect(std.unicode.utf8ValidateSlice(ev.text()));
                         switch (ev.key) {
@@ -1217,13 +1457,27 @@ test "fuzz a run of records through one decoder" {
                         }
                     },
                     else => {},
-                }
+                };
             }
+            if (ctrl_held) try expectCtrlPress(decoder.flush());
+            try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.flush());
         }
-    }.one, .{ .corpus = &.{
-        corpus.seed("\x01\x00\x00\x00\xd8\x00\x00\x00\x01\x00\x00\x42\xde\x00\x00\x00"),
-        corpus.seed("\x01\x12\x00\x00\x00\x02\x00\x00\x00\x12\x00\xe9\x00\x00\x00\x00"),
-        corpus.seed("\x01\x51\x00\x40\x00\x09\x00\x00"),
-        corpus.seed("\x00\x00\x00\x00\x00\x00\x00\x00"),
-    } });
+
+        fn expectCtrlPress(event: ?ConsoleEvent) !void {
+            const ev = (event orelse return error.TestExpectedCtrlPress).key;
+            try std.testing.expectEqual(Key.left_ctrl, ev.key);
+            try std.testing.expectEqual(key.Kind.press, ev.kind);
+        }
+    }.one, .{
+        .corpus = &.{
+            corpus.seed("\x01\x00\x00\x00\xd8\x00\x00\x00\x01\x00\x00\x42\xde\x00\x00\x00"),
+            corpus.seed("\x01\x12\x00\x00\x00\x02\x00\x00\x00\x12\x00\xe9\x00\x00\x00\x00"),
+            corpus.seed("\x01\x51\x00\x40\x00\x09\x00\x00"),
+            corpus.seed("\x00\x00\x00\x00\x00\x00\x00\x00"),
+            // A left-Ctrl press, then control and C.
+            corpus.seed("\x01\x11\x00\x00\x00\x08\x00\x00\x01\x43\x00\x03\x00\x08\x00\x00"),
+            // A left-Ctrl press and its release, with releases reported.
+            corpus.seed("\x01\x11\x00\x00\x00\x08\x00\x00\x00\x11\x00\x00\x00\x00\x00\x00"),
+        },
+    });
 }

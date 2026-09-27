@@ -3540,11 +3540,12 @@ test "a win32 sequence and a console record decode to the same key" {
             );
             const from_bytes = oneKey(bytes) orelse return error.TestExpectedEqual;
             var records: win32.ConsoleDecoder = .{};
-            const from_record = records.next(.{ .key = .{
+            var events = records.feed(.{ .key = .{
                 .key_down = true,
                 .virtual_key_code = case.vk,
                 .control_key_state = state,
-            } }) orelse records.flush() orelse return error.TestExpectedEqual;
+            } });
+            const from_record = events.next() orelse records.flush() orelse return error.TestExpectedEqual;
             try std.testing.expectEqual(from_bytes, from_record.key);
         }
     }
@@ -3553,12 +3554,13 @@ test "a win32 sequence and a console record decode to the same key" {
     // applied and the text comes with it.
     const typed = oneKey("\x1b[65;30;97;1;0;1_").?;
     var typed_records: win32.ConsoleDecoder = .{};
-    const recorded = typed_records.next(.{ .key = .{
+    var typed_events = typed_records.feed(.{ .key = .{
         .key_down = true,
         .virtual_key_code = 'A',
         .virtual_scan_code = 30,
         .unicode_char = 'a',
-    } }).?;
+    } });
+    const recorded = typed_events.next().?;
     try std.testing.expectEqual(typed, recorded.key);
 }
 

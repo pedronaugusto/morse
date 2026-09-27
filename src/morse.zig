@@ -377,6 +377,8 @@ pub const ConsoleSizeRecord = win32.ConsoleSizeRecord;
 pub const ConsoleRecord = win32.ConsoleRecord;
 /// What a console record turned out to be.
 pub const ConsoleEvent = win32.ConsoleEvent;
+/// The events one console record stands for, in order.
+pub const ConsoleEvents = win32.ConsoleEvents;
 /// Console input records turned into keys, mouse reports and resizes.
 pub const ConsoleDecoder = win32.ConsoleDecoder;
 /// What a console keyboard has to remember between records.
@@ -862,17 +864,21 @@ test "the root module re-exports what the README promises" {
         .control_key_state = ControlKeyState.shift,
     } };
     var records: ConsoleDecoder = .{};
-    const console: ConsoleEvent = records.next(record).?;
+    var from_key: ConsoleEvents = records.feed(record);
+    const console: ConsoleEvent = from_key.next().?;
     try std.testing.expectEqual(Key.left, console.key.key);
     try std.testing.expect(console.key.mods.shift);
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), from_key.next());
 
     const moved: ConsoleMouseRecord = .{ .x = 3, .y = 4, .button_state = 1 };
     const sized: ConsoleSizeRecord = .{ .cols = 80, .rows = 24 };
-    const wheel: ConsoleEvent = records.next(.{ .mouse = moved }).?;
-    const grown: ConsoleEvent = records.next(.{ .window_buffer_size = sized }).?;
-    try std.testing.expectEqual(@as(u32, 4), wheel.mouse.x);
-    try std.testing.expectEqual(@as(u32, 24), grown.resize.rows);
-    try std.testing.expectEqual(@as(?ConsoleEvent, null), records.next(.other));
+    var from_mouse = records.feed(.{ .mouse = moved });
+    var from_size = records.feed(.{ .window_buffer_size = sized });
+    var from_other = records.feed(.other);
+    try std.testing.expectEqual(@as(u32, 4), from_mouse.next().?.mouse.x);
+    try std.testing.expectEqual(@as(u32, 24), from_size.next().?.resize.rows);
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), from_other.next());
+    try std.testing.expectEqual(@as(?ConsoleEvent, null), records.flush());
     records.reset();
 
     var console_state: ConsoleState = .{};

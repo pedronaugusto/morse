@@ -246,8 +246,8 @@ fetches it.
 `Modifiers`, `Kind`, `Resize`.
 
 **The Windows console.** `ConsoleRecord`, `ConsoleKeyRecord`,
-`ConsoleMouseRecord`, `ConsoleSizeRecord`, `ConsoleEvent`, `ControlKeyState`,
-`ConsoleDecoder`, `ConsoleState`, `ConsoleKey`.
+`ConsoleMouseRecord`, `ConsoleSizeRecord`, `ConsoleEvent`, `ConsoleEvents`,
+`ControlKeyState`, `ConsoleDecoder`, `ConsoleState`, `ConsoleKey`.
 
 **Styles and colour.** `Style`, `Color` (with `Color.Kind`, `Color.default`,
 `Color.ansi`, `Color.palette`, `Color.rgb`, `Color.fromRgb`, `index`,
@@ -376,9 +376,10 @@ terminal in win32 input mode (`win32Input`, mode 9001) sends every key as
 `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`, which `KeyParser` decodes: the repeat
 count becomes that many events, and the key coming up is dropped unless
 `report_key_up` is set. Reading the console yourself instead, you copy each
-record into a `ConsoleRecord` and hand it to a `ConsoleDecoder`, which reads
-it through the same virtual-key table and gives back a key, a mouse report or
-a resize. Neither path calls an operating system API.
+record into a `ConsoleRecord` and hand it to `ConsoleDecoder.feed`, which reads
+it through the same virtual-key table and gives back its keys, mouse reports
+and resizes as a `ConsoleEvents` to take with `next`. Neither path calls an
+operating system API.
 
 Three things a console does that nothing else does are handled in both: the
 halves of a UTF-16 surrogate pair are paired into one character; a character
@@ -386,8 +387,9 @@ composed on the keypad, which rides the Alt key *coming up*, is held and
 reported as a press; and AltGr, which sets the right-Alt bit and a control bit
 together, is reported as the character it produced. `ConsoleDecoder` also
 holds the synthetic Ctrl press that can precede right Alt: call `flush` after
-`ConsoleDecoder.altgr_window_ms` if right Alt has not arrived. `reset` forgets
-all held state.
+`ConsoleDecoder.altgr_window_ms` if right Alt has not arrived. Any other record
+settles it too, and then one record gives back two events, the Ctrl press
+first. `reset` forgets all held state.
 
 **A lone `ESC` is settled by you.** It is both the Escape key and the first
 byte of every sequence, so `KeyParser` holds it, `pending()` shows it, and

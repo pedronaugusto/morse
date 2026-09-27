@@ -53,6 +53,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mode as `focusEvents`, so a mouse call could turn focus reports off by
   leaving it out. `focusEvents` is now the one way, and no mouse call touches
   mode 1004.
+- **`ConsoleDecoder.next` is `ConsoleDecoder.feed`, and gives back a
+  `ConsoleEvents`.** A left-Ctrl press held in case right Alt followed it for
+  AltGr was dropped when the next record was a key: `next` returned that key
+  and nothing else, so control and C came out without the Ctrl press before
+  it, and a Ctrl tap with releases reported came out as a release alone. One
+  record can stand for two events, and `feed` returns both, the Ctrl press
+  first: `var events = decoder.feed(record); while (events.next()) |event|
+  ...`. `ConsoleEvents` is new. A mouse or size record settles the held Ctrl
+  press the same way; before, it came out after them, or at the next `flush`.
 
 ### Changed
 
@@ -62,6 +71,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `mouseOff` from every state other programs can leave the eight modes in,
   and across every change from one mouse to another: the motion and encoding
   in effect, and which modes it would report set.
+
+### Fixed
+
+- `ConsoleDecoder` hid every Ctrl and Alt key while AltGr was held, where it
+  means to hide AltGr's own two: the unsided codes are now read by side, so a
+  right Ctrl or a left Alt pressed with AltGr down is reported. AltGr also
+  ends on any key record that says neither of its keys is down, so releases
+  lost to another window no longer leave the next right Alt hidden.
 
 ## [0.5.0] - 2026-09-20
 
