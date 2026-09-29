@@ -3564,6 +3564,33 @@ test "a win32 sequence and a console record decode to the same key" {
     try std.testing.expectEqual(typed, recorded.key);
 }
 
+test "the unsided Ctrl and Alt are the right-hand keys when the enhanced bit says so, as sequence and as record" {
+    // VK_CONTROL and VK_MENU with ENHANCED_KEY (0x100) are the right-hand
+    // keys, and the right Ctrl or Alt state bit comes with them; without the
+    // bit they are the left ones. VK_SHIFT has no enhanced one.
+    const cases = [_]struct { vk: u16, state: u32, key: Key }{
+        .{ .vk = 0x11, .state = 0x0100 | 0x0004, .key = .right_ctrl },
+        .{ .vk = 0x11, .state = 0x0008, .key = .left_ctrl },
+        .{ .vk = 0x12, .state = 0x0100 | 0x0001, .key = .right_alt },
+        .{ .vk = 0x12, .state = 0x0002, .key = .left_alt },
+        .{ .vk = 0x10, .state = 0x0100 | 0x0010, .key = .left_shift },
+    };
+    var buffer: [64]u8 = undefined;
+    for (cases) |case| {
+        const bytes = try std.fmt.bufPrint(&buffer, "\x1b[{d};0;0;1;{d};1_", .{ case.vk, case.state });
+        const from_bytes = oneKey(bytes) orelse return error.TestExpectedEqual;
+        try std.testing.expectEqual(case.key, from_bytes.key);
+        var records: win32.ConsoleDecoder = .{};
+        var events = records.feed(.{ .key = .{
+            .key_down = true,
+            .virtual_key_code = case.vk,
+            .control_key_state = case.state,
+        } });
+        const from_record = events.next() orelse records.flush() orelse return error.TestExpectedEqual;
+        try std.testing.expectEqual(from_bytes, from_record.key);
+    }
+}
+
 test "fuzz the win32 input mode decoder" {
     // The property: arbitrary bytes shaped like this sequence never panic,
     // never read past the end, and never produce a key whose text is not

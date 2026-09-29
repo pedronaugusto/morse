@@ -129,8 +129,9 @@ pub fn keyFromVirtualKey(vk: u16) ?Key {
         0x90 => .num_lock,
         0x91 => .scroll_lock,
         // The sided modifier keys. `VK_SHIFT`, `VK_CONTROL` and `VK_MENU` are
-        // the unsided codes a console sends when it cannot tell, and they
-        // come out as the left key, which is the one a keyboard has.
+        // the unsided codes a console sends, and alone they come out as the
+        // left key, which is the one every keyboard has; a record's enhanced
+        // bit says right for Ctrl and Alt (`keyFromFields`).
         0x10, 0xa0 => .left_shift,
         0x11, 0xa2 => .left_ctrl,
         0x12, 0xa4 => .left_alt,
@@ -166,8 +167,12 @@ pub fn keyFromVirtualKey(vk: u16) ?Key {
 /// Returns null for a key that stands for nothing — no character, no name.
 /// The surrogate halves never reach here: `ConsoleState.key` pairs them
 /// first, because neither half is a codepoint on its own.
-fn keyFromFields(vk: u16, uc: u16, mods: *Modifiers) ?Key {
+fn keyFromFields(vk: u16, uc: u16, enhanced: bool, mods: *Modifiers) ?Key {
     if (uc >= 0x20 and uc != 0x7f) return .{ .char = uc };
+    // The unsided Ctrl and Alt: the enhanced bit is the right-hand key, as
+    // the AltGr reading below already takes it. Shift has no enhanced one.
+    if (enhanced and vk == 0x11) return .right_ctrl;
+    if (enhanced and vk == 0x12) return .right_alt;
     if (keyFromVirtualKey(vk)) |named| return named;
     if (vk >= '0' and vk <= '9') return .{ .char = @intCast(vk) };
     if (vk >= 'A' and vk <= 'Z') return .{ .char = @as(u21, @intCast(vk)) + ('a' - 'A') };
@@ -319,7 +324,7 @@ pub const ConsoleState = struct {
             mods.ctrl = false;
         }
 
-        const which = keyFromFields(vk, unit, &mods) orelse return .unknown;
+        const which = keyFromFields(vk, unit, control_key_state & ControlKeyState.enhanced != 0, &mods) orelse return .unknown;
         unit = uc;
 
         var ev: KeyEvent = .{

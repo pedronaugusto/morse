@@ -74,6 +74,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The unsided `VK_CONTROL` and `VK_MENU` are the right-hand key when the
+  record's enhanced bit says so: right Ctrl and right Alt, from a console
+  record and from a win32 input mode sequence alike. They were always the
+  left key.
 - `ConsoleDecoder` hid every Ctrl and Alt key while AltGr was held, where it
   means to hide AltGr's own two: the unsided codes are now read by side, so a
   right Ctrl or a left Alt pressed with AltGr down is reported. AltGr also
