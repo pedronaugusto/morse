@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-29
+
 ### Breaking
 
 - **`KeyParser` reads what it frames.** A mouse report is `Event.mouse`, and
@@ -715,6 +717,8 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
+[0.6.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.6.0
+[0.5.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.5.0
 [0.4.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.4.0
 [0.3.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.2.0
