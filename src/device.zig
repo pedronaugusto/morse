@@ -723,8 +723,8 @@ pub fn parseWindowSize(bytes: []const u8) ?WindowSize {
 /// in place of a round trip, since a free-form payload has no renderer to
 /// round trip through.
 fn borrows(outer: []const u8, inner: []const u8) bool {
-    const start = @intFromPtr(outer.ptr);
-    const at = @intFromPtr(inner.ptr);
+    const start = @intFromPtr(outer.ptr); // safe: an address compared, never read through
+    const at = @intFromPtr(inner.ptr); // safe: an address compared, never read through
     return at >= start and at + inner.len <= start + outer.len;
 }
 

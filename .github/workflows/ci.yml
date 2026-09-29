@@ -117,3 +117,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: ci/check-readme.sh
+      # every cast out of the type system says why it is safe
+      - run: python3 ci/casts.py

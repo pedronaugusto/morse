@@ -2308,8 +2308,8 @@ test "fuzz the transmit round trip" {
 
 /// Whether `inner` points into `outer`. Test support, as in `device.zig`.
 fn borrows(outer: []const u8, inner: []const u8) bool {
-    const start = @intFromPtr(outer.ptr);
-    const at = @intFromPtr(inner.ptr);
+    const start = @intFromPtr(outer.ptr); // safe: an address compared, never read through
+    const at = @intFromPtr(inner.ptr); // safe: an address compared, never read through
     return at >= start and at + inner.len <= start + outer.len;
 }
 

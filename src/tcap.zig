@@ -250,8 +250,8 @@ fn decodeHex(hex: []const u8, out: []u8) error{NoSpaceLeft}![]u8 {
 /// Test support: what the fuzz test checks in place of a round trip for the
 /// halves a reply hands back without copying.
 fn borrows(outer: []const u8, inner: []const u8) bool {
-    const start = @intFromPtr(outer.ptr);
-    const at = @intFromPtr(inner.ptr);
+    const start = @intFromPtr(outer.ptr); // safe: an address compared, never read through
+    const at = @intFromPtr(inner.ptr); // safe: an address compared, never read through
     return at >= start and at + inner.len <= start + outer.len;
 }
 
