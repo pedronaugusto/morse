@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-30
+
 - `Event.copy` and `Reply.copy` keep borrowed fields in caller-owned storage, sized by `copySize`.
 
 - `KeyEvent.matches` compares shortcuts across encodings, typed text and shifted codepoints, ignoring lock states.
