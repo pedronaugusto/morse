@@ -70,8 +70,9 @@ pub const GraphicsMedium = enum(u8) {
 ///
 /// A program that asks for nothing cannot tell a landed image from a lost
 /// one; a program that asks for everything must read the replies, because
-/// they arrive on the input stream in among the keys. `KeyParser` frames them
-/// and `parseGraphicsResponse` reads them.
+/// they arrive on the input stream in among the keys. `KeyParser` reads them
+/// into `Event.reply` holding `Reply.graphics`; `parseGraphicsResponse` is
+/// for a sequence the caller framed itself.
 pub const GraphicsQuiet = enum(u8) {
     /// `q=0`, the default: the terminal answers, whether it worked or not.
     answers = 0,

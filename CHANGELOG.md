@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The key module docs direct mouse reports and query answers to Event.mouse and Event.reply.
+
 - The test build accepts -Dtest-filter to run the named part of the suite.
 
 ## [0.7.0] - 2026-09-30

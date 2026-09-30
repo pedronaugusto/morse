@@ -17,9 +17,10 @@
 //! What this file will never hold: a model of where the extra cursors are. A
 //! terminal is asked and answers; which cells an editor wants cursors in, and
 //! what to do when the screen scrolls out from under them, is the editor's.
-//! The replies here are read out of `Event.unhandled`, like every other reply
-//! in this package, because a program that asked a question is the one that
-//! knows the answer is coming.
+//! `KeyParser` reads the replies into `Event.reply`, as
+//! `Reply.extra_cursor_support`, `Reply.extra_cursors` or
+//! `Reply.extra_cursor_colors`. The sequence parsers here are for replies
+//! the caller framed itself.
 
 const std = @import("std");
 const corpus = @import("corpus.zig");

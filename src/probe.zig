@@ -22,10 +22,10 @@
 //!   Keep the overall timeout armed, or finish after an explicit quiescence
 //!   period that is restarted by each reply. Only then is silence a no.
 //!
-//! `matches` is the other half. Replies arrive on the input stream among the
-//! keys, `KeyParser` frames them and hands each back as `Event.unhandled`,
-//! and this says which question a given one answers — without a table of
-//! sequence shapes in the caller, and without asking a parser to guess.
+//! `answered` is the other half. Replies arrive on the input stream among the
+//! keys, and `KeyParser` reads them into `Event.reply`; a colour scheme report
+//! is `Event.color_scheme`. `answered` says which question an event answers.
+//! `matches` is for a whole sequence the caller framed itself.
 //!
 //! What this file will never hold: the waiting. No timeout, no read, no
 //! record of what a terminal answered last time, and no conclusion drawn
@@ -216,10 +216,10 @@ pub const Probe = struct {
 
 /// Whether `reply` is an answer to `question`.
 ///
-/// `reply` is one whole sequence, which on the input stream is what
-/// `KeyParser` hands back as `Event.unhandled`. A caller walks the questions
-/// it asked, asks this of each, and hands the reply to the parser that reads
-/// it — which is the parser named in the doc comment for that question.
+/// `reply` is one whole sequence the caller framed itself. A caller walks
+/// the questions it asked, asks this of each, and hands the reply to the
+/// parser named in that question's doc comment. For events `KeyParser` has
+/// already read, use `answered` instead.
 ///
 /// This tells replies apart; it does not read them. Two questions about
 /// different modes answer in the same shape and are separated by the mode

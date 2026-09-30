@@ -22,11 +22,12 @@
 //! Bracketed paste and focus reporting arrive on the same stream, so they are
 //! events here too rather than a second parser over the same bytes.
 //!
-//! What the parser cannot decode it still frames. A mouse report, a reply to
-//! a query, an OSC the terminal sent back: each comes out as `Event.unhandled`
-//! holding the whole sequence, for the caller to hand to `parseMouse`,
-//! `parseModeReply`, `parseColorReply` or whichever parser reads it. Framing
-//! the stream once, in one place, is the point.
+//! The parser reads what it frames. A mouse report comes out as `Event.mouse`,
+//! and a recognized query answer as `Event.reply`, holding a typed `Reply`.
+//! Callers match those variants directly; the parsers such as `parseMouse`
+//! and `parseModeReply` are for sequences the caller framed itself.
+//! An unknown sequence comes out whole as `Event.unhandled`. Framing and
+//! decoding the stream once, in one place, is the point.
 //!
 //! What this file will never hold: a key map. Which key means quit, which
 //! chord opens a pane, and how long to wait before settling a lone `ESC` are
@@ -1020,7 +1021,7 @@ fn decodeEscape(bytes: []const u8, report_key_up: bool, console: *win32.ConsoleS
         '[' => decodeCsi(bytes, report_key_up, console),
         'O' => decodeSs3(bytes),
         // OSC, DCS, SOS, PM and APC: a string with a terminator, framed here
-        // and read by whichever parser the caller hands it to.
+        // and read by KeyParser.read before the caller receives it.
         ']', 'P', 'X', '^', '_' => decodeString(bytes),
         // Two escapes running. The first is a key, because reading it as alt
         // would swallow the second one's sequence.
@@ -1381,8 +1382,8 @@ fn colorSchemeEvent(params: Params) ?Event {
 /// `CSI ... t` is the window manipulation family, and every other member of
 /// it is a request a program sends or a reply to one it asked for -- read by
 /// `parseWindowSize`, not here. Only the leading 48 is a report the terminal
-/// sends unprompted, so only that one is a key-stream event; the rest come
-/// back as `Event.unhandled` for the parser that asked.
+/// sends unprompted, so that one is `Event.resize`; recognized size replies
+/// come back as `Event.reply` holding `Reply.window_size`, cells included.
 ///
 /// The two pixel parameters are optional, because a terminal that does not
 /// know its pixel size omits them rather than sending zeroes.
