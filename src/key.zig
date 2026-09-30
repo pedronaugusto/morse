@@ -638,7 +638,7 @@ pub const KeyParser = struct {
         // bytes are already gone; what is owed is the count.
         if (p.skipping != null) {
             p.skipping = null;
-            const dropped = p.dropped;
+            const dropped = p.dropped + held.len;
             p.dropped = 0;
             return .{ .overflow = dropped };
         }
@@ -769,9 +769,16 @@ pub const Events = struct {
                     // thing it reports rather than decodes.
                     if (p.end - p.start == p.buffer.len) {
                         p.skipping = overflowKind(p.buffer[p.start..p.end]);
-                        p.dropped = p.buffer.len;
+                        // A final ESC in a string is undecided: it may be
+                        // half of ST, or the start of the next sequence.
+                        // Keep it in the same buffer until its next byte
+                        // arrives, as skipOverflow does at later boundaries.
+                        const kept: usize = @intFromBool(p.skipping == .string and
+                            p.buffer[p.end - 1] == seq.esc);
+                        p.dropped = p.buffer.len - kept;
+                        if (kept != 0) p.buffer[0] = seq.esc;
                         p.start = 0;
-                        p.end = 0;
+                        p.end = kept;
                         continue;
                     }
                     return null;
@@ -2452,6 +2459,45 @@ test "a sequence longer than the buffer is reported, and the stream resumes at i
 
     var after = parser.feed("a");
     try std.testing.expectEqual(Key{ .char = 'a' }, after.next().?.key.key);
+}
+
+test "an overflowing control string keeps the escape at the buffer boundary" {
+    for ([_]u8{ ']', 'P', 'X', '^', '_' }) |introducer| {
+        for ([_][]const u8{ "\\\x1b[A", "[A" }) |ending| {
+            var input: [68]u8 = undefined;
+            input[0] = seq.esc;
+            input[1] = introducer;
+            @memset(input[2..63], 'x');
+            input[63] = seq.esc;
+            @memcpy(input[64..][0..ending.len], ending);
+            for ([_]bool{ false, true }) |split| {
+                var buffer: [KeyParser.min_buffer]u8 = undefined;
+                var parser = KeyParser.init(&buffer);
+                var events = parser.feed(input[0..if (split) 64 else 64 + ending.len]);
+                if (split) {
+                    try std.testing.expect(events.next() == null);
+                    events = parser.feed(input[64..][0..ending.len]);
+                }
+                const overflow = events.next();
+                try std.testing.expect(overflow != null);
+                try std.testing.expectEqual(@as(usize, if (ending[0] == '\\') 65 else 63), overflow.?.overflow);
+                try std.testing.expectEqualDeep(Event{ .key = .{ .key = .up } }, events.next().?);
+                try std.testing.expect(events.next() == null);
+                try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
+            }
+        }
+    }
+}
+
+test "flushing an overflowing string counts its undecided escape" {
+    var buffer: [KeyParser.min_buffer]u8 = undefined;
+    var parser = KeyParser.init(&buffer);
+    var first = parser.feed("\x1b]" ++ "x" ** 62);
+    try std.testing.expect(first.next() == null);
+    var tail = parser.feed("x\x1b");
+    try std.testing.expect(tail.next() == null);
+    try std.testing.expectEqual(@as(usize, 66), parser.flush().?.overflow);
+    try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
 }
 
 test "an over-long reply is one overflow, not three hundred keypresses" {
