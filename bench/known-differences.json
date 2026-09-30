@@ -1,0 +1,1106 @@
+[
+  {
+    "side": "crossterm",
+    "case": "uppercase",
+    "chunk": 1,
+    "input": "41",
+    "expected": [
+      "key:65:0:press"
+    ],
+    "actual": [
+      "key:65:1:press"
+    ],
+    "reason": "model: crossterm infers Shift for uppercase plain text; morse preserves only reported modifiers",
+    "morse_bug": false
+  },
+  {
+    "side": "crossterm",
+    "case": "uppercase",
+    "chunk": 64,
+    "input": "41",
+    "expected": [
+      "key:65:0:press"
+    ],
+    "actual": [
+      "key:65:1:press"
+    ],
+    "reason": "model: crossterm infers Shift for uppercase plain text; morse preserves only reported modifiers",
+    "morse_bug": false
+  },
+  {
+    "side": "vaxis",
+    "case": "unicode",
+    "chunk": 1,
+    "input": "cebb",
+    "expected": [
+      "key:955:0:press"
+    ],
+    "actual": [
+      "key:65533:0:press",
+      "key:65533:0:press"
+    ],
+    "reason": "rival limitation: standalone libvaxis parser emits two replacement characters for a split UTF-8 codepoint",
+    "morse_bug": false
+  },
+  {
+    "side": "vaxis",
+    "case": "lf",
+    "chunk": 1,
+    "input": "0a",
+    "expected": [
+      "key:13:0:press"
+    ],
+    "actual": [
+      "key:106:4:press"
+    ],
+    "reason": "policy: LF is Ctrl+J in vaxis; morse maps LF and CR to Enter; crossterm here uses its default non-raw setting",
+    "morse_bug": false
+  },
+  {
+    "side": "vaxis",
+    "case": "lf",
+    "chunk": 64,
+    "input": "0a",
+    "expected": [
+      "key:13:0:press"
+    ],
+    "actual": [
+      "key:106:4:press"
+    ],
+    "reason": "policy: LF is Ctrl+J in vaxis; morse maps LF and CR to Enter; crossterm here uses its default non-raw setting",
+    "morse_bug": false
+  },
+  {
+    "side": "crossterm",
+    "case": "kitty_shift",
+    "chunk": 1,
+    "input": "1b5b39373a36353b3275",
+    "expected": [
+      "key:97:1:press"
+    ],
+    "actual": [
+      "key:65:0:press"
+    ],
+    "reason": "model: crossterm selects the shifted key, morse retains unshifted key plus alternate codepoint",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "kitty_shift",
+    "chunk": 1,
+    "input": "1b5b39373a36353b3275",
+    "expected": [
+      "key:97:1:press"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:57:0:press",
+      "key:55:0:press",
+      "key:58:0:press",
+      "key:54:0:press",
+      "key:53:0:press",
+      "key:59:0:press",
+      "key:50:0:press",
+      "key:117:0:press"
+    ],
+    "reason": "coverage/model: termwiz InputParser does not preserve the full kitty event/alternate-key model",
+    "morse_bug": false
+  },
+  {
+    "side": "crossterm",
+    "case": "kitty_shift",
+    "chunk": 64,
+    "input": "1b5b39373a36353b3275",
+    "expected": [
+      "key:97:1:press"
+    ],
+    "actual": [
+      "key:65:0:press"
+    ],
+    "reason": "model: crossterm selects the shifted key, morse retains unshifted key plus alternate codepoint",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "kitty_shift",
+    "chunk": 64,
+    "input": "1b5b39373a36353b3275",
+    "expected": [
+      "key:97:1:press"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:57:0:press",
+      "key:55:0:press",
+      "key:58:0:press",
+      "key:54:0:press",
+      "key:53:0:press",
+      "key:59:0:press",
+      "key:50:0:press",
+      "key:117:0:press"
+    ],
+    "reason": "coverage/model: termwiz InputParser does not preserve the full kitty event/alternate-key model",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "kitty_repeat",
+    "chunk": 1,
+    "input": "1b5b39373b313a3275",
+    "expected": [
+      "key:97:0:repeat"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:57:0:press",
+      "key:55:0:press",
+      "key:59:0:press",
+      "key:49:0:press",
+      "key:58:0:press",
+      "key:50:0:press",
+      "key:117:0:press"
+    ],
+    "reason": "coverage/model: termwiz InputParser does not preserve the full kitty event/alternate-key model",
+    "morse_bug": false
+  },
+  {
+    "side": "vaxis",
+    "case": "kitty_repeat",
+    "chunk": 1,
+    "input": "1b5b39373b313a3275",
+    "expected": [
+      "key:97:0:repeat"
+    ],
+    "actual": [
+      "key:97:0:press"
+    ],
+    "reason": "model: vaxis Event has key_press/key_release, no repeat variant",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "kitty_repeat",
+    "chunk": 64,
+    "input": "1b5b39373b313a3275",
+    "expected": [
+      "key:97:0:repeat"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:57:0:press",
+      "key:55:0:press",
+      "key:59:0:press",
+      "key:49:0:press",
+      "key:58:0:press",
+      "key:50:0:press",
+      "key:117:0:press"
+    ],
+    "reason": "coverage/model: termwiz InputParser does not preserve the full kitty event/alternate-key model",
+    "morse_bug": false
+  },
+  {
+    "side": "vaxis",
+    "case": "kitty_repeat",
+    "chunk": 64,
+    "input": "1b5b39373b313a3275",
+    "expected": [
+      "key:97:0:repeat"
+    ],
+    "actual": [
+      "key:97:0:press"
+    ],
+    "reason": "model: vaxis Event has key_press/key_release, no repeat variant",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "kitty_release",
+    "chunk": 1,
+    "input": "1b5b39373b313a3375",
+    "expected": [
+      "key:97:0:release"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:57:0:press",
+      "key:55:0:press",
+      "key:59:0:press",
+      "key:49:0:press",
+      "key:58:0:press",
+      "key:51:0:press",
+      "key:117:0:press"
+    ],
+    "reason": "coverage/model: termwiz InputParser does not preserve the full kitty event/alternate-key model",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "kitty_release",
+    "chunk": 64,
+    "input": "1b5b39373b313a3375",
+    "expected": [
+      "key:97:0:release"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:57:0:press",
+      "key:55:0:press",
+      "key:59:0:press",
+      "key:49:0:press",
+      "key:58:0:press",
+      "key:51:0:press",
+      "key:117:0:press"
+    ],
+    "reason": "coverage/model: termwiz InputParser does not preserve the full kitty event/alternate-key model",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "kitty_text",
+    "chunk": 1,
+    "input": "1b5b39373b313b393775",
+    "expected": [
+      "key:97:0:press"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:57:0:press",
+      "key:55:0:press",
+      "key:59:0:press",
+      "key:49:0:press",
+      "key:59:0:press",
+      "key:57:0:press",
+      "key:55:0:press",
+      "key:117:0:press"
+    ],
+    "reason": "coverage/model: termwiz InputParser does not preserve the full kitty event/alternate-key model",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "kitty_text",
+    "chunk": 64,
+    "input": "1b5b39373b313b393775",
+    "expected": [
+      "key:97:0:press"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:57:0:press",
+      "key:55:0:press",
+      "key:59:0:press",
+      "key:49:0:press",
+      "key:59:0:press",
+      "key:57:0:press",
+      "key:55:0:press",
+      "key:117:0:press"
+    ],
+    "reason": "coverage/model: termwiz InputParser does not preserve the full kitty event/alternate-key model",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "mouse_press",
+    "chunk": 1,
+    "input": "1b5b3c303b333b334d",
+    "expected": [
+      "mouse:0:3:3:0:press"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:60:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:77:0:press"
+    ],
+    "reason": "rival limitation: split SGR mouse prefixes fall back to keys in termwiz InputParser; whole reports parse correctly",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "mouse_release",
+    "chunk": 1,
+    "input": "1b5b3c303b333b336d",
+    "expected": [
+      "mouse:0:3:3:0:release"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:60:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:109:0:press"
+    ],
+    "reason": "rival limitation: split SGR mouse prefixes fall back to keys in termwiz InputParser; whole reports parse correctly",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "mouse_release",
+    "chunk": 64,
+    "input": "1b5b3c303b333b336d",
+    "expected": [
+      "mouse:0:3:3:0:release"
+    ],
+    "actual": [
+      "mouse:3:3:3:0:press"
+    ],
+    "reason": "model: termwiz mouse reports button state rather than press/release/motion kind",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "mouse_drag",
+    "chunk": 1,
+    "input": "1b5b3c33323b333b334d",
+    "expected": [
+      "mouse:0:3:3:0:motion"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:60:0:press",
+      "key:51:0:press",
+      "key:50:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:77:0:press"
+    ],
+    "reason": "rival limitation: split SGR mouse prefixes fall back to keys in termwiz InputParser; whole reports parse correctly",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "mouse_drag",
+    "chunk": 64,
+    "input": "1b5b3c33323b333b334d",
+    "expected": [
+      "mouse:0:3:3:0:motion"
+    ],
+    "actual": [
+      "mouse:0:3:3:0:press"
+    ],
+    "reason": "model: termwiz mouse reports button state rather than press/release/motion kind",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "mouse_wheel",
+    "chunk": 1,
+    "input": "1b5b3c36343b333b334d",
+    "expected": [
+      "mouse:64:3:3:0:press"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:60:0:press",
+      "key:54:0:press",
+      "key:52:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:77:0:press"
+    ],
+    "reason": "rival limitation: split SGR mouse prefixes fall back to keys in termwiz InputParser; whole reports parse correctly",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "pixel_wire",
+    "chunk": 1,
+    "input": "1b5b3c303b3634303b3336304d",
+    "expected": [
+      "mouse:0:640:360:0:press"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:60:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:54:0:press",
+      "key:52:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:54:0:press",
+      "key:48:0:press",
+      "key:77:0:press"
+    ],
+    "reason": "rival limitation: split SGR mouse prefixes fall back to keys in termwiz InputParser; whole reports parse correctly",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "focus_in",
+    "chunk": 1,
+    "input": "1b5b49",
+    "expected": [
+      "focus_in"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:73:0:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "focus_in",
+    "chunk": 64,
+    "input": "1b5b49",
+    "expected": [
+      "focus_in"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:73:0:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "focus_out",
+    "chunk": 1,
+    "input": "1b5b4f",
+    "expected": [
+      "focus_out"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:79:0:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "focus_out",
+    "chunk": 64,
+    "input": "1b5b4f",
+    "expected": [
+      "focus_out"
+    ],
+    "actual": [
+      "key:91:2:press",
+      "key:79:0:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "crossterm",
+    "case": "osc_color_bel",
+    "chunk": 1,
+    "input": "1b5d31303b7267623a616161612f626262622f6363636307",
+    "expected": [
+      "reply:color:10:170:187:204"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:49:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:114:0:press",
+      "key:103:0:press",
+      "key:98:0:press",
+      "key:58:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:47:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:47:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:103:4:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "osc_color_bel",
+    "chunk": 1,
+    "input": "1b5d31303b7267623a616161612f626262622f6363636307",
+    "expected": [
+      "reply:color:10:170:187:204"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:49:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:114:0:press",
+      "key:103:0:press",
+      "key:98:0:press",
+      "key:58:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:47:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:47:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:103:4:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "crossterm",
+    "case": "osc_color_bel",
+    "chunk": 64,
+    "input": "1b5d31303b7267623a616161612f626262622f6363636307",
+    "expected": [
+      "reply:color:10:170:187:204"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:49:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:114:0:press",
+      "key:103:0:press",
+      "key:98:0:press",
+      "key:58:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:47:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:47:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:103:4:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "osc_color_bel",
+    "chunk": 64,
+    "input": "1b5d31303b7267623a616161612f626262622f6363636307",
+    "expected": [
+      "reply:color:10:170:187:204"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:49:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:114:0:press",
+      "key:103:0:press",
+      "key:98:0:press",
+      "key:58:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:47:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:47:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:103:4:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "crossterm",
+    "case": "osc_color_st",
+    "chunk": 1,
+    "input": "1b5d31303b7267623a616161612f626262622f636363631b5c",
+    "expected": [
+      "reply:color:10:170:187:204"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:49:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:114:0:press",
+      "key:103:0:press",
+      "key:98:0:press",
+      "key:58:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:47:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:47:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:92:2:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "osc_color_st",
+    "chunk": 1,
+    "input": "1b5d31303b7267623a616161612f626262622f636363631b5c",
+    "expected": [
+      "reply:color:10:170:187:204"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:49:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:114:0:press",
+      "key:103:0:press",
+      "key:98:0:press",
+      "key:58:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:47:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:47:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:92:2:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "crossterm",
+    "case": "osc_color_st",
+    "chunk": 64,
+    "input": "1b5d31303b7267623a616161612f626262622f636363631b5c",
+    "expected": [
+      "reply:color:10:170:187:204"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:49:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:114:0:press",
+      "key:103:0:press",
+      "key:98:0:press",
+      "key:58:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:47:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:47:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:92:2:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "osc_color_st",
+    "chunk": 64,
+    "input": "1b5d31303b7267623a616161612f626262622f636363631b5c",
+    "expected": [
+      "reply:color:10:170:187:204"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:49:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:114:0:press",
+      "key:103:0:press",
+      "key:98:0:press",
+      "key:58:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:97:0:press",
+      "key:47:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:98:0:press",
+      "key:47:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:99:0:press",
+      "key:92:2:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "crossterm",
+    "case": "osc_clipboard",
+    "chunk": 1,
+    "input": "1b5d35323b633b63336c756447686c64476c6a1b5c",
+    "expected": [
+      "clipboard:synthetic"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:53:0:press",
+      "key:50:0:press",
+      "key:59:0:press",
+      "key:99:0:press",
+      "key:59:0:press",
+      "key:99:0:press",
+      "key:51:0:press",
+      "key:108:0:press",
+      "key:117:0:press",
+      "key:100:0:press",
+      "key:71:1:press",
+      "key:104:0:press",
+      "key:108:0:press",
+      "key:100:0:press",
+      "key:71:1:press",
+      "key:108:0:press",
+      "key:106:0:press",
+      "key:92:2:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "osc_clipboard",
+    "chunk": 1,
+    "input": "1b5d35323b633b63336c756447686c64476c6a1b5c",
+    "expected": [
+      "clipboard:synthetic"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:53:0:press",
+      "key:50:0:press",
+      "key:59:0:press",
+      "key:99:0:press",
+      "key:59:0:press",
+      "key:99:0:press",
+      "key:51:0:press",
+      "key:108:0:press",
+      "key:117:0:press",
+      "key:100:0:press",
+      "key:71:0:press",
+      "key:104:0:press",
+      "key:108:0:press",
+      "key:100:0:press",
+      "key:71:0:press",
+      "key:108:0:press",
+      "key:106:0:press",
+      "key:92:2:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "crossterm",
+    "case": "osc_clipboard",
+    "chunk": 64,
+    "input": "1b5d35323b633b63336c756447686c64476c6a1b5c",
+    "expected": [
+      "clipboard:synthetic"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:53:0:press",
+      "key:50:0:press",
+      "key:59:0:press",
+      "key:99:0:press",
+      "key:59:0:press",
+      "key:99:0:press",
+      "key:51:0:press",
+      "key:108:0:press",
+      "key:117:0:press",
+      "key:100:0:press",
+      "key:71:1:press",
+      "key:104:0:press",
+      "key:108:0:press",
+      "key:100:0:press",
+      "key:71:1:press",
+      "key:108:0:press",
+      "key:106:0:press",
+      "key:92:2:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "osc_clipboard",
+    "chunk": 64,
+    "input": "1b5d35323b633b63336c756447686c64476c6a1b5c",
+    "expected": [
+      "clipboard:synthetic"
+    ],
+    "actual": [
+      "key:93:2:press",
+      "key:53:0:press",
+      "key:50:0:press",
+      "key:59:0:press",
+      "key:99:0:press",
+      "key:59:0:press",
+      "key:99:0:press",
+      "key:51:0:press",
+      "key:108:0:press",
+      "key:117:0:press",
+      "key:100:0:press",
+      "key:71:0:press",
+      "key:104:0:press",
+      "key:108:0:press",
+      "key:100:0:press",
+      "key:71:0:press",
+      "key:108:0:press",
+      "key:106:0:press",
+      "key:92:2:press"
+    ],
+    "reason": "coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "common_stream",
+    "chunk": 1,
+    "input": "031b5b3c36343b333b334d1b5b3230307e706173746520746578741b5b3230317e1b5b3c303b333b334d611b5b39373b357568656c6c6fcebb0d1b78091b5b41",
+    "expected": [
+      "key:99:4:press",
+      "mouse:64:3:3:0:press",
+      "paste_start",
+      "key:112:0:press",
+      "key:97:0:press",
+      "key:115:0:press",
+      "key:116:0:press",
+      "key:101:0:press",
+      "key:32:0:press",
+      "key:116:0:press",
+      "key:101:0:press",
+      "key:120:0:press",
+      "key:116:0:press",
+      "paste_end",
+      "mouse:0:3:3:0:press",
+      "key:97:0:press",
+      "key:97:4:press",
+      "key:104:0:press",
+      "key:101:0:press",
+      "key:108:0:press",
+      "key:108:0:press",
+      "key:111:0:press",
+      "key:955:0:press",
+      "key:13:0:press",
+      "key:120:2:press",
+      "key:9:0:press",
+      "key:57352:0:press"
+    ],
+    "actual": [
+      "key:99:4:press",
+      "key:91:2:press",
+      "key:60:0:press",
+      "key:54:0:press",
+      "key:52:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:77:0:press",
+      "paste_start",
+      "key:112:0:press",
+      "key:97:0:press",
+      "key:115:0:press",
+      "key:116:0:press",
+      "key:101:0:press",
+      "key:32:0:press",
+      "key:116:0:press",
+      "key:101:0:press",
+      "key:120:0:press",
+      "key:116:0:press",
+      "paste_end",
+      "key:91:2:press",
+      "key:60:0:press",
+      "key:48:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:59:0:press",
+      "key:51:0:press",
+      "key:77:0:press",
+      "key:97:0:press",
+      "key:97:4:press",
+      "key:104:0:press",
+      "key:101:0:press",
+      "key:108:0:press",
+      "key:108:0:press",
+      "key:111:0:press",
+      "key:955:0:press",
+      "key:13:0:press",
+      "key:120:2:press",
+      "key:9:0:press",
+      "key:57352:0:press"
+    ],
+    "reason": "rival limitation: split SGR mouse falls back to keys in termwiz InputParser",
+    "morse_bug": false
+  },
+  {
+    "side": "vaxis",
+    "case": "common_stream",
+    "chunk": 1,
+    "input": "031b5b3c36343b333b334d1b5b3230307e706173746520746578741b5b3230317e1b5b3c303b333b334d611b5b39373b357568656c6c6fcebb0d1b78091b5b41",
+    "expected": [
+      "key:99:4:press",
+      "mouse:64:3:3:0:press",
+      "paste_start",
+      "key:112:0:press",
+      "key:97:0:press",
+      "key:115:0:press",
+      "key:116:0:press",
+      "key:101:0:press",
+      "key:32:0:press",
+      "key:116:0:press",
+      "key:101:0:press",
+      "key:120:0:press",
+      "key:116:0:press",
+      "paste_end",
+      "mouse:0:3:3:0:press",
+      "key:97:0:press",
+      "key:97:4:press",
+      "key:104:0:press",
+      "key:101:0:press",
+      "key:108:0:press",
+      "key:108:0:press",
+      "key:111:0:press",
+      "key:955:0:press",
+      "key:13:0:press",
+      "key:120:2:press",
+      "key:9:0:press",
+      "key:57352:0:press"
+    ],
+    "actual": [
+      "key:99:4:press",
+      "mouse:64:3:3:0:press",
+      "paste_start",
+      "key:112:0:press",
+      "key:97:0:press",
+      "key:115:0:press",
+      "key:116:0:press",
+      "key:101:0:press",
+      "key:32:0:press",
+      "key:116:0:press",
+      "key:101:0:press",
+      "key:120:0:press",
+      "key:116:0:press",
+      "paste_end",
+      "mouse:0:3:3:0:press",
+      "key:97:0:press",
+      "key:97:4:press",
+      "key:104:0:press",
+      "key:101:0:press",
+      "key:108:0:press",
+      "key:108:0:press",
+      "key:111:0:press",
+      "key:65533:0:press",
+      "key:65533:0:press",
+      "key:13:0:press",
+      "key:120:2:press",
+      "key:9:0:press",
+      "key:57352:0:press"
+    ],
+    "reason": "rival limitation: split UTF-8 becomes replacement characters in standalone libvaxis Parser",
+    "morse_bug": false
+  },
+  {
+    "side": "crossterm",
+    "case": "pixel_mode",
+    "chunk": 64,
+    "input": "1b5b3c303b3634303b3336304d",
+    "expected": [
+      "pixel_mouse:0:640:360:0:press"
+    ],
+    "actual": [
+      "mouse:0:640:360:0:press"
+    ],
+    "reason": "model: standalone rival decoder exposes SGR coordinates without a configurable pixel unit flag",
+    "morse_bug": false
+  },
+  {
+    "side": "termwiz",
+    "case": "pixel_mode",
+    "chunk": 64,
+    "input": "1b5b3c303b3634303b3336304d",
+    "expected": [
+      "pixel_mouse:0:640:360:0:press"
+    ],
+    "actual": [
+      "mouse:0:640:360:0:press"
+    ],
+    "reason": "model: standalone rival decoder exposes SGR coordinates without a configurable pixel unit flag",
+    "morse_bug": false
+  },
+  {
+    "side": "vaxis",
+    "case": "pixel_mode",
+    "chunk": 64,
+    "input": "1b5b3c303b3634303b3336304d",
+    "expected": [
+      "pixel_mouse:0:640:360:0:press"
+    ],
+    "actual": [
+      "mouse:0:640:360:0:press"
+    ],
+    "reason": "model: standalone rival decoder exposes SGR coordinates without a configurable pixel unit flag",
+    "morse_bug": false
+  }
+]

@@ -1,0 +1,9 @@
+[package]
+name = "terminal-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+crossterm = { path = "../../build/deps/crossterm-0.29.0" }
+termwiz = { version = "=0.23.3", default-features = false }

@@ -1,0 +1,8 @@
+{
+  "zig": "0.16.0",
+  "rust": "1.93.0",
+  "crossterm": "0.29.0",
+  "termwiz": "0.23.3",
+  "libvaxis": "173a890d1394946b5d7623c66cd34bcd36d8eeb8",
+  "crossterm_sha256": "d8b9f2e4c67f833b660cdb0a3523065869fb35570177239812ed4c905aeff87b"
+}
