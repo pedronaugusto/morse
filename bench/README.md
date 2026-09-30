@@ -19,8 +19,9 @@ Versions and the crossterm source archive SHA-256 are pinned in `versions.json`;
 in `src/rust/Cargo.toml` and transitive dependencies in `Cargo.lock`.
 Libvaxis is commit `173a890d1394946b5d7623c66cd34bcd36d8eeb8` (0.6.0).
 Its own manifest pins zigimg and uucode by commit and package hash. Sources,
-Rust toolchains, registries, Zig packages, caches, binaries and results all
-live in the ignored `build/` directory. Morse is the repository at `..`;
+Rust toolchains, registries, caches, binaries and results live in the ignored
+`build/` directory. Zig 0.16 fetches package sources into the ignored
+`zig-pkg/` directory beside the harness manifest. Morse is the repository at `..`;
 this branch starts at `af2dc63`. `build/versions.txt` records tool versions.
 
 ## Workloads
