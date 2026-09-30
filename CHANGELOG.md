@@ -8,11 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.7.0] - 2026-09-30
 
-- `Event.copy` and `Reply.copy` keep borrowed fields in caller-owned storage, sized by `copySize`.
+### Changed
 
-- `KeyEvent.matches` compares shortcuts across encodings, typed text and shifted codepoints, ignoring lock states.
+- OSC text writers refuse C0 controls and DEL before writing anything;
+  `checkText` and `printable` let a caller check text first or strip them
+  on purpose.
 
-- Behaviour change: OSC text writers refuse C0 controls and DEL before writing; `checkText` and `printable` let callers check or explicitly strip them.
+### Added
+
+- `KeyEvent.matches` compares a shortcut across encodings, typed text and
+  shifted codepoints, ignoring lock states.
+- `Event.copy` and `Reply.copy` keep borrowed fields in caller-owned
+  storage, sized by `copySize`.
 
 ## [0.6.0] - 2026-09-29
 
