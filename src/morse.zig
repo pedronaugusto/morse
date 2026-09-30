@@ -11,11 +11,11 @@
 //! taxonomy of malformed. What a parser returns borrows from the bytes it was
 //! given, and is valid for exactly as long as they are.
 //!
-//! The one exception to both rules is `KeyParser`, which has to remember
-//! half a sequence between reads and does it in a buffer the caller owns and
-//! can see. It is also the only thing here that decides where a sequence ends
-//! — which is what makes it the layer everything else on the input side hangs
-//! off, since a reply and a keypress arrive down the same pipe.
+//! `KeyParser` remembers half a sequence between reads in a buffer the caller
+//! owns and can see. It decides where a sequence ends, then reads the keys,
+//! mouse reports and replies that share that stream. `ConsoleDecoder` holds
+//! the keyboard and mouse state of Windows console records; those records
+//! arrive already framed. Neither owns a handle or reads input itself.
 //!
 //! `morse` does not read the terminal, does not size the screen, does not
 //! manage the termios state, and holds no capability database. It turns

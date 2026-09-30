@@ -1,11 +1,12 @@
 //! Keyboard input: the bytes a terminal sends when a key goes down, turned
 //! back into the key.
 //!
-//! This is the one place in `morse` that holds state between calls, and it
-//! holds it in a buffer the caller owns. It has to: a key arrives as up to a
+//! This is where the byte stream's partial sequences are held between calls,
+//! in a buffer the caller owns. It has to: a key arrives as up to a
 //! few dozen bytes and a read can end anywhere, so something has to remember
 //! half a sequence until the rest of it arrives. `KeyParser` is that
-//! something, and nothing else in the package needs it.
+//! something. `ConsoleDecoder` separately holds the state of console records
+//! that arrive through the Windows record interface rather than this stream.
 //!
 //! Four keyboard protocols reach a program through the same byte stream and
 //! `KeyParser` reads all of them:

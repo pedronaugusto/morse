@@ -355,7 +355,7 @@ what it typed. `KeyEvent.matches(key, mods)` compares a shortcut across the
 encodings, its typed text and shifted codepoint, ignoring lock states.
 Check `kind` yourself when only presses should act.
 
-**One parser frames the input, and holds the only state here.** `KeyParser`
+**One parser frames the byte stream.** `KeyParser`
 decides where each sequence ends and reads what it framed: a key is
 `Event.key`, a mouse report `Event.mouse`, and an answer to anything this
 package asks is `Event.reply`, a `Reply` holding the answer as a value — a
@@ -480,8 +480,8 @@ fitted in one. A megabyte of pixels costs 3,094 bytes of framing — 0.22% —
 and no buffer of its own. `transmitFrame` sends an animation frame through
 the same chunker, adding the `a=f` the protocol wants on every chunk of a
 frame and not only on the first. Placement lifecycle, acknowledgements and
-z-layers are not here: they need state between frames, and nothing in morse
-keeps any.
+z-layers are not here: they need graphics state between frames, which stays
+with the caller.
 
 **Synchronised output is a bracket, not a setting.** Mode 2026 goes on
 immediately before a frame and off immediately after it. It does not nest,

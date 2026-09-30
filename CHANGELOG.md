@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The state-ownership docs distinguish the byte-stream parser from the Windows console-record decoder.
+
 - Overflow recovery retains an undecided ESC at the buffer boundary and counts it when flushed.
 
 - The key module docs direct mouse reports and query answers to Event.mouse and Event.reply.
