@@ -1,8 +1,8 @@
 //! Terminal control sequences as typed writers and parsers.
 //!
-//! Every writer takes a `*std.Io.Writer`, writes one sequence, and returns
+//! Every writer takes a `*std.Io.Writer`, writes protocol bytes, and returns
 //! without flushing: batching is the caller's, because a repaint is many
-//! sequences and one write. No writer allocates, and none keeps state, so a
+//! sequences and one write. No writer allocates its own storage or keeps state, so a
 //! program's terminal state stays where the program can see it.
 //!
 //! Every parser takes a whole sequence as `[]const u8` and returns null for

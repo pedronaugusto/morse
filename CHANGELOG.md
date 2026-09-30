@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The writer and layout docs describe calls that emit several sequences and the records with an extern layout.
+
 - The state-ownership docs distinguish the byte-stream parser from the Windows console-record decoder.
 
 - Overflow recovery retains an undecided ESC at the buffer boundary and counts it when flushed.

@@ -331,8 +331,10 @@ them all in one call, `Probe.Question`, `probeMatches` to route the answers.
 
 ## Design
 
-**Writers take a `*std.Io.Writer` and write one sequence.** No writer
-allocates or flushes, so you decide when to batch; OSC 52's base64 goes
+**Writers take a `*std.Io.Writer` and write protocol bytes.** One call may
+write several sequences, as a probe, a mouse setting or an image does. No
+writer allocates its own storage or flushes, so you decide when to batch;
+OSC 52's base64 goes
 into the writer three input bytes at a time, needing no buffer sized to the
 payload. Titles, URIs, sized text and notification fields refuse C0 controls
 and DEL with `error.ControlInText` before writing anything. Ordinary text
@@ -426,7 +428,7 @@ explicit quiet period restarted by each reply; only then read silence as a
 no. `probeAnswered(event)` routes each event the parser reads, and
 `probeMatches(reply, question)` a sequence framed elsewhere.
 
-**`Style` is an `extern struct`, and so is every record in this package.**
+**`Style` and `Color` are `extern` structs.**
 A renderer keeps a style in every cell, and a cell that is `extern` is a row
 that compares with `memcmp` and a screen that diffs a row at a time. That is
 why `Color` is a tagged four-byte struct rather than the tagged union its
@@ -435,9 +437,10 @@ and will not put one inside an `extern struct`. Write a colour with
 `.default`, `.ansi(.red)`, `.palette(196)` or `.rgb(255, 128, 0)`, each of
 which zeroes the channels its kind does not use, so `Color.eql` and a byte
 comparison are the same comparison; read one by switching on `kind`. A
-`comptime` block pins `Style` at 22 bytes, aligned to one, with no padding,
-so a field added in the wrong place fails the build rather than quietly
-making that comparison read the holes. `CursorColor`, `MouseEvent`, `Resize`,
+`comptime` block checks that `Style` is aligned to one and has no padding,
+and the tests pin its size at 22 bytes. A field added in the wrong place
+fails the build rather than quietly making that comparison read the holes.
+`CursorColor`, `MouseEvent`, `Resize`,
 `CursorPosition`, `ExtendedCursorPosition`, `Rgb`, `Rgb16`, `CursorCell`,
 `CursorRect`, `Placement` and `GraphicsRect` are `extern` for the same
 reason.
