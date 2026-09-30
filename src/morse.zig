@@ -35,6 +35,7 @@ const probing = @import("probe.zig");
 const query = @import("query.zig");
 const replies = @import("reply.zig");
 const status = @import("status.zig");
+const strings = @import("strings.zig");
 const style = @import("style.zig");
 const tcap = @import("tcap.zig");
 const win32 = @import("win32.zig");
@@ -42,6 +43,13 @@ const win32 = @import("win32.zig");
 //=========================================================================
 // Titles and hyperlinks.
 //=========================================================================
+
+/// Refuses C0 controls and DEL in caller text before writing anything.
+pub const checkText = strings.checkText;
+/// Explicitly strips C0 controls and DEL into caller-owned storage.
+pub const printable = strings.printable;
+/// A string writer failure, including `ControlInText`.
+pub const TextError = strings.Error;
 
 /// Sets the window title: `OSC 2 ; text BEL`.
 pub const title = osc.title;

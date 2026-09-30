@@ -2,15 +2,14 @@
 //! (OSC 2), the icon name (OSC 1), the working directory (OSC 7), the
 //! hyperlink (OSC 8) and the size text is drawn at (OSC 66).
 //!
-//! Each of them wraps text the terminal reads rather than draws, and each
-//! writes that text through byte for byte. This file will never escape,
-//! percent-encode or truncate what it is given: a title that stops early
-//! because it held a control byte is a bug the caller can see and fix, and a
-//! title silently edited by the library is not.
+//! Caller text is refused, never mangled: C0 controls and DEL return
+//! `error.ControlInText` before anything is written. Ordinary text goes
+//! through byte for byte. `printable` strips controls only when asked.
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
 const seq = @import("seq.zig");
+const strings = @import("strings.zig");
 
 const Writer = std.Io.Writer;
 
@@ -20,11 +19,10 @@ const Writer = std.Io.Writer;
 /// enough that some terminals accept nothing else there, and every terminal
 /// that takes `ST` also takes `BEL`.
 ///
-/// `text` is written through byte for byte. A terminal ends the string at the
-/// first `ESC`, `BEL` or other C0 control, so a caller whose text may contain
-/// one must strip it first; this function does not, because silently editing
-/// a title is worse than a title that stops early.
-pub fn title(w: *Writer, text: []const u8) Writer.Error!void {
+/// C0 controls and DEL in `text` return `error.ControlInText` before
+/// anything is written. Ordinary text, including UTF-8, is unchanged.
+pub fn title(w: *Writer, text: []const u8) strings.Error!void {
+    try strings.checkText(text);
     try w.writeAll(seq.osc ++ "2;");
     try w.writeAll(text);
     try w.writeByte(seq.bel);
@@ -38,8 +36,9 @@ pub fn title(w: *Writer, text: []const u8) Writer.Error!void {
 /// instead, so a program that sets both should set them to the same thing or
 /// set only the title.
 ///
-/// `BEL` and byte-for-byte, for the same reasons as `title`.
-pub fn iconName(w: *Writer, text: []const u8) Writer.Error!void {
+/// Like `title`, refuses C0 controls and DEL before writing any bytes.
+pub fn iconName(w: *Writer, text: []const u8) strings.Error!void {
+    try strings.checkText(text);
     try w.writeAll(seq.osc ++ "1;");
     try w.writeAll(text);
     try w.writeByte(seq.bel);
@@ -77,13 +76,14 @@ pub fn titlePop(w: *Writer) Writer.Error!void {
 /// open a new tab in a path that only exists at the far end of an ssh
 /// session.
 ///
-/// Written through byte for byte, like every other string here. The URI must
+/// C0 controls and DEL are refused before writing. The URI must
 /// be percent-encoded already, and a directory whose name contains a space or
 /// a `%` is exactly the case where an unencoded one goes wrong.
 ///
 /// A shell is the usual writer of this; a program that changes directory on
 /// the user's behalf is the other one.
-pub fn workingDirectory(w: *Writer, uri: []const u8) Writer.Error!void {
+pub fn workingDirectory(w: *Writer, uri: []const u8) strings.Error!void {
+    try strings.checkText(uri);
     try w.writeAll(seq.osc ++ "7;");
     try w.writeAll(uri);
     try w.writeAll(seq.st);
@@ -95,9 +95,11 @@ pub fn workingDirectory(w: *Writer, uri: []const u8) Writer.Error!void {
 /// `params` is the optional `key=value:key=value` list the OSC 8 spec places
 /// before the URI; `id=<name>` is the one terminals act on, joining runs that
 /// share an id into a single link for hover and click. Pass null for none.
-/// Neither `uri` nor `params` may contain `;`, `ESC` or `BEL`, and this
-/// function does not check: percent-encode the URI as the spec requires.
-pub fn hyperlinkStart(w: *Writer, uri: []const u8, params: ?[]const u8) Writer.Error!void {
+/// C0 controls and DEL in either field are refused before writing.
+/// Percent-encode the URI as the spec requires; params must use its grammar.
+pub fn hyperlinkStart(w: *Writer, uri: []const u8, params: ?[]const u8) strings.Error!void {
+    try strings.checkText(uri);
+    if (params) |p| try strings.checkText(p);
     try w.writeAll(seq.osc ++ "8;");
     if (params) |p| try w.writeAll(p);
     try w.writeByte(';');
@@ -112,9 +114,11 @@ pub fn hyperlinkEnd(w: *Writer) Writer.Error!void {
 }
 
 /// Writes `text` as a hyperlink to `uri`: `hyperlinkStart`, the text, then
-/// `hyperlinkEnd`. `text` is written unchanged, so it may carry attributes
-/// set before the call.
-pub fn hyperlink(w: *Writer, text: []const u8, uri: []const u8) Writer.Error!void {
+/// `hyperlinkEnd`. C0 controls and DEL in either field are refused before
+/// writing. Text keeps the attributes set before the call.
+pub fn hyperlink(w: *Writer, text: []const u8, uri: []const u8) strings.Error!void {
+    try strings.checkText(text);
+    try strings.checkText(uri);
     try hyperlinkStart(w, uri, null);
     try w.writeAll(text);
     try hyperlinkEnd(w);
@@ -190,11 +194,12 @@ pub const text_size_max: usize = 4096;
 /// correctly.
 ///
 /// `text` goes through byte for byte, like every other string in this file,
-/// and must be valid UTF-8 no longer than `text_size_max` bytes. Neither is
-/// checked here.
+/// with C0 controls and DEL refused before writing. It must be valid UTF-8
+/// no longer than `text_size_max` bytes; those two limits are not checked.
 ///
 /// Read against the protocol text of 2026-09-18.
-pub fn textSize(w: *Writer, size: TextSize, text: []const u8) Writer.Error!void {
+pub fn textSize(w: *Writer, size: TextSize, text: []const u8) strings.Error!void {
+    try strings.checkText(text);
     try w.writeAll(seq.osc ++ "66;");
 
     var any = false;
@@ -556,4 +561,38 @@ test "workingDirectory accepts an empty URI" {
 
     try workingDirectory(&out.writer, "");
     try std.testing.expectEqualStrings("\x1b]7;\x1b\\", out.written());
+}
+
+test "OSC caller text refuses every control before writing and preserves UTF-8" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    for (0..128) |n| {
+        if (n >= 32 and n != 127) continue;
+        var bad = [_]u8{ 'a', @intCast(n), 'b' };
+        try std.testing.expectError(error.ControlInText, title(&out.writer, &bad));
+        try std.testing.expectError(error.ControlInText, iconName(&out.writer, &bad));
+        try std.testing.expectError(error.ControlInText, workingDirectory(&out.writer, &bad));
+        try std.testing.expectError(error.ControlInText, hyperlinkStart(&out.writer, &bad, null));
+        try std.testing.expectError(error.ControlInText, hyperlinkStart(&out.writer, "uri", &bad));
+        try std.testing.expectError(error.ControlInText, hyperlink(&out.writer, &bad, "uri"));
+        try std.testing.expectError(error.ControlInText, hyperlink(&out.writer, "text", &bad));
+        try std.testing.expectError(error.ControlInText, textSize(&out.writer, .{}, &bad));
+        try std.testing.expectEqual(@as(usize, 0), out.written().len);
+    }
+    const good = "café 🐈";
+    try title(&out.writer, good);
+    try iconName(&out.writer, good);
+    try workingDirectory(&out.writer, good);
+    try hyperlinkStart(&out.writer, good, good);
+    try hyperlink(&out.writer, good, good);
+    try textSize(&out.writer, .{}, good);
+    try std.testing.expectEqualStrings(
+        "\x1b]2;" ++ good ++ "\x07" ++
+            "\x1b]1;" ++ good ++ "\x07" ++
+            "\x1b]7;" ++ good ++ "\x1b\\" ++
+            "\x1b]8;" ++ good ++ ";" ++ good ++ "\x1b\\" ++
+            "\x1b]8;;" ++ good ++ "\x1b\\" ++ good ++ "\x1b]8;;\x1b\\" ++
+            "\x1b]66;;" ++ good ++ "\x1b\\",
+        out.written(),
+    );
 }

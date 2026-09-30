@@ -331,11 +331,14 @@ them all in one call, `Probe.Question`, `probeMatches` to route the answers.
 
 ## Design
 
-**Writers take a `*std.Io.Writer` and write one sequence.** Nothing in morse
-allocates and no writer flushes, so you decide when to batch; OSC 52's base64 goes
+**Writers take a `*std.Io.Writer` and write one sequence.** No writer
+allocates or flushes, so you decide when to batch; OSC 52's base64 goes
 into the writer three input bytes at a time, needing no buffer sized to the
-payload. Titles, URIs and notification bodies go through byte for byte:
-percent-encode them and strip the controls first.
+payload. Titles, URIs, sized text and notification fields refuse C0 controls
+and DEL with `error.ControlInText` before writing anything. Ordinary text
+is unchanged. `checkText` checks without writing; `printable(out, text)`
+strips controls explicitly into your buffer. Percent-encode URIs before
+passing them in.
 
 **Parsers take `[]const u8` and return `?T`, never an error.** Truncated,
 mistyped and arithmetically impossible inputs all return null, no number in a
