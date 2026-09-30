@@ -348,7 +348,9 @@ a parameter the terminal left out takes its default, so the trailing `;` in
 `CSI ? 62 ; 52 ; c` is a third attribute of zero and not a reject.
 `KeyEvent.text` likewise holds only what the terminal said the key produced,
 and is empty for a report like `CSI 97 u`, which names a key without saying
-what it typed.
+what it typed. `KeyEvent.matches(key, mods)` compares a shortcut across the
+encodings, its typed text and shifted codepoint, ignoring lock states.
+Check `kind` yourself when only presses should act.
 
 **One parser frames the input, and holds the only state here.** `KeyParser`
 decides where each sequence ends and reads what it framed: a key is

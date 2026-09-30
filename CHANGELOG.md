@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `KeyEvent.matches` compares shortcuts across encodings, typed text and shifted codepoints, ignoring lock states.
+
 - Behaviour change: OSC text writers refuse C0 controls and DEL before writing; `checkText` and `printable` let callers check or explicitly strip them.
 
 ## [0.6.0] - 2026-09-29

@@ -329,6 +329,46 @@ pub const KeyEvent = struct {
     pub fn text(ev: *const KeyEvent) []const u8 {
         return ev.text_buffer[0..ev.text_len];
     }
+
+    /// Whether this is `on` with `mods`, however the terminal encoded it.
+    /// Compares the key, then its single codepoint of typed text, then the
+    /// alternate shifted codepoint. Caps lock and num lock are ignored on
+    /// both sides. Shift implicit in typed text or an alternate codepoint
+    /// need not be present in `mods`; every other modifier must agree.
+    /// A cluster of more than one codepoint names no key. `kind` is left to
+    /// the caller, so presses, repeats and releases match alike.
+    pub fn matches(ev: KeyEvent, on: Key, mods: Modifiers) bool {
+        const typed = ev.text();
+        if (typed.len > 0 and (std.unicode.utf8CountCodepoints(typed) catch 2) != 1) return false;
+        const have = unlocked(ev.mods);
+        const want = unlocked(mods);
+        if (std.meta.eql(ev.key, on) and have == want) return true;
+        const cp = switch (on) {
+            .char => |c| c,
+            else => return false,
+        };
+        if (typed.len > 0) {
+            const wanted_cp: u21 = if (cp < 128 and want.shift) std.ascii.toUpper(@intCast(cp)) else cp;
+            var buf: [4]u8 = undefined;
+            const n = std.unicode.utf8Encode(wanted_cp, &buf) catch return false;
+            if (std.mem.eql(u8, typed, buf[0..n]) and unshifted(have) == unshifted(want)) return true;
+        }
+        if (ev.shifted) |sc| if (have.shift and sc == cp and unshifted(have) == unshifted(want)) return true;
+        return false;
+    }
+
+    fn unlocked(mods: Modifiers) Modifiers {
+        var out = mods;
+        out.caps_lock = false;
+        out.num_lock = false;
+        return out;
+    }
+
+    fn unshifted(mods: Modifiers) Modifiers {
+        var out = mods;
+        out.shift = false;
+        return out;
+    }
 };
 
 /// How big the terminal became, as an in-band resize report gives it.
@@ -3687,4 +3727,56 @@ test "the plain colour scheme parser and the event agree" {
             one(bytes).?.color_scheme,
         );
     }
+}
+
+test "KeyEvent.matches binds across legacy, kitty, modifyOtherKeys and win32 encodings" {
+    const cases = [_]struct { bytes: []const u8, on: Key, mods: Modifiers }{
+        .{ .bytes = "\x18", .on = .{ .char = 'x' }, .mods = .{ .ctrl = true } },
+        .{ .bytes = "\x1b[120;5u", .on = .{ .char = 'x' }, .mods = .{ .ctrl = true } },
+        .{ .bytes = "\x1b[27;5;120~", .on = .{ .char = 'x' }, .mods = .{ .ctrl = true } },
+        .{ .bytes = "\x1b[88;0;24;1;8;1_", .on = .{ .char = 'x' }, .mods = .{ .ctrl = true } },
+        .{ .bytes = "?", .on = .{ .char = '?' }, .mods = .{} },
+        .{ .bytes = "\x1b[47:63;2u", .on = .{ .char = '?' }, .mods = .{} },
+        .{ .bytes = "\x1b[47;2;63u", .on = .{ .char = '?' }, .mods = .{} },
+        .{ .bytes = "A", .on = .{ .char = 'a' }, .mods = .{ .shift = true } },
+        .{ .bytes = "\x1b[97;2;65u", .on = .{ .char = 'a' }, .mods = .{ .shift = true } },
+        .{ .bytes = "é", .on = .{ .char = 'é' }, .mods = .{} },
+        .{ .bytes = "\x1b[1;5A", .on = .up, .mods = .{ .ctrl = true } },
+        .{ .bytes = "\x1b[1;197A", .on = .up, .mods = .{ .ctrl = true } },
+        .{ .bytes = "\x1b[120;197u", .on = .{ .char = 'x' }, .mods = .{ .ctrl = true } },
+    };
+    for (cases) |case| {
+        var buffer: [256]u8 = undefined;
+        var parser: KeyParser = .init(&buffer);
+        var events = parser.feed(case.bytes);
+        const ev = events.next().?.key;
+        try std.testing.expect(ev.matches(case.on, case.mods));
+        var locked = case.mods;
+        locked.caps_lock = true;
+        locked.num_lock = true;
+        try std.testing.expect(ev.matches(case.on, locked));
+        var wrong = case.mods;
+        wrong.alt = !wrong.alt;
+        try std.testing.expect(!ev.matches(case.on, wrong));
+        try std.testing.expect(!ev.matches(.escape, case.mods));
+        try std.testing.expect(events.next() == null);
+    }
+}
+
+test "KeyEvent.matches leaves event kind to the caller and refuses typed clusters" {
+    var ev: KeyEvent = .{ .key = .{ .char = 'a' }, .mods = .{ .num_lock = true, .caps_lock = true } };
+    for ([_]Kind{ .press, .repeat, .release }) |kind| {
+        ev.kind = kind;
+        try std.testing.expect(ev.matches(.{ .char = 'a' }, .{}));
+    }
+    ev.text_buffer[0..3].* = "á".*;
+    ev.text_len = 3;
+    try std.testing.expect(!ev.matches(.{ .char = 'a' }, .{}));
+    ev.text_buffer[0] = 0xff;
+    ev.text_len = 1;
+    try std.testing.expect(!ev.matches(.{ .char = 'a' }, .{}));
+    var shifted: KeyEvent = .{ .key = .{ .char = '/' }, .shifted = '?', .mods = .{ .shift = true, .caps_lock = true } };
+    try std.testing.expect(shifted.matches(.{ .char = '?' }, .{ .num_lock = true }));
+    shifted.mods.shift = false;
+    try std.testing.expect(!shifted.matches(.{ .char = '?' }, .{}));
 }
