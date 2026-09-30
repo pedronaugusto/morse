@@ -343,7 +343,10 @@ passing them in.
 **Parsers take `[]const u8` and return `?T`, never an error.** Truncated,
 mistyped and arithmetically impossible inputs all return null, no number in a
 reply can overflow the field it is parsed into, and what comes back borrows
-from the bytes you passed in. A reply parser is liberal where the grammar is:
+from the bytes you passed in. `Event.copy(out)` and `Reply.copy(out)` keep
+every borrowed field in your buffer, with `copySize()` giving the bytes
+needed. The copy lasts until that buffer changes or is freed, so a consumer
+can hand it to another thread without keeping the parser stopped. A reply parser is liberal where the grammar is:
 a parameter the terminal left out takes its default, so the trailing `;` in
 `CSI ? 62 ; 52 ; c` is a third attribute of zero and not a reject.
 `KeyEvent.text` likewise holds only what the terminal said the key produced,

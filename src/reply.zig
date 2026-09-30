@@ -67,6 +67,43 @@ pub const Reply = union(enum) {
     /// What colours the extra cursors are drawn in.
     extra_cursor_colors: multicursor.ExtraCursorColors,
 
+    /// Bytes needed to keep this reply independently of its input buffer.
+    pub fn copySize(reply: Reply) usize {
+        return reply.borrowed().len;
+    }
+
+    /// Copies every borrowed byte into caller-owned `out`. The returned
+    /// reply remains valid until `out` is changed or freed, independently
+    /// of the parser. No allocation. `NoSpaceLeft` leaves `out` unchanged.
+    /// Replies holding only values need no storage.
+    pub fn copy(reply: Reply, out: []u8) error{NoSpaceLeft}!Reply {
+        const bytes = reply.borrowed();
+        if (out.len < bytes.len) return error.NoSpaceLeft;
+        @memmove(out[0..bytes.len], bytes);
+        const kept = out[0..bytes.len];
+        var result = reply;
+        switch (result) {
+            .version => result.version = kept,
+            .graphics => |*r| r.message = kept,
+            .capability => |*r| r.entries = kept,
+            .clipboard => |*r| r.data = kept,
+            .extra_cursors => |*r| r.blocks = kept,
+            else => {},
+        }
+        return result;
+    }
+
+    fn borrowed(reply: Reply) []const u8 {
+        return switch (reply) {
+            .version => |r| r,
+            .graphics => |r| r.message,
+            .capability => |r| r.entries,
+            .clipboard => |r| r.data,
+            .extra_cursors => |r| r.blocks,
+            else => "",
+        };
+    }
+
     /// Reads one whole sequence as the answer it is, or null for a sequence
     /// that answers nothing this package asks. `bytes` must be exactly the
     /// sequence, with nothing before or after it.
@@ -126,4 +163,40 @@ test "a sequence that answers nothing asked is not a reply" {
     for ([_][]const u8{ "\x1b[A", "\x1b]0;title\x07", "\x1b[?997;1n", "\x1b[48;24;80;480;720t", "", "\x1b[" }) |bytes| {
         try testing.expect(Reply.parse(bytes) == null);
     }
+}
+
+test "Reply.copy keeps every borrowed arm after its source is overwritten" {
+    const cases = [_][]const u8{
+        "\x1bP>|ghostty 1.3\x1b\\",
+        "\x1b_Gi=7;EBADPNG:bad\x1b\\",
+        "\x1bP1+r5463=31;524742\x1b\\",
+        "\x1b]52;c;aGk=\x07",
+        "\x1b[>100;0:2:3:4 q",
+    };
+    for (cases) |bytes| {
+        var source: [128]u8 = undefined;
+        @memcpy(source[0..bytes.len], bytes);
+        const reply = Reply.parse(source[0..bytes.len]).?;
+        const expected = try testing.allocator.dupe(u8, reply.borrowed());
+        defer testing.allocator.free(expected);
+        const storage = try testing.allocator.alloc(u8, reply.copySize());
+        defer testing.allocator.free(storage);
+        const kept = try reply.copy(storage);
+        @memset(&source, 0);
+        try testing.expectEqualStrings(expected, kept.borrowed());
+        if (kept == .capability) try testing.expectEqualStrings("5463", blk: {
+            var it = kept.capability.iterator();
+            break :blk it.next().?.name;
+        });
+        if (kept == .extra_cursors) {
+            var it = kept.extra_cursors.iterator();
+            try testing.expect(it.next() != null);
+        }
+    }
+    var short = [_]u8{99};
+    try testing.expectError(error.NoSpaceLeft, (Reply{ .version = "long" }).copy(&short));
+    try testing.expectEqual(@as(u8, 99), short[0]);
+    const value = Reply.parse("\x1b[?2026;2$y").?;
+    try testing.expectEqual(@as(usize, 0), value.copySize());
+    try testing.expectEqualDeep(value, try value.copy(&.{}));
 }

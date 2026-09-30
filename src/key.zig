@@ -470,6 +470,32 @@ pub const Event = union(enum) {
     /// The cure is a bigger buffer: `KeyParser.min_buffer` covers keys, and
     /// a program that asks the terminal questions has to cover the answers.
     overflow: usize,
+
+    /// Bytes needed to keep this event after the parser advances. A key
+    /// and every other arm holding only values need no storage.
+    pub fn copySize(ev: Event) usize {
+        return switch (ev) {
+            .reply => |r| r.copySize(),
+            .text, .unhandled => |bytes| bytes.len,
+            else => 0,
+        };
+    }
+
+    /// Copies borrowed text, sequences and reply fields into caller-owned
+    /// `out`. The returned event is valid until `out` changes or is freed,
+    /// even after the parser advances. No allocation; use `copySize` to
+    /// allocate exactly when needed. `NoSpaceLeft` leaves `out` unchanged.
+    pub fn copy(ev: Event, out: []u8) error{NoSpaceLeft}!Event {
+        switch (ev) {
+            .reply => |r| return .{ .reply = try r.copy(out) },
+            .text, .unhandled => |bytes| {
+                if (out.len < bytes.len) return error.NoSpaceLeft;
+                @memmove(out[0..bytes.len], bytes);
+                return if (ev == .text) .{ .text = out[0..bytes.len] } else .{ .unhandled = out[0..bytes.len] };
+            },
+            else => return ev,
+        }
+    }
 };
 
 //=========================================================================
@@ -3779,4 +3805,30 @@ test "KeyEvent.matches leaves event kind to the caller and refuses typed cluster
     try std.testing.expect(shifted.matches(.{ .char = '?' }, .{ .num_lock = true }));
     shifted.mods.shift = false;
     try std.testing.expect(!shifted.matches(.{ .char = '?' }, .{}));
+}
+
+test "Event.copy survives parser reuse for text, sequences and replies" {
+    const cases = [_][]const u8{ "café 🐈", "\x1b]0;unknown\x07", "\x1b_Gi=9;OK\x1b\\", "\x1bP>|terminal\x1b\\" };
+    for (cases) |bytes| {
+        var buffer: [256]u8 = undefined;
+        var parser: KeyParser = .init(&buffer);
+        var events = parser.feed(bytes);
+        const original = events.next().?;
+        const storage = try std.testing.allocator.alloc(u8, original.copySize());
+        defer std.testing.allocator.free(storage);
+        const kept = try original.copy(storage);
+        const second = try std.testing.allocator.alloc(u8, kept.copySize());
+        defer std.testing.allocator.free(second);
+        const expected = try kept.copy(second);
+        var later = parser.feed("overwrite the borrowed bytes");
+        _ = later.next();
+        try std.testing.expectEqualDeep(expected, kept);
+        if (kept == .reply and kept.reply == .graphics) try std.testing.expect(kept.reply.graphics.ok());
+    }
+    const key_event: Event = .{ .key = .{ .key = .{ .char = 'é' } } };
+    try std.testing.expectEqual(@as(usize, 0), key_event.copySize());
+    try std.testing.expectEqualDeep(key_event, try key_event.copy(&.{}));
+    var short = [_]u8{99};
+    try std.testing.expectError(error.NoSpaceLeft, (Event{ .text = "long" }).copy(&short));
+    try std.testing.expectEqual(@as(u8, 99), short[0]);
 }
