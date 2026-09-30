@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The test build accepts -Dtest-filter to run the named part of the suite.
+
 ## [0.7.0] - 2026-09-30
 
 ### Changed
