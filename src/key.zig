@@ -276,9 +276,10 @@ pub const Modifiers = packed struct(u8) {
 
 /// What happened to the key.
 ///
-/// Only `press` arrives from a terminal that was not asked for event types;
-/// `kittyKeyboardPush` with `report_event_types` is what turns the other two
-/// on, and nothing else can produce them.
+/// Kitty reports repeats and releases when `KittyFlags.report_event_types`
+/// is enabled. Win32 input mode also carries repeats and releases;
+/// `KeyParser.report_key_up` decides whether its releases are returned.
+/// Plain text and the legacy keyboard sequences report presses.
 pub const Kind = enum {
     /// The key went down.
     press,

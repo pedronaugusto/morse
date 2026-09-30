@@ -500,8 +500,9 @@ pub const ConsoleDecoder = struct {
     /// comes out as one.
     report_key_up: bool = false,
     /// A left-Ctrl press held for `altgr_window_ms` in case the right-Alt
-    /// half of AltGr follows it. Any record other than that right-Alt press
-    /// settles it as a Ctrl press, reported before the record's own event.
+    /// half of AltGr follows it. Another key, mouse or size record settles
+    /// it as a Ctrl press, reported before that record's own event. Menu and
+    /// focus records (`ConsoleRecord.other`) leave it held.
     pending_altgr_ctrl: ?KeyEvent = null,
     /// The synthetic modifier pair has arrived, and the records of its two
     /// keys -- left Ctrl and right Alt, repeats and releases -- are hidden
