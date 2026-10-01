@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Wall-clock measurements and speed ceilings live on the bench branch; the unit suite keeps exact byte counts, event counts and buffer bounds.
+
 - The console docs say which records settle a held Ctrl press and which keyboard protocols report releases.
 
 - The writer and layout docs describe calls that emit several sequences and the records with an extern layout.

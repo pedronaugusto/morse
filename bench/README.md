@@ -4,6 +4,13 @@ Head-to-head terminal protocol decoding and encoding against crossterm,
 termwiz and libvaxis. All inputs are synthetic, from seed `0x4d4f5253`.
 No terminal is opened and no personal input is recorded.
 
+The original morse speed ceilings are separate from this comparison harness.
+From the repository root, `zig build timings -Doptimize=ReleaseFast` runs
+`bench/budgets.zig`: style diffs, cursor moves, the integer encoder against
+the formatter, a megabyte of pixels, mixed input and the buffer/read-size
+grid. The ceilings are unchanged; run on a quiet machine. `zig build test`
+reads no clock and keeps the deterministic byte counts and buffer bounds.
+
 From `bench/`, run `BENCH_MODE=smoke ./run.sh` to build and check the smallest
 workloads with one iteration. Smoke never reads a benchmark clock and leaves
 timing columns empty. Run `./run.sh` on a quiet machine for five iterations
