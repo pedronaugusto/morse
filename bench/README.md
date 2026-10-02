@@ -1,106 +1,97 @@
-# morse benchmarks
+# morse benchmark preparation
 
-Head-to-head terminal protocol decoding and encoding against crossterm,
-termwiz and libvaxis. All inputs are synthetic, from seed `0x4d4f5253`.
-No terminal is opened and no personal input is recorded.
+Run `./bench/quiet.sh --smoke` from the repository root to build both pinned
+revisions and every comparison, check correctness, and execute each workload
+once. Smoke samples no benchmark clock and records no timings. On an idle
+machine, `./bench/quiet.sh` runs the complete timed pass. `bench/run.sh` is a
+compatibility alias. On macOS the entry point prevents sleep during the pass.
 
-The original morse speed ceilings are separate from this comparison harness.
-From the repository root, `zig build timings -Doptimize=ReleaseFast` runs
-`bench/budgets.zig`: style diffs, cursor moves, the integer encoder against
-the formatter, a megabyte of pixels, mixed input and the buffer/read-size
-grid. The ceilings are unchanged; run on a quiet machine. `zig build test`
-reads no clock and keeps the deterministic byte counts and buffer bounds.
+Allow **15 minutes per package** in the quiet window; the expected warm-cache
+pass is about **5–10 minutes**, an estimate rather than a measured duration.
+Dependency downloads and first compilation can add several minutes. All
+builds and correctness checks finish before their timed workload groups.
+Results go to `bench/results/<UTC-date>/smoke-<time>.md` + `.json` or
+`pass-<time>.md` + `.json`. Both builds and results are ignored by Git.
 
-From `bench/`, run `BENCH_MODE=smoke ./run.sh` to build and check the smallest
-workloads with one iteration. Smoke never reads a benchmark clock and leaves
-timing columns empty. Run `./run.sh` on a quiet machine for five iterations
-with larger inputs. Do not interpret smoke as performance results.
+## Revisions and order
 
-Use Unix/macOS, Python 3.12+, rustup and Zig 0.16.0. `PYTHON`, `RUSTUP` and
-`ZIG` may select tools (including a locally extracted Zig). Rust 1.93.0 is
-installed with the minimal profile in `build/rustup`, using the existing
-rustup executable; no toolchain is installed globally. Both Zig competitors
-must use exactly 0.16.0. Builds use one job each.
+`revisions.json` fixes A (before) at
+`ebe7020141cb2b0be92fe692521cc477d7d13ca3`, the last first-parent main commit
+before **2026-09-30 00:00:00 +01:00**, and B (after) at
+`954c7fa2f9dd25237842f87a5716061ef243195c`. The midnight cutoff is explicit because Git's
+bare `--before=2026-09-30` can inherit the time of day. Refresh the pins and
+merge main into bench when main advances; the runner refuses a silently
+changed local main. `git archive` extracts exact source snapshots inside
+`bench/build/revisions/`, without modifying main or switching worktrees.
 
-Versions and the crossterm source archive SHA-256 are pinned in `versions.json`; Rust direct dependencies are exact
-in `src/rust/Cargo.toml` and transitive dependencies in `Cargo.lock`.
-Libvaxis is commit `173a890d1394946b5d7623c66cd34bcd36d8eeb8` (0.6.0).
-Its own manifest pins zigimg and uucode by commit and package hash. Sources,
-Rust toolchains, registries, caches, binaries and results live in the ignored
-`build/` directory. Zig 0.16 fetches package sources into the ignored
-`zig-pkg/` directory beside the harness manifest. Morse is the repository at `..`;
-this branch starts at `af2dc63`. `build/versions.txt` records tool versions.
+The protocol adapter builds unchanged against both public APIs. Each workload
+runs **A, B, comparisons, A, B, comparisons …**, five rounds in the timed pass.
+A and B receive identical seeded bytes and read sizes. Comparison order is
+seeded and shuffled within each round. The original six speed-ceiling tests
+also run A, B in each of five rounds, using the same harness at both revisions.
+Their original ceilings and correctness assertions are retained. Smoke runs
+one iteration per timing loop, with all benchmark clock calls disabled;
+its deterministic megabyte byte-count checks are allowed to run fully.
+The root `zig build timings -Doptimize=ReleaseFast` remains available on this
+branch, but `quiet.sh` owns the complete pass and structured reporting.
 
-## Workloads
+## Same-job comparisons
 
-- Input: shuffled typing and navigation, UTF-8, kitty keyboard modifiers,
-  alternate keys, associated text, repeat and release; SGR mouse presses,
-  releases, drags and wheel reports; bracketed paste, focus, and OSC colour
-  and clipboard replies. Full mode expands the deterministic mixed stream
-  and uses read chunks of 1, 64 and 4096 bytes. Smoke uses one coverage block
-  and 64-byte chunks. A separate pixel stream exercises mode 1016.
-- Output: bold plus RGB foreground and reset; absolute cursor moves; OSC 8
-  open/close; kitty image placement headers with varying image IDs and
-  cursor preservation. Smoke encodes one operation per workload; full mode
-  uses 100,000 seeded operations. No image payload/base64 or terminal I/O is
-  included. Missing typed crossterm link/graphics encoders are unavailable.
+Keep **crossterm 0.29.0, termwiz 0.23.3, and libvaxis 0.6.0** (commit
+`173a890d1394946b5d7623c66cd34bcd36d8eeb8`). This compares standalone input
+parsing and protocol encoding, not a renderer, terminal emulator, or app.
+No new comparison libraries were added. `versions.json`, the Rust manifest
+and `Cargo.lock` pin sources and dependencies. Zig is **0.16.0** and Rust is
+**1.93.0**. Python **3.12+**, rustup and Unix/macOS are required; `ZIG`,
+`RUSTUP`, and `PYTHON` may select executables. Rust toolchains and dependency
+caches stay inside the ignored build directory; nothing is installed globally.
+Zig uses ReleaseFast, Rust uses cargo release, and compilation uses one job.
 
-Zig writes into caller-owned fixed buffers; Rust reuses a reserved String.
-Native allocation policies remain part of the measurement. Each process
-loads inputs before starting its clock, then times one parser/encoder pass,
-including event delivery to a counter and optimization barrier. Process
-startup, compilation, input loading and reporting are outside the interval;
-parser setup and allocations within the pass are included. No TTY, rendering
-or application dispatch is measured. Competitor order is deterministically
-shuffled per iteration. Decode rates are input bytes/second, encode rates
-are operations/second; native event/output byte counts remain visible.
+- Input: seeded typing/navigation, UTF-8, kitty keyboard modifiers, alternate
+  keys, associated text, repeat/release, SGR mouse, bracketed paste, focus,
+  OSC colour and clipboard replies. Timed mixed streams use read sizes 1,
+  64 and 4096 bytes. Pixel mouse input configures both morse revisions for
+  mode 1016; standalone comparison APIs expose coordinates without that flag.
+- Output: bold plus RGB/reset, absolute cursor moves, OSC 8 open/close, and
+  kitty placement headers. Full passes encode 100,000 seeded operations;
+  smoke encodes one. Crossterm has no typed OSC 8/kitty encoder in this
+  adapter, so those entries are explicitly unavailable.
+- Speed ceilings: style diffs, cursor moves, the private integer encoder and
+  formatter, a megabyte of RGBA transmission, mixed input, and the complete
+  2-stream × 3-buffer × 4-read-size grid. The private encoder is compiled
+  from the selected revision, not from the bench branch's current source.
 
-Crossterm's Unix parser is private. `src/prepare.py` downloads its official
-crate and appends only a public visibility shim returning its typed Event;
-no parser logic changes. Its normal byte-by-byte accumulation is retained
-for every read chunk setting, while morse and termwiz accept chunks and
-libvaxis parses successive prefixes. Rust colour output is explicitly
-forced on, so inherited NO_COLOR cannot silently remove RGB sequences.
-Libvaxis output uses its public ctlseqs templates through Zig's formatter;
-this measures those templates, not its whole renderer. Termwiz's KittyImage
-formatter emits the header without ST; the adapter appends ST to frame it.
+Native allocation policies remain part of the job. Zig protocol output uses
+fixed caller-owned buffers; Rust reuses reserved strings. Processes load inputs
+before starting the benchmark clock; parser setup and allocations within a
+pass are included. Startup, builds, input loading, correctness, and reporting
+are outside the interval. Comparison rates use input bytes or operations;
+event/output byte counts remain visible. Speed-budget samples retain native
+units and ceilings, including every parser-grid entry.
 
-## Correctness and differences
+## Correctness and artifacts
 
-`build/correctness.json` records every input, normalized events, native
-counts, differences and output bytes/semantics. Keys use kitty codepoints,
-modifier bits and press/repeat/release. Mouse coordinates are normalized to
-one based without assuming cells and pixels are interchangeable. Text runs
-and combined Paste events expand to the same semantic stream. Colour replies
-compare 8-bit RGB values; clipboard replies compare decoded synthetic text.
-Isolated cases and a shared mixed stream run with whole and one-byte chunks.
-The comparison covers these fields, not every library-specific key metadata
-field or every protocol accepted by each package.
+An independent protocol oracle checks both morse revisions against expected
+events, for isolated inputs and a shared stream, whole and one-byte chunks.
+The encoder subset decoder compares intended terminal state rather than byte
+spelling. Smoke currently covers **275 input checks**, encoder checks at each
+implementation, and **six speed-budget tests at each package revision**.
+`known-differences.json` is the reviewed baseline for comparison libraries;
+new, changed, or missing differences fail, as does a morse/oracle mismatch.
+No unsupported reports are dropped from the throughput stream. The corpus
+is synthetic; no terminal or personal input is captured.
 
-`known-differences.json` is the reviewed baseline for pinned rivals. Any new,
-changed or missing difference fails the run, as does any morse event that
-differs from the corpus's independent expected events. Differences do not
-become permission to drop unsupported input from throughput workloads.
+Documented differences include uppercase/alternate-key representation, LF key
+policy, absent repeat/reply event variants, text/paste batching, released mouse
+button/motion models, split SGR/UTF-8 behavior, and pixel unit metadata. Output
+SGR grouping, RGB separators, reset spelling and kitty parameter order may
+differ while preserving the checked state. OSC 52 is borrowed base64 in morse
+and allocated decoded text in libvaxis; normalization accounts for this.
 
-| Difference | Assessment |
-| --- | --- |
-| Crossterm adds Shift to plain uppercase; kitty alternate-key reports select the shifted codepoint and remove Shift | Key representation policy; no morse bug |
-| Libvaxis maps LF to Ctrl+J; morse maps CR/LF to Enter | Documented key policy; no morse bug |
-| Libvaxis exposes repeat as key_press | Event model has no repeat variant; no morse bug |
-| Termwiz lacks kitty alternate keys/event kinds/associated text in InputParser, and focus/OSC replies in that API | Unsupported reports fall back to keys; no morse bug |
-| Crossterm lacks OSC reply events | Replies become keys; no morse bug |
-| Termwiz mouse model exposes button state, losing the released button and motion kind | Event model difference; no morse bug |
-| Termwiz split SGR mouse reports become keys; standalone libvaxis split UTF-8 becomes two replacement characters | Rival parser limitations; no morse bug |
-| Standalone rivals expose SGR coordinates without morse's configurable pixel unit flag | Same wire encoding, different mode metadata; no morse bug |
-| Morse text batching and rivals' per-key/combined paste delivery change native event counts | Normalized semantic stream agrees where supported; no morse bug |
-| SGR grouping/colour separators/reset spelling and kitty parameter order differ | Independent output subset decoder verifies equivalent intended state |
-
-OSC 52 remains borrowed base64 in morse but allocated decoded text in vaxis;
-normalization accounts for this. Pixel units cannot be inferred from SGR
-bytes alone: the morse adapter sets `mouse_pixels` for the separate workload;
-the other standalone APIs lack that configuration. Their coordinate parsing
-is still run and their unit metadata difference is reported.
-
-Results are `build/results.tsv`, with raw per-iteration rows and availability;
-`build/correctness.json` includes exact synthetic inputs and events, and
-`build/versions.txt` identifies the toolchains. No timings are checked in.
+The JSON includes revisions, harness commit and source hashes, dependency
+versions, OS/CPU/memory/power/load information without user or host names,
+correctness evidence, execution order, native counts, and raw samples. Markdown
+includes the machine record, samples, and (only for a timed pass) paired B/A
+medians. Smoke has null time fields and no performance ratios. Additional
+internal artifacts are `build/correctness.json` and `build/results.tsv`.
+No timing results are committed, and this preparation makes no speed claim.

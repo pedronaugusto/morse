@@ -3,12 +3,26 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const vaxis = b.dependency("vaxis", .{ .target = target, .optimize = optimize }).module("vaxis");
-    const morse = b.createModule(.{ .root_source_file = b.path("../src/morse.zig"), .target = target, .optimize = optimize });
-    for ([_]bool{ false, true }) |rival| {
+    const package_root = b.option([]const u8, "package-root", "Archived package root") orelse "..";
+    const morse = b.createModule(.{ .root_source_file = b.path(b.fmt("{s}/src/morse.zig", .{package_root})), .target = target, .optimize = optimize });
+    const budget_options = b.addOptions();
+    budget_options.addOption(bool, "smoke", b.option(bool, "smoke", "Skip every benchmark clock") orelse false);
+    const budgets = b.addTest(.{
+        .name = "morse-budgets",
+        .filters = &.{"bench:"},
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(b.fmt("{s}/bench.zig", .{package_root})),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "bench_options", .module = budget_options.createModule() }},
+        }),
+    });
+    b.installArtifact(budgets);
+    for ([_]bool{ false, true }) |comparison| {
         const options = b.addOptions();
-        options.addOption(bool, "rival", rival);
+        options.addOption(bool, "comparison", comparison);
         const exe = b.addExecutable(.{
-            .name = if (rival) "vaxis-bench" else "morse-bench",
+            .name = if (comparison) "vaxis-bench" else "morse-bench",
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/zig.zig"),
                 .target = target,

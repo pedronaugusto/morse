@@ -11,24 +11,24 @@ from generate import generate
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build'
 SMOKE = os.environ.get('BENCH_MODE', 'full') == 'smoke'
-SIDES = ['morse', 'crossterm', 'termwiz', 'vaxis']
+SIDES = ['morse-before', 'morse', 'crossterm', 'termwiz', 'vaxis']
 
 def invoke(side, task, mode, chunk, data):
-    if side in ('morse', 'vaxis'):
-        argv = [str(BUILD / f'zig-out/bin/{side}-bench'), task, mode, str(chunk)]
+    if side in ('morse-before', 'morse', 'vaxis'):
+        argv = [str(BUILD / ('before-out/bin/morse-bench' if side == 'morse-before' else f'zig-out/bin/{side}-bench')), task, mode, str(chunk)]
     else:
         argv = [str(BUILD / 'cargo-target/release/terminal-bench'), side, task, mode, str(chunk)]
     return subprocess.check_output(argv, input=data).decode().splitlines()
 
 def classify(case, side, chunk):
-    if side == 'morse':
+    if side in ('morse-before', 'morse'):
         return 'unexpected; investigate morse bug'
     if side == 'termwiz' and chunk == 1 and (case.startswith('mouse') or case == 'pixel_wire'):
-        return 'rival limitation: split SGR mouse prefixes fall back to keys in termwiz InputParser; whole reports parse correctly'
+        return 'comparison limitation: split SGR mouse prefixes fall back to keys in termwiz InputParser; whole reports parse correctly'
     if case == 'uppercase' and side == 'crossterm':
         return 'model: crossterm infers Shift for uppercase plain text; morse preserves only reported modifiers'
     if case == 'unicode' and side == 'vaxis' and chunk == 1:
-        return 'rival limitation: standalone libvaxis parser emits two replacement characters for a split UTF-8 codepoint'
+        return 'comparison limitation: standalone libvaxis parser emits two replacement characters for a split UTF-8 codepoint'
     if case == 'lf':
         return 'policy: LF is Ctrl+J in vaxis; morse maps LF and CR to Enter; crossterm here uses its default non-raw setting'
     if case.startswith('kitty') and side == 'termwiz':
@@ -40,8 +40,8 @@ def classify(case, side, chunk):
     if case.startswith('mouse') and side == 'termwiz':
         return 'model: termwiz mouse reports button state rather than press/release/motion kind'
     if case.startswith('focus') or case.startswith('osc'):
-        return 'coverage/model: rival input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)'
-    return 'rival behavior difference; see exact input and events; no morse bug against the protocol oracle'
+        return 'coverage/model: comparison input parser does not expose this morse event (OSC 52 becomes allocated clipboard text in vaxis)'
+    return 'comparison behavior difference; see exact input and events; no morse bug against the protocol oracle'
 
 def output_state(task, hex_line):
     """Independent subset decoder: compare terminal meaning, not byte spelling."""
@@ -99,9 +99,9 @@ def main():
                 events = records[:-1]
                 checks.append(dict(side=side, case=row['name'], input=row['hex'], chunk=chunk, native_count=native_count, events=events))
                 if events != row['expected']:
-                    item = dict(side=side, case=row['name'], chunk=chunk, input=row['hex'], expected=row['expected'], actual=events, reason=classify(row['name'], side, chunk), morse_bug=side == 'morse')
+                    item = dict(side=side, case=row['name'], chunk=chunk, input=row['hex'], expected=row['expected'], actual=events, reason=classify(row['name'], side, chunk), morse_bug=side in ('morse-before', 'morse'))
                     differences.append(item)
-                    if side == 'morse': failures.append(item)
+                    if side in ('morse-before', 'morse'): failures.append(item)
     # One stream of shared events verifies framing, ordering and adjacent
     # inputs, not just each parser's isolated-sequence interpretation.
     common = (BUILD / 'inputs/common.bin').read_bytes()
@@ -111,18 +111,18 @@ def main():
             records = invoke(side, 'decode', 'check', chunk, common)
             checks.append(dict(side=side, case='common_stream', input=common.hex(), chunk=chunk, native_count=int(records[-1].split(':')[1]), events=records[:-1]))
             if records[:-1] != common_expected:
-                differences.append(dict(side=side, case='common_stream', chunk=chunk, input=common.hex(), expected=common_expected, actual=records[:-1], reason=('rival limitation: split SGR mouse falls back to keys in termwiz InputParser' if side == 'termwiz' else 'rival limitation: split UTF-8 becomes replacement characters in standalone libvaxis Parser'), morse_bug=side == 'morse'))
-                if side == 'morse': failures.append(differences[-1])
+                differences.append(dict(side=side, case='common_stream', chunk=chunk, input=common.hex(), expected=common_expected, actual=records[:-1], reason=('comparison limitation: split SGR mouse falls back to keys in termwiz InputParser' if side == 'termwiz' else 'comparison limitation: split UTF-8 becomes replacement characters in standalone libvaxis Parser'), morse_bug=side in ('morse-before', 'morse')))
+                if side in ('morse-before', 'morse'): failures.append(differences[-1])
     # Pixel mode 1016 has the same SGR bytes as cell mode 1006. Only morse
     # exposes the unit flag in the standalone parser; preserve that difference.
     for side in SIDES:
-        records = invoke(side, 'decode_pixels' if side == 'morse' else 'decode', 'check', 64, bytes.fromhex('1b5b3c303b3634303b3336304d'))
+        records = invoke(side, 'decode_pixels' if side in ('morse-before', 'morse') else 'decode', 'check', 64, bytes.fromhex('1b5b3c303b3634303b3336304d'))
         events = records[:-1]
         expected = ['pixel_mouse:0:640:360:0:press']
         checks.append(dict(side=side, case='pixel_mode', input='1b5b3c303b3634303b3336304d', chunk=64, native_count=int(records[-1].split(':')[1]), events=events))
         if events != expected:
-            differences.append(dict(side=side, case='pixel_mode', chunk=64, input='1b5b3c303b3634303b3336304d', expected=expected, actual=events, reason='model: standalone rival decoder exposes SGR coordinates without a configurable pixel unit flag', morse_bug=side == 'morse'))
-            if side == 'morse': failures.append(differences[-1])
+            differences.append(dict(side=side, case='pixel_mode', chunk=64, input='1b5b3c303b3634303b3336304d', expected=expected, actual=events, reason='model: standalone comparison decoder exposes SGR coordinates without a configurable pixel unit flag', morse_bug=side in ('morse-before', 'morse')))
+            if side in ('morse-before', 'morse'): failures.append(differences[-1])
     # Validate each encoder's bytes against an independent expected intent.
     output_checks = []
     for task in ['style', 'cursor', 'link', 'graphics']:
@@ -137,7 +137,7 @@ def main():
             output_checks.append(dict(side=side, task=task, hex=encoded, status='equivalent', state=state))
     (BUILD / 'correctness.json').write_text(json.dumps(dict(checks=checks, differences=differences, output=output_checks), indent=2)+'\n')
     baseline = json.loads((ROOT / 'known-differences.json').read_text())
-    observed = {(d['side'], d['case'], d['chunk']): d['actual'] for d in differences}
+    observed = {(d['side'], d['case'], d['chunk']): d['actual'] for d in differences if d['side'] != 'morse-before'}
     known = {(d['side'], d['case'], d['chunk']): d['actual'] for d in baseline}
     if observed != known:
         raise SystemExit('correctness differences changed; review build/correctness.json against known-differences.json')
@@ -151,12 +151,13 @@ def main():
         data = (BUILD / 'inputs/mixed.bin').read_bytes() if task == 'decode' else (BUILD / 'inputs/pixels.bin').read_bytes() if task == 'decode_pixels' else output
         for chunk in ([64] if SMOKE or task != 'decode' else [1,64,4096]):
             for rep in range(1, reps+1):
-                order = list(SIDES); r.shuffle(order)
+                comparisons = list(SIDES[2:]); r.shuffle(comparisons)
+                order = ['morse-before', 'morse'] + comparisons
                 for side in order:
                     if side == 'crossterm' and task in ('link', 'graphics'):
                         results.append([side,task,chunk,rep,'unavailable','','','',''])
                         continue
-                    lines = invoke(side, 'decode' if task == 'decode_pixels' and side != 'morse' else task, 'smoke' if SMOKE else 'full', chunk, data)
+                    lines = invoke(side, 'decode' if task == 'decode_pixels' and side not in ('morse-before', 'morse') else task, 'smoke' if SMOKE else 'full', chunk, data)
                     size,count,ns = map(int, lines[0].split('\t'))
                     assert size == len(data) and count > 0
                     if SMOKE: assert ns == 0
@@ -166,7 +167,7 @@ def main():
         writer = csv.writer(f,delimiter='\t',lineterminator='\n')
         writer.writerow(['library','workload','chunk_bytes','iteration','status','input_bytes_or_operations','native_events_or_output_bytes','ns','bytes_or_ops_per_second'])
         writer.writerows(results)
-    print(f'{"SMOKE" if SMOKE else "FULL"}: {len(checks)} input cross-checks; {len(differences)} documented rival differences; output semantics agree; {len(results)} workload rows')
+    print(f'{"SMOKE" if SMOKE else "FULL"}: {len(checks)} input cross-checks; {len(differences)} documented comparison differences; output semantics agree; {len(results)} workload rows')
     if SMOKE: print('No clocks sampled; timing columns empty. See build/correctness.json and build/results.tsv.')
 
 if __name__ == '__main__': main()

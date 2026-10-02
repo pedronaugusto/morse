@@ -1,7 +1,7 @@
 const std = @import("std");
 const m = @import("morse");
 const v = @import("vaxis");
-const rival = @import("options").rival;
+const comparison = @import("options").comparison;
 extern "c" fn read(c_int, [*]u8, usize) isize;
 extern "c" fn write(c_int, [*]const u8, usize) isize;
 fn emit(comptime fmt: []const u8, args: anytype) void {
@@ -70,7 +70,7 @@ fn vaxisEvent(e: v.Event, check: bool) void {
 }
 fn decode(data: []const u8, chunk: usize, check: bool, pixels: bool) !usize {
     var count: usize = 0;
-    if (!rival) {
+    if (!comparison) {
         var buffer: [8192]u8 = undefined;
         var parser = m.KeyParser.init(&buffer);
         parser.mouse_pixels = pixels;
@@ -129,7 +129,7 @@ fn encode(task: []const u8, data: []const u8, check: bool) !usize {
     for (data) |value| {
         var w: std.Io.Writer = .fixed(&buffer);
         if (std.mem.eql(u8, task, "style")) {
-            if (!rival) {
+            if (!comparison) {
                 try m.setStyle(&w, .{ .bold = true, .fg = .rgb(value, 100, 50) });
                 try m.resetStyle(&w);
             } else {
@@ -138,13 +138,13 @@ fn encode(task: []const u8, data: []const u8, check: bool) !usize {
                 try w.writeAll(v.ctlseqs.sgr_reset);
             }
         } else if (std.mem.eql(u8, task, "cursor")) {
-            if (!rival) {
+            if (!comparison) {
                 try m.cursorTo(&w, @as(u32, value) + 1, 12);
             } else {
                 try w.print(v.ctlseqs.cup, .{ @as(u32, value) + 1, @as(u32, 12) });
             }
         } else if (std.mem.eql(u8, task, "link")) {
-            if (!rival) {
+            if (!comparison) {
                 try m.hyperlinkStart(&w, "https://example.org/bench", null);
                 try m.hyperlinkEnd(&w);
             } else {
@@ -152,7 +152,7 @@ fn encode(task: []const u8, data: []const u8, check: bool) !usize {
                 try w.writeAll(v.ctlseqs.osc8_clear);
             }
         } else if (std.mem.eql(u8, task, "graphics")) {
-            if (!rival) {
+            if (!comparison) {
                 try m.placeImage(&w, .{ .image = .{ .id = @as(u32, value) + 1 }, .placement = .{ .keep_cursor = true } });
             } else {
                 try w.print(v.ctlseqs.kitty_graphics_preamble, .{@as(u32, value) + 1});

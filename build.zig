@@ -77,11 +77,14 @@ pub fn build(b: *std.Build) void {
     // Timing ceilings belong to this branch, never to the unit test step.
     // One module owns both the public library and the private integer encoder
     // used by the formatter comparison.
+    const budget_options = b.addOptions();
+    budget_options.addOption(bool, "smoke", false);
     const timings = b.addTest(.{
         .name = "morse-timings",
         .filters = &.{"bench:"},
         .root_module = b.createModule(.{
             .root_source_file = b.path("bench.zig"),
+            .imports = &.{.{ .name = "bench_options", .module = budget_options.createModule() }},
             .target = target,
             .optimize = optimize,
         }),

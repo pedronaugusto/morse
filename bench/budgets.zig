@@ -6,6 +6,7 @@
 //! harness: `zig build timings -Doptimize=ReleaseFast` at the repository root.
 
 const std = @import("std");
+const smoke = @import("bench_options").smoke;
 const cursor = @import("../src/morse.zig");
 const graphics = @import("../src/morse.zig");
 const key = @import("../src/morse.zig");
@@ -18,6 +19,7 @@ const Writer = std.Io.Writer;
 /// package itself calls no operating system API; this file is the suite, and
 /// a measurement needs a clock.
 fn nowNanos() i96 {
+    if (smoke) return 0;
     return std.Io.Clock.now(.awake, std.testing.io).toNanoseconds();
 }
 
@@ -26,6 +28,10 @@ fn nowNanos() i96 {
 /// A warm-up pass first, then the measured one, and the result is a mean
 /// rather than a minimum: a mean is what a renderer actually pays.
 fn nanosPer(iterations: usize, context: anytype, comptime body: fn (@TypeOf(context)) anyerror!void) !f64 {
+    if (smoke) {
+        try body(context);
+        return 0;
+    }
     for (0..iterations / 8 + 1) |_| try body(context);
 
     const start = nowNanos();
@@ -41,6 +47,7 @@ fn nanosPer(iterations: usize, context: anytype, comptime body: fn (@TypeOf(cont
 /// which of the two is faster; a mean on a machine shared with other work
 /// says which of them the scheduler happened to interrupt.
 fn bestNanosPer(iterations: usize, context: anytype, comptime body: fn (@TypeOf(context)) anyerror!void) !f64 {
+    if (smoke) return nanosPer(1, context, body);
     var best: f64 = std.math.floatMax(f64);
     for (0..3) |_| best = @min(best, try nanosPer(iterations, context, body));
     return best;
@@ -48,7 +55,8 @@ fn bestNanosPer(iterations: usize, context: anytype, comptime body: fn (@TypeOf(
 
 /// Prints one measurement in the shape every line here takes.
 fn report(name: []const u8, value: f64, unit: []const u8, budget: f64) void {
-    std.debug.print("bench: {s:<34} {d:>10.2} {s} (budget {d:.2})\n", .{ name, value, unit, budget });
+    if (smoke) return;
+    std.debug.print("measurement\t{s}\t{d:.6}\t{s}\t{d:.2}\n", .{ name, value, unit, budget });
 }
 
 test "bench: a style diff is five bytes and a few dozen nanoseconds" {
@@ -161,7 +169,7 @@ test "bench: the hand integer encoder against the formatter" {
     const theirs = try bestNanosPer(100_000, Theirs{ .buffer = context.buffer, .numbers = context.numbers }, Theirs.one);
     report("writeInt, eight numbers", mine, "ns", 8000);
     report("the formatter, the same eight", theirs, "ns", 8000);
-    std.debug.print("bench: {s:<34} {d:>10.2}x\n", .{ "writeInt against the formatter", theirs / mine });
+    if (!smoke) std.debug.print("bench: {s:<34} {d:>10.2}x\n", .{ "writeInt against the formatter", theirs / mine });
 
     try std.testing.expect(mine < 8000);
     // The budget above is the assertion. The ratio is printed and not
@@ -199,7 +207,7 @@ test "bench: a megabyte of pixels costs a quarter of a percent in framing" {
 
     const ratio = @as(f64, @floatFromInt(overhead)) * 100 / @as(f64, @floatFromInt(payload));
     report("transmit 1 MB, framing overhead", ratio, "%", 0.25);
-    std.debug.print("bench: {s:<34} {d:>10} bytes\n", .{ "transmit 1 MB, total", written });
+    if (!smoke) std.debug.print("bench: {s:<34} {d:>10} bytes\n", .{ "transmit 1 MB, total", written });
     try std.testing.expect(ratio < 0.25);
 
     // The whole of it is the payload plus `APC G`, the keys, the `;` and the
@@ -231,7 +239,7 @@ test "bench: a megabyte of pixels costs a quarter of a percent in framing" {
     const ns = try nanosPer(16, Case{ .pixels = pixels, .sink = sink }, Case.one);
     const mb_per_s = @as(f64, megabyte) / ns * 1000;
     report("transmit 1 MB", ns / 1_000_000, "ms", 400);
-    std.debug.print("bench: {s:<34} {d:>10.1} MB/s\n", .{ "transmit throughput", mb_per_s });
+    if (!smoke) std.debug.print("bench: {s:<34} {d:>10.1} MB/s\n", .{ "transmit throughput", mb_per_s });
     try std.testing.expect(ns / 1_000_000 < 400);
 }
 
@@ -302,8 +310,8 @@ test "bench: a megabyte of mixed input, framed and decoded" {
         @as(f64, @floatFromInt(elapsed)) * 1000;
 
     report("KeyParser, per byte", ns_per_byte, "ns", 200);
-    std.debug.print("bench: {s:<34} {d:>10.1} MB/s\n", .{ "KeyParser throughput", mb_per_s });
-    std.debug.print("bench: {s:<34} {d:>10} of {d}\n", .{ "KeyParser events", keys, events });
+    if (!smoke) std.debug.print("bench: {s:<34} {d:>10.1} MB/s\n", .{ "KeyParser throughput", mb_per_s });
+    if (!smoke) std.debug.print("bench: {s:<34} {d:>10} of {d}\n", .{ "KeyParser events", keys, events });
 
     // The stream is real input, so it must decode to real events rather than
     // to a megabyte of `unhandled`.
@@ -353,7 +361,7 @@ test "bench: what the parser costs does not depend on the caller's buffer" {
             var line: [4]f64 = @splat(0);
             for (reads, 0..) |read, i| {
                 var best: f64 = std.math.floatMax(f64);
-                for (0..rounds) |_| {
+                for (0..if (smoke) @as(usize, 1) else rounds) |_| {
                     var parser: key.KeyParser = .init(storage[0..size]);
                     const start = nowNanos();
                     var offset: usize = 0;
@@ -367,10 +375,13 @@ test "bench: what the parser costs does not depend on the caller's buffer" {
                     best = @min(best, @as(f64, @floatFromInt(elapsed)) /
                         @as(f64, @floatFromInt(stream.bytes.len)));
                 }
+                var name_buf: [128]u8 = undefined;
+                const name = try std.fmt.bufPrint(&name_buf, "KeyParser {s}, buffer {d}, read {d}", .{ stream.name, size, read });
+                report(name, best, "ns/byte", 400);
                 line[i] = 1000 / best;
                 worst = @max(worst, best);
             }
-            std.debug.print(
+            if (!smoke) std.debug.print(
                 "bench: KeyParser {s:<6} {d:>5} B buffer  {d:>7.1} {d:>7.1} {d:>7.1} {d:>7.1} MB/s\n",
                 .{ stream.name, size, line[0], line[1], line[2], line[3] },
             );
