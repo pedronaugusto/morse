@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Run the import gate in the source job that installs Zig.
+
 - Check named source layers, cycles, entry files and dependency owners during source CI.
 
 - Share key values below the stream and Windows console decoders, removing their import cycle.
