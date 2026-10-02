@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, layers]
   pull_request:
   workflow_dispatch:
 
@@ -64,7 +64,7 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
       - name: Formatting
-        run: zig fmt --check build.zig build.zig.zon src examples conformance
+        run: zig fmt --check build.zig build.zig.zon src examples conformance ci
 
   # morse calls no operating system API, so the same source builds wherever
   # Zig goes. One host is enough to say so, and it is the claim the README
@@ -129,5 +129,7 @@ jobs:
       - run: ci/check-readme.sh
       # every cast out of the type system says why it is safe
       - run: python3 ci/casts.py
+      - name: Source import boundaries
+        run: zig build check-imports
       # The library and its unit suite leave clocks to the caller and bench.
       - run: python3 ci/clocks.py

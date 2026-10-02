@@ -22,6 +22,12 @@
     // commit rather than to a tag, because the step is a claim about the
     // bytes one revision of one emulator accepted.
     .dependencies = .{
+        .gantry = .{
+            .url = "git+https://github.com/pedronaugusto/gantry#70fec2b48206b224b8f37b80a9ba4509fbceb9c4",
+            .hash = "gantry-0.1.0-1iNrkQGcBAB2GKOphtOijBq388UW2CCqJ18MsYkCHCSJ",
+            .lazy = true,
+        },
+
         .emulator = .{
             .url = "git+https://github.com/ghostty-org/ghostty#b32f20f3e8d25bb925ec545c54498e93518e7ced",
             .hash = "ghostty-1.3.2-dev-5UdBC464cgX-VbPn16E1sGGBjQa8BRM9Eprp1xin7uVV",
