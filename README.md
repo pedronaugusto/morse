@@ -542,20 +542,18 @@ never panics, never overflows, and that whatever it accepts survives a round
 trip back through the writer. Where morse writes a command nothing answers —
 a graphics command, an OSC 66 — the suite carries a reader of that grammar so
 the round trip is against the bytes rather than against the writer twice.
-`src/bench.zig` measures what a renderer pays for a style diff, a cursor move,
-a megabyte of pixels and a megabyte of input, and fails the build if any of
-them grows past its budget. The byte figures are exact on every machine: the
-eighty-one-pair style matrix costs 1,312 bytes and a 200×60 frame of style
-changes 8,515. The times below are one run of the suite in ReleaseFast on an
-Apple M3 Max, printed by `zig build test`, so a reader can print their own:
+`src/work_test.zig` keeps the byte counts and buffer bounds for a style diff,
+a cursor move, a megabyte of pixels and a megabyte of input. The figures are
+exact on every machine: the eighty-one-pair style matrix costs 1,312 bytes,
+a 200×60 frame of style changes 8,515, and a megabyte of pixels adds 3,094
+bytes of framing. The unit suite reads no clock, and `python3 ci/clocks.py`
+checks the library and test sources for clock use. Timing measurements and
+their speed ceilings live on the [`bench` branch](https://github.com/pedronaugusto/morse/tree/bench):
+`zig build timings -Doptimize=ReleaseFast` there measures style diffs, cursor
+moves, integer encoding, image transmission and input parsing. Its separate
+`bench/run.sh` harness compares morse with other terminal libraries.
 
-| what | cost |
-|---|---|
-| `diffStyle`, two calls | 73 ns |
-| `cursorTo` | 12 ns |
-| `KeyParser.feed`, mixed keys and text | 3.6 ns a byte, 276 MB/s |
-| `KeyParser.feed`, text | 1.4–1.8 GB/s by buffer size |
-| `transmitImage`, one megabyte | 1.4 ms, 757 MB/s, 0.22 % framing | `KeyParser` is fuzzed fed in two pieces, so the
+`KeyParser` is fuzzed fed in two pieces, so the
 split lands anywhere a real read could have, and its framing is checked
 against a second framer written from the same grammar as a state machine —
 two implementations that share no line, and a disagreement about where a

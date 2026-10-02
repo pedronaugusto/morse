@@ -73,6 +73,19 @@ pub fn modifiers(state: u32) Modifiers {
     };
 }
 
+/// Right Alt and a control bit compose printable text on AltGr layouts.
+/// Apply the same rule after pairing UTF-16 halves as for a single unit.
+fn characterModifiers(state: u32, cp: u21) Modifiers {
+    var mods = modifiers(state);
+    if (state & ControlKeyState.right_alt != 0 and mods.ctrl and
+        cp >= 0x20 and cp != 0x7f)
+    {
+        mods.alt = false;
+        mods.ctrl = false;
+    }
+    return mods;
+}
+
 //=========================================================================
 // The virtual-key table.
 //=========================================================================
@@ -299,7 +312,7 @@ pub const ConsoleState = struct {
                 (@as(u21, unit) - 0xdc00);
             var ev: KeyEvent = .{
                 .key = .{ .char = cp },
-                .mods = if (alt_composed) .{} else modifiers(control_key_state),
+                .mods = if (alt_composed) .{} else characterModifiers(control_key_state, cp),
                 .kind = if (alt_composed or down) .press else .release,
             };
             var utf8: [4]u8 = undefined;
@@ -312,17 +325,7 @@ pub const ConsoleState = struct {
         st.high_surrogate = null;
         st.high_surrogate_is_alt_composed = false;
 
-        var mods = modifiers(control_key_state);
-
-        // AltGr, which the console cannot spell any other way. The codepoint
-        // is what tells it from control and alt: a chord produces no
-        // character, and a layout's third level does.
-        if (control_key_state & ControlKeyState.right_alt != 0 and ctrl_down and
-            unit >= 0x20 and unit != 0x7f)
-        {
-            mods.alt = false;
-            mods.ctrl = false;
-        }
+        var mods = characterModifiers(control_key_state, unit);
 
         const which = keyFromFields(vk, unit, control_key_state & ControlKeyState.enhanced != 0, &mods) orelse return .unknown;
         unit = uc;
@@ -1081,6 +1084,30 @@ test "an astral character composed with Alt is a press" {
     try std.testing.expectEqual(Key{ .char = 0x1f642 }, composed.key.key);
     try std.testing.expectEqual(key.Kind.press, composed.key.kind);
     try std.testing.expectEqualStrings("\u{1f642}", composed.key.text());
+}
+
+test "AltGr astral text keeps the character and ordinary modifiers" {
+    for ([_]u32{ ControlKeyState.left_ctrl, ControlKeyState.right_ctrl }) |ctrl| {
+        const state = ControlKeyState.right_alt | ctrl |
+            ControlKeyState.shift | ControlKeyState.caps_lock;
+        var decoder: ConsoleDecoder = .{};
+        var high = decoder.feed(.{ .key = .{
+            .key_down = true,
+            .unicode_char = 0xd83d,
+            .control_key_state = state,
+        } });
+        try std.testing.expectEqual(@as(?ConsoleEvent, null), high.next());
+        var low = decoder.feed(.{ .key = .{
+            .key_down = true,
+            .unicode_char = 0xde00,
+            .control_key_state = state,
+        } });
+        const event = low.next().?.key;
+        try std.testing.expectEqual(Key{ .char = 0x1f600 }, event.key);
+        try std.testing.expectEqual(Modifiers{ .shift = true, .caps_lock = true }, event.mods);
+        try std.testing.expectEqualStrings("\xf0\x9f\x98\x80", event.text());
+        try std.testing.expectEqual(@as(?ConsoleEvent, null), low.next());
+    }
 }
 
 test "a record reads AltGr as the character, not as control and alt" {

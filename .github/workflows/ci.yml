@@ -129,3 +129,5 @@ jobs:
       - run: ci/check-readme.sh
       # every cast out of the type system says why it is safe
       - run: python3 ci/casts.py
+      # The library and its unit suite leave clocks to the caller and bench.
+      - run: python3 ci/clocks.py
