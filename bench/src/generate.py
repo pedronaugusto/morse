@@ -39,7 +39,7 @@ def cases():
     ]
 
 def generate(smoke):
-    out = ROOT / 'build/inputs'
+    out = ROOT / 'build' / ('inputs-smoke' if smoke else 'inputs-full')
     out.mkdir(parents=True, exist_ok=True)
     rows = []
     for name, data, expected in cases():

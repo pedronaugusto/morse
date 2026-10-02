@@ -88,8 +88,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check-only', action='store_true', help='Run the protocol oracle without workload loops')
     args = parser.parse_args()
-    generate(SMOKE or args.check_only)
-    rows = json.loads((BUILD / 'inputs/cases.json').read_text())
+    rows = json.loads((BUILD / ('inputs-smoke' if SMOKE else 'inputs-full') / 'cases.json').read_text())
     differences = []
     checks = []
     failures = []
@@ -108,8 +107,8 @@ def main():
                     if side in ('morse-before', 'morse'): failures.append(item)
     # One stream of shared events verifies framing, ordering and adjacent
     # inputs, not just each parser's isolated-sequence interpretation.
-    common = (BUILD / 'inputs/common.bin').read_bytes()
-    common_expected = json.loads((BUILD / 'inputs/common_expected.json').read_text())
+    common = (BUILD / ('inputs-smoke' if SMOKE else 'inputs-full') / 'common.bin').read_bytes()
+    common_expected = json.loads((BUILD / ('inputs-smoke' if SMOKE else 'inputs-full') / 'common_expected.json').read_text())
     for side in SIDES:
         for chunk in [1, 64]:
             records = invoke(side, 'decode', 'check', chunk, common)
@@ -155,7 +154,7 @@ def main():
     reps = 1 if SMOKE else 5
     results = []
     for task in ['decode', 'decode_pixels', 'style', 'cursor', 'link', 'graphics']:
-        data = (BUILD / 'inputs/mixed.bin').read_bytes() if task == 'decode' else (BUILD / 'inputs/pixels.bin').read_bytes() if task == 'decode_pixels' else output
+        data = (BUILD / ('inputs-smoke' if SMOKE else 'inputs-full') / 'mixed.bin').read_bytes() if task == 'decode' else (BUILD / ('inputs-smoke' if SMOKE else 'inputs-full') / 'pixels.bin').read_bytes() if task == 'decode_pixels' else output
         for chunk in ([64] if SMOKE or task != 'decode' else [1,64,4096]):
             for rep in range(1, reps+1):
                 comparisons = list(SIDES[2:]); r.shuffle(comparisons)

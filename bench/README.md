@@ -7,7 +7,7 @@ machine, `./bench/quiet.sh` runs the complete timed pass. `bench/run.sh` is a
 compatibility alias. On macOS the entry point prevents sleep during the pass.
 
 Allow **15 minutes per package** in the quiet window; the expected warm-cache
-pass is about **5–10 minutes**, an estimate rather than a measured duration.
+pass is about **1–5 minutes** after smoke preparation, an estimate rather than a measured duration.
 Dependency downloads and first compilation can add several minutes. All
 builds and correctness checks finish before their timed workload groups.
 Results go to `bench/results/<UTC-date>/smoke-<time>.md` + `.json` or
@@ -98,3 +98,5 @@ No timing results are committed, and this preparation makes no speed claim.
 
 `python3 bench/src/run.py --check-only` runs the protocol and encoder oracle
 against already built tools, then returns before every workload loop.
+
+See [QUIET-PREP.md](QUIET-PREP.md) for the preparation contract and duration estimate.
