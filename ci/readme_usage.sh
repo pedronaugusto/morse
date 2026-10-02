@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# morse — README.md's Usage snippet, extracted from examples/usage.zig.
+# morse — README.md's Usage snippet, extracted from examples/quickstart.zig.
 #
 # A code snippet in a README is a claim about how the library is used, and
 # nothing compiles it. This one is a region of an example that `zig build
@@ -16,7 +16,7 @@ exec python3 - <<'PY'
 import pathlib
 import sys
 
-source = pathlib.Path("examples/usage.zig")
+source = pathlib.Path("examples/quickstart.zig")
 text = source.read_text(encoding="utf-8")
 
 MARKER = "// --- README:usage ---"

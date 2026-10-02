@@ -57,222 +57,14 @@ const ColorScheme = query.ColorScheme;
 /// reports the unshifted, current-layout codepoint, so `shift` and `a` is
 /// `.{ .char = 'a' }` with `Modifiers.shift` set, and the `A` that reached the
 /// screen is in `KeyEvent.shifted` or `KeyEvent.text` when the terminal said.
-pub const Key = union(enum) {
-    /// A key that stands for a Unicode codepoint — a letter, a digit, a
-    /// symbol, or space.
-    char: u21,
-    /// A function key, numbered from 1. Terminals report up to F35; the
-    /// legacy sequences stop at F20.
-    f: u8,
-
-    /// The Escape key. Reported only when the parser can tell it from the
-    /// start of a sequence — see `KeyParser.flush`.
-    escape,
-    /// Return, whether the terminal spelled it `CR` or `LF`.
-    enter,
-    /// Tab. Shift and tab arrives as this key with `Modifiers.shift`, whether
-    /// the terminal spelled it `CSI Z` or `CSI 9 ; 2 u`.
-    tab,
-    /// Backspace, which terminals send as `DEL` rather than `BS`.
-    backspace,
-    /// Insert.
-    insert,
-    /// Delete, the key that removes the character to the right.
-    delete,
-
-    /// The left arrow.
-    left,
-    /// The right arrow.
-    right,
-    /// The up arrow.
-    up,
-    /// The down arrow.
-    down,
-    /// Page up, sometimes labelled Prior.
-    page_up,
-    /// Page down, sometimes labelled Next.
-    page_down,
-    /// Home.
-    home,
-    /// End.
-    end,
-
-    /// Caps lock, reported as a key only by terminals told to report every
-    /// key; otherwise it is only a modifier.
-    caps_lock,
-    /// Scroll lock.
-    scroll_lock,
-    /// Num lock.
-    num_lock,
-    /// Print screen, which most window systems intercept before a terminal
-    /// ever sees it.
-    print_screen,
-    /// Pause, or Break.
-    pause,
-    /// The menu key, which opens a context menu.
-    menu,
-
-    /// Keypad 0.
-    kp_0,
-    /// Keypad 1.
-    kp_1,
-    /// Keypad 2.
-    kp_2,
-    /// Keypad 3.
-    kp_3,
-    /// Keypad 4.
-    kp_4,
-    /// Keypad 5.
-    kp_5,
-    /// Keypad 6.
-    kp_6,
-    /// Keypad 7.
-    kp_7,
-    /// Keypad 8.
-    kp_8,
-    /// Keypad 9.
-    kp_9,
-    /// The keypad decimal point, which is a comma on some layouts.
-    kp_decimal,
-    /// Keypad divide.
-    kp_divide,
-    /// Keypad multiply.
-    kp_multiply,
-    /// Keypad subtract.
-    kp_subtract,
-    /// Keypad add.
-    kp_add,
-    /// Keypad enter, which is a different key from `enter` only when the
-    /// terminal is in a protocol that can say so.
-    kp_enter,
-    /// Keypad equals, present on Mac keypads.
-    kp_equal,
-    /// The keypad separator, a thousands separator on some layouts.
-    kp_separator,
-    /// Keypad left, what keypad 4 sends with num lock off.
-    kp_left,
-    /// Keypad right, what keypad 6 sends with num lock off.
-    kp_right,
-    /// Keypad up, what keypad 8 sends with num lock off.
-    kp_up,
-    /// Keypad down, what keypad 2 sends with num lock off.
-    kp_down,
-    /// Keypad page up, what keypad 9 sends with num lock off.
-    kp_page_up,
-    /// Keypad page down, what keypad 3 sends with num lock off.
-    kp_page_down,
-    /// Keypad home, what keypad 7 sends with num lock off.
-    kp_home,
-    /// Keypad end, what keypad 1 sends with num lock off.
-    kp_end,
-    /// Keypad insert, what keypad 0 sends with num lock off.
-    kp_insert,
-    /// Keypad delete, what the keypad decimal point sends with num lock off.
-    kp_delete,
-    /// Keypad 5 with num lock off, which points at nothing and is therefore
-    /// called Begin.
-    kp_begin,
-
-    /// Play.
-    media_play,
-    /// Pause.
-    media_pause,
-    /// The single key that is play when stopped and pause when playing.
-    media_play_pause,
-    /// Reverse.
-    media_reverse,
-    /// Stop.
-    media_stop,
-    /// Fast forward.
-    media_fast_forward,
-    /// Rewind.
-    media_rewind,
-    /// Next track.
-    media_track_next,
-    /// Previous track.
-    media_track_previous,
-    /// Record.
-    media_record,
-    /// Volume down.
-    lower_volume,
-    /// Volume up.
-    raise_volume,
-    /// Mute.
-    mute_volume,
-
-    /// The left shift key itself, not shift as a modifier.
-    left_shift,
-    /// The left control key itself.
-    left_ctrl,
-    /// The left alt key itself.
-    left_alt,
-    /// The left super key itself — Windows, Command, or whatever the keyboard
-    /// calls it.
-    left_super,
-    /// The left hyper key itself, which X11 layouts can define.
-    left_hyper,
-    /// The left meta key itself.
-    left_meta,
-    /// The right shift key itself.
-    right_shift,
-    /// The right control key itself.
-    right_ctrl,
-    /// The right alt key itself, which is AltGr on many layouts.
-    right_alt,
-    /// The right super key itself.
-    right_super,
-    /// The right hyper key itself.
-    right_hyper,
-    /// The right meta key itself.
-    right_meta,
-    /// The ISO level 3 shift, which is what AltGr is when a layout defines it
-    /// as a level rather than as alt.
-    iso_level3_shift,
-    /// The ISO level 5 shift.
-    iso_level5_shift,
-};
+pub const Key = @import("key_types.zig").Key;
 
 /// Which modifiers were held, in the bit order the kitty keyboard protocol
 /// numbers them: `shift` is bit 1.
 ///
 /// A terminal spells these as the bitmask plus one, so a parameter of `5` is
 /// bits `4`, which is `ctrl`. That offset lives in the parser, not here.
-pub const Modifiers = packed struct(u8) {
-    /// Shift (bit 1).
-    shift: bool = false,
-    /// Alt, which is also Option and Meta on some keyboards (bit 2).
-    alt: bool = false,
-    /// Control (bit 4).
-    ctrl: bool = false,
-    /// Super — Windows or Command (bit 8).
-    super: bool = false,
-    /// Hyper (bit 16).
-    hyper: bool = false,
-    /// Meta, as distinct from alt, on the keyboards that have both (bit 32).
-    meta: bool = false,
-    /// Caps lock was on (bit 64). A lock state, not a key being held, and
-    /// only reported by terminals asked for every key.
-    caps_lock: bool = false,
-    /// Num lock was on (bit 128). A lock state, as `caps_lock` is.
-    num_lock: bool = false,
-
-    /// The integer the protocol spells these modifiers with, before the
-    /// protocol's plus-one.
-    pub fn bits(mods: Modifiers) u8 {
-        return @bitCast(mods);
-    }
-
-    /// The modifiers a protocol bitmask stands for, after the protocol's
-    /// plus-one has been taken off.
-    pub fn fromBits(value: u8) Modifiers {
-        return @bitCast(value);
-    }
-
-    /// Whether any modifier at all was held. The lock states count.
-    pub fn any(mods: Modifiers) bool {
-        return mods.bits() != 0;
-    }
-};
+pub const Modifiers = @import("key_types.zig").Modifiers;
 
 /// What happened to the key.
 ///
@@ -280,99 +72,13 @@ pub const Modifiers = packed struct(u8) {
 /// is enabled. Win32 input mode also carries repeats and releases;
 /// `KeyParser.report_key_up` decides whether its releases are returned.
 /// Plain text and the legacy keyboard sequences report presses.
-pub const Kind = enum {
-    /// The key went down.
-    press,
-    /// The key was held and the keyboard repeated it.
-    repeat,
-    /// The key came up.
-    release,
-};
+pub const Kind = @import("key_types.zig").Kind;
 
 /// One keypress.
 ///
 /// A value, not a view: nothing here borrows, so an event can be stored,
 /// compared and passed on long after the bytes it came from are gone.
-pub const KeyEvent = struct {
-    /// The most bytes of text one event carries. Four codepoints, which is
-    /// more than any key produces in practice and the most the protocol's
-    /// sub-parameters can spell.
-    pub const text_capacity = 16;
-
-    /// Which key.
-    key: Key,
-    /// Which modifiers were held.
-    mods: Modifiers = .{},
-    /// Press, repeat or release.
-    kind: Kind = .press,
-    /// Storage for `text`. Zeroed rather than undefined so that two events
-    /// carrying the same text compare equal.
-    text_buffer: [text_capacity]u8 = @splat(0),
-    /// How many bytes of `text_buffer` are text.
-    text_len: u8 = 0,
-    /// The codepoint this key produces with shift held, when the terminal was
-    /// asked for alternate keys and this key has one. Null otherwise.
-    shifted: ?u21 = null,
-    /// The codepoint this key has in the keyboard's base layout, when the
-    /// terminal was asked for alternate keys. What a program binding to
-    /// physical positions rather than to letters uses, so that a shortcut on
-    /// a Dvorak layout stays where the fingers are.
-    base: ?u21 = null,
-
-    /// The text this keypress produced, as UTF-8, or an empty slice.
-    ///
-    /// Set from the bytes themselves when the key arrived as plain input, and
-    /// from the protocol's associated-text parameter when the terminal was
-    /// asked for it with `report_associated_text`. It is deliberately **not**
-    /// guessed from `key`: a terminal reporting `CSI 97 u` for `a` has not
-    /// said what `a` produced on that layout with those modifiers, and a
-    /// parser inventing an answer would be wrong exactly where it matters —
-    /// dead keys, input methods, and a shifted key whose shifted form is not
-    /// the uppercase of its unshifted one.
-    pub fn text(ev: *const KeyEvent) []const u8 {
-        return ev.text_buffer[0..ev.text_len];
-    }
-
-    /// Whether this is `on` with `mods`, however the terminal encoded it.
-    /// Compares the key, then its single codepoint of typed text, then the
-    /// alternate shifted codepoint. Caps lock and num lock are ignored on
-    /// both sides. Shift implicit in typed text or an alternate codepoint
-    /// need not be present in `mods`; every other modifier must agree.
-    /// A cluster of more than one codepoint names no key. `kind` is left to
-    /// the caller, so presses, repeats and releases match alike.
-    pub fn matches(ev: KeyEvent, on: Key, mods: Modifiers) bool {
-        const typed = ev.text();
-        if (typed.len > 0 and (std.unicode.utf8CountCodepoints(typed) catch 2) != 1) return false;
-        const have = unlocked(ev.mods);
-        const want = unlocked(mods);
-        if (std.meta.eql(ev.key, on) and have == want) return true;
-        const cp = switch (on) {
-            .char => |c| c,
-            else => return false,
-        };
-        if (typed.len > 0) {
-            const wanted_cp: u21 = if (cp < 128 and want.shift) std.ascii.toUpper(@intCast(cp)) else cp;
-            var buf: [4]u8 = undefined;
-            const n = std.unicode.utf8Encode(wanted_cp, &buf) catch return false;
-            if (std.mem.eql(u8, typed, buf[0..n]) and unshifted(have) == unshifted(want)) return true;
-        }
-        if (ev.shifted) |sc| if (have.shift and sc == cp and unshifted(have) == unshifted(want)) return true;
-        return false;
-    }
-
-    fn unlocked(mods: Modifiers) Modifiers {
-        var out = mods;
-        out.caps_lock = false;
-        out.num_lock = false;
-        return out;
-    }
-
-    fn unshifted(mods: Modifiers) Modifiers {
-        var out = mods;
-        out.shift = false;
-        return out;
-    }
-};
+pub const KeyEvent = @import("key_types.zig").KeyEvent;
 
 /// How big the terminal became, as an in-band resize report gives it.
 ///
@@ -381,16 +87,7 @@ pub const KeyEvent = struct {
 /// terminal that does not know its own pixel size, which is every terminal
 /// that is not drawing the glyphs itself -- a multiplexer, most obviously --
 /// so a program that divides by them must check first.
-pub const Resize = extern struct {
-    /// Rows of text.
-    rows: u32,
-    /// Columns of text.
-    cols: u32,
-    /// The height of the text area in pixels, or zero when unknown.
-    ypixels: u32 = 0,
-    /// The width of the text area in pixels, or zero when unknown.
-    xpixels: u32 = 0,
-};
+pub const Resize = @import("key_types.zig").Resize;
 
 /// One thing that arrived on the terminal's input.
 pub const Event = union(enum) {
@@ -948,47 +645,7 @@ fn decodePlain(bytes: []const u8, mods: Modifiers, prefix: usize) Decoded {
 /// Shared with the Windows console paths, which carry the same control codes
 /// in a field rather than in the stream, so that one byte means one key
 /// however it arrived.
-pub fn asciiKey(b: u8, mods: *Modifiers) Key {
-    return switch (b) {
-        // Control and space is the terminal's name for a zero byte.
-        0x00 => blk: {
-            mods.ctrl = true;
-            break :blk .{ .char = ' ' };
-        },
-        0x01...0x07, 0x0b, 0x0c, 0x0e...0x1a => blk: {
-            mods.ctrl = true;
-            break :blk .{ .char = 'a' + @as(u21, b) - 1 };
-        },
-        // A terminal sends DEL for backspace, so BS is the modified one.
-        0x08 => blk: {
-            mods.ctrl = true;
-            break :blk .backspace;
-        },
-        0x09 => .tab,
-        // Both, because which one Return sends depends on the line
-        // discipline and neither is distinguishable from control and J or M.
-        0x0a, 0x0d => .enter,
-        0x1b => .escape,
-        0x1c => blk: {
-            mods.ctrl = true;
-            break :blk .{ .char = '\\' };
-        },
-        0x1d => blk: {
-            mods.ctrl = true;
-            break :blk .{ .char = ']' };
-        },
-        0x1e => blk: {
-            mods.ctrl = true;
-            break :blk .{ .char = '^' };
-        },
-        0x1f => blk: {
-            mods.ctrl = true;
-            break :blk .{ .char = '_' };
-        },
-        0x7f => .backspace,
-        else => .{ .char = b },
-    };
-}
+pub const asciiKey = @import("key_types.zig").asciiKey;
 
 /// Reads one UTF-8 codepoint as a key.
 fn decodeUtf8(bytes: []const u8, mods: Modifiers, prefix: usize) Decoded {
@@ -1005,18 +662,7 @@ fn decodeUtf8(bytes: []const u8, mods: Modifiers, prefix: usize) Decoded {
 ///
 /// A key held with anything but shift produced a control code rather than
 /// text, and a control code is not what the user meant to type.
-pub fn setText(ev: *KeyEvent, bytes: []const u8) void {
-    switch (ev.key) {
-        .char => |cp| if (cp >= 0x20 and cp != 0x7f) {
-            const m = ev.mods;
-            if (m.ctrl or m.alt or m.super or m.hyper or m.meta) return;
-            if (bytes.len > KeyEvent.text_capacity) return;
-            @memcpy(ev.text_buffer[0..bytes.len], bytes);
-            ev.text_len = @intCast(bytes.len);
-        },
-        else => {},
-    }
-}
+pub const setText = @import("key_types.zig").setText;
 
 /// Reads a sequence introduced by `ESC`, which is every sequence there is —
 /// and also alt, which terminals spell by putting an `ESC` in front of the

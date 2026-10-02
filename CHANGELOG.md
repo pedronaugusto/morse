@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Reject undeclared dependencies, duplicate layer membership and imports of source executables.
+
+- Run the import gate in the source job that installs Zig.
+
+- Check named source layers, cycles, entry files and dependency owners during source CI.
+
+- Share key values below the stream and Windows console decoders, removing their import cycle.
+
+### Added
+
+- A compiled heading and split-input example supplies the README usage block.
+
+- Bound local Zig build caches before builds, retaining downloaded packages and tools.
+
 ### Fixed
 
 - Astral characters composed with AltGr keep their text and ordinary modifiers in console records and win32 input mode.
