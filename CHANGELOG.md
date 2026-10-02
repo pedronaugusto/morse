@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Share key values below the stream and Windows console decoders, removing their import cycle.
+
 ### Added
 
 - A compiled heading and split-input example supplies the README usage block.
