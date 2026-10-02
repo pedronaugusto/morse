@@ -17,6 +17,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
+sh ci/cache.sh
 
 image=morse-linux-zig-0.16.0
 

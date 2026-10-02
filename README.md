@@ -84,6 +84,8 @@ caller supplies deadlines because a terminal need not answer.
 
 ## Testing
 
+Local build scripts clear `.zig-cache/{o,h,z,tmp}` above the measured cap in `ci/cache.sh`; run `sh ci/cache.sh` before direct Zig builds (only a rebuild is lost).
+
 `zig build test` runs the unit suite and both examples in Debug by default. Tests check
 writer bytes, malformed input, split framing, console records and parser round trips.
 `zig build examples` runs the examples separately; `zig build check` compiles the tests
