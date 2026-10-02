@@ -17,44 +17,54 @@ env:
   ZIG_VERSION: 0.16.0
 
 jobs:
-  # The whole suite on every supported host. The steps are spelled out rather
-  # than looped so each one reports its own status.
+  # Debug catches safety faults; ReleaseSafe checks optimized code and timing on each host.
+  # The arithmetic and byte budgets are mode-independent; the encoder ratios are printed, not asserted.
+  # The full test target already builds and runs the examples.
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, ${{ matrix.optimize }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        optimize: [Debug, ReleaseSafe]
+        include:
+          # One unchecked run catches optimizer-dependent behaviour; the other hosts have ReleaseSafe.
+          - os: ubuntu-latest
+            optimize: ReleaseFast
     steps:
       - uses: actions/checkout@v4
-
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+      - name: Test — ${{ matrix.optimize }}
+        run: zig build test -Doptimize=${{ matrix.optimize }}
 
+  # ReleaseSmall must build; its unchecked tests add no distinct assertion to ReleaseFast.
+  small:
+    name: compile (ReleaseSmall)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: zig build check -Doptimize=ReleaseSmall
+
+  # Formatting and source-policy checks read the same files on every host; once is enough.
+  source:
+    name: source checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
       - name: Formatting
         run: zig fmt --check build.zig build.zig.zon src examples conformance
-
-      # Four optimize modes, because the suite asserts on arithmetic that
-      # behaves differently under each: safety-checked overflow in Debug and
-      # ReleaseSafe, unchecked in ReleaseFast and ReleaseSmall.
-      - name: Test — Debug
-        run: zig build test -Doptimize=Debug
-
-      - name: Test — ReleaseSafe
-        run: zig build test -Doptimize=ReleaseSafe
-
-      - name: Test — ReleaseFast
-        run: zig build test -Doptimize=ReleaseFast
-
-      - name: Test — ReleaseSmall
-        run: zig build test -Doptimize=ReleaseSmall
-
-      # Built AND run, against the module a consumer gets.
-      - name: Examples
-        run: zig build examples
 
   # morse calls no operating system API, so the same source builds wherever
   # Zig goes. One host is enough to say so, and it is the claim the README

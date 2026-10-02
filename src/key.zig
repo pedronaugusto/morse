@@ -3599,6 +3599,20 @@ test "win32 input mode reads the character composed with Alt and the keypad" {
     try std.testing.expectEqual(@as(?Event, null), composed.next());
 }
 
+test "AltGr astral text in win32 input mode keeps the character" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+    // UTF-16 U+1F600 with RIGHT_ALT_PRESSED | LEFT_CTRL_PRESSED (9).
+    var high = parser.feed("\x1b[0;0;55357;1;9;1_");
+    try std.testing.expectEqual(@as(?Event, null), high.next());
+    var low = parser.feed("\x1b[0;0;56832;1;9;1_");
+    const event = low.next().?.key;
+    try std.testing.expectEqual(Key{ .char = 0x1f600 }, event.key);
+    try std.testing.expectEqual(Modifiers{}, event.mods);
+    try std.testing.expectEqualStrings("\xf0\x9f\x98\x80", event.text());
+    try std.testing.expectEqual(@as(?Event, null), low.next());
+}
+
 test "win32 input mode reads AltGr as the character, not as control and alt" {
     // AltGr sets the right-Alt bit and a control bit together, which is what
     // control and alt look like. The character is what tells them apart: a
