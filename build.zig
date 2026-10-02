@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) void {
     //
     // Built AND run, against the module a consumer gets. An example that is
     // only compiled proves the names still resolve; running it is what
-    // proves the bytes are still the bytes. examples/usage.zig is also where
+    // proves the bytes are still the bytes. examples/quickstart.zig is also where
     // README.md's Usage block comes from -- see ci/readme_usage.sh -- so the
     // snippet a reader copies cannot drift from code CI executes.
     //=====================================================================
@@ -131,4 +131,5 @@ pub fn build(b: *std.Build) void {
 /// directory is not reproducible from the manifest alone.
 const example_sources = [_][]const u8{
     "examples/usage.zig",
+    "examples/quickstart.zig",
 };

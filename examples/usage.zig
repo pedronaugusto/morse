@@ -1,9 +1,7 @@
 //! What a full-screen program does on the way in, on the way out, and with
 //! the bytes that arrive in between.
 //!
-//! `zig build examples` builds AND runs this; `ci/readme_usage.sh` extracts
-//! the region between the usage markers into README.md, so the snippet a
-//! reader copies is code CI executes.
+//! `zig build examples` builds and runs this in a buffer.
 //!
 //! The writer here is a buffer rather than the terminal, for two reasons: the
 //! example can then show you the bytes each call produced, and running it in

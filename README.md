@@ -1,581 +1,102 @@
 # morse
 
-[![CI](https://github.com/pedronaugusto/morse/actions/workflows/ci.yml/badge.svg)](https://github.com/pedronaugusto/morse/actions/workflows/ci.yml)
+morse writes terminal control sequences and decodes terminal input in Zig. Typed writers
+and parsers cover screen commands, keys, mouse reports and query replies, including
+input split across reads.
 
-morse writes terminal control sequences and parses the bytes a terminal sends
-back: keys, mouse reports, and the replies to questions a program asks. It is
-what a full-screen program sits on, under anything that draws widgets.
+## Install
+
+Requires Zig 0.16.0. Fetch with `zig fetch --save
+git+https://github.com/pedronaugusto/morse`, then obtain the `morse` module through
+`b.dependency` and add it to your executable's imports. Forward your target and optimize
+settings.
 
 ## Usage
 
-The block below is a region of [`examples/usage.zig`](examples/usage.zig),
-which `zig build examples` builds and runs. CI compares the two.
+[examples/quickstart.zig](examples/quickstart.zig)
 
 <!-- BEGIN GENERATED ci/readme_usage.sh -->
 ```zig
 const std = @import("std");
 const morse = @import("morse");
 
-// Any `*std.Io.Writer` will do -- a buffered writer over stdout is the
-// real one. Nothing below allocates or flushes: batching is yours.
-var buffer: [2048]u8 = undefined;
-var out: std.Io.Writer = .fixed(&buffer);
-const w = &out;
-
-// Take the screen: alternate buffer, no cursor. Synchronised output is
-// not here -- it is a bracket around each frame, further down.
-try morse.altScreen.set(w, true);
-try morse.cursorVisible.set(w, false);
-
-// Mouse press and wheel reports, spelled in SGR: one motion and one
-// encoding, whatever the terminal was left in before.
-try morse.mouse(w, .{ .motion = .press, .encoding = .sgr });
-
-// Keys in the kitty protocol, pushed so exiting restores what was there,
-// and pasted text bracketed so it can be told from typing.
-try morse.kittyKeyboardPush(w, .{
-    .disambiguate_escape_codes = true,
-    .report_event_types = true,
-    .report_associated_text = true,
-});
-try morse.bracketedPaste.set(w, true);
-try morse.inBandResize.set(w, true);
-
-// And ask to be told when the user's theme turns light or dark, so a
-// program that chose its colours on startup hears that they no longer
-// suit the background.
-try morse.colorScheme.set(w, true);
-
-// On Windows, keys as sequences rather than as bytes: mode 9001 says
-// which physical key it was and whether it went down or came up, and
-// `KeyParser` reads it into the same `Key` as everything else.
-try morse.win32Input.set(w, true);
-
-// A frame, bracketed by mode 2026 so the terminal shows all of it or
-// none of it. The bracket is per frame, it does not nest, and each half
-// is its own sequence -- never batched with another mode.
-try morse.syncOutput.set(w, true);
-
-// Clear, go to the top-left, write a heading in a style. The second style
-// call writes only what changed -- five bytes rather than a reset and a
-// repaint of attributes that were already right.
+var output: [128]u8 = undefined;
+var writer: std.Io.Writer = .fixed(&output);
 const heading: morse.Style = .{ .bold = true, .fg = .ansi(.cyan) };
 const body: morse.Style = .{ .fg = .ansi(.cyan) };
-try morse.clearScreen(w, .all);
-try morse.cursorTo(w, 1, 1);
-try morse.setStyle(w, heading);
-try w.writeAll("morse");
-try morse.diffStyle(w, heading, body);
-try w.writeAll(" -- terminal control sequences");
-try morse.resetStyle(w);
 
-// A rule under it, written as one glyph and a repeat count rather than
-// as thirty glyphs.
-try morse.cursorTo(w, 2, 1);
-try w.writeAll("\u{2500}");
-try morse.repeatChar(w, 29);
+try morse.cursorTo(&writer, 1, 1);
+try morse.setStyle(&writer, heading);
+try writer.writeAll("morse");
+try morse.diffStyle(&writer, heading, body);
+try writer.writeAll(" terminal sequences");
+try morse.resetStyle(&writer);
 
-// A heading drawn two cells tall, and a footnote marker drawn half size
-// at the top of its cell. Terminals without the protocol draw both at
-// the usual size, which still reads correctly.
-try morse.cursorTo(w, 4, 1);
-try morse.textSize(w, .{ .scale = 2 }, "morse");
-try morse.textSize(w, .{ .numerator = 1, .denominator = 2 }, "1");
+var input: [128]u8 = undefined;
+var parser: morse.KeyParser = .init(&input);
+var events = parser.feed("\x1b[97;");
+if (events.next() != null) return error.IncompleteKey;
 
-// An image, under the text. Send the pixels, then place them: the two are
-// separate so the picture can be moved, replaced or taken away without
-// sending it again. `q=2` because nothing here reads the reply.
-const pixels = [_]u8{ 0xff, 0x00, 0x00, 0xff }; // one red pixel, RGBA
-try morse.transmitImage(w, .{
-    .image = .{ .id = 7 },
-    .width = 1,
-    .height = 1,
-    .quiet = .silent,
-}, &pixels);
-try morse.cursorTo(w, 6, 1);
-try morse.placeImage(w, .{
-    .image = .{ .id = 7 },
-    .placement = .{ .id = 1, .columns = 20, .rows = 6, .z = -1, .keep_cursor = true },
-    .quiet = .silent,
-});
-
-// Cursors the terminal draws, at the three places an edit is happening.
-try morse.extraCursors(w, .main, &.{.{ .cells = &.{
-    .{ .row = 8, .col = 4 },
-    .{ .row = 9, .col = 4 },
-    .{ .row = 10, .col = 4 },
-} }});
-
-// The frame ends here.
-try morse.syncOutput.set(w, false);
-
-// A title, a clickable link, and a desktop notification.
-try morse.title(w, "morse");
-try morse.hyperlink(w, "ziglang.org", "https://ziglang.org");
-try morse.notify(w, "Build finished", "0 errors");
-
-// Put text on the clipboard of whichever machine the terminal runs on,
-// base64 encoded on the fly -- no allocation, no buffer sized to the text.
-try morse.clipboardWrite(w, .clipboard, "copied by morse");
-
-// Ask the terminal what it is: nineteen questions in one write, with
-// slow forwarded questions first and DA1 last. DA1 proves the input path
-// works, but a multiplexer may answer it before a forwarded OSC reply.
-// Keep the timeout armed, or finish after an explicit quiet period. The
-// graphics question carries an image id, and the program picks one it
-// never sends a picture under.
-try (morse.Probe{ .graphics_id = 1 }).write(w);
-
-// A question the probe does not ask, because it needs a name. None of
-// these is guaranteed an answer either.
-try morse.queryCapability(w, "Co");
-
-// Input is one byte stream carrying keys, mouse reports and replies all
-// at once, so one parser frames it. The buffer is yours, nothing here
-// allocates, and a sequence split across two reads is held until the rest
-// of it arrives.
-var input: [1024]u8 = undefined;
-var keys: morse.KeyParser = .init(&input);
-
-// Control and a in the kitty protocol, then an SGR mouse click.
-var events = keys.feed(
-    "\x1b[97;5u\x1b[<0;40;12M\x1b[48;24;80;384;640t\x1b[?997;1n\x1b[?62;52;c",
-);
-while (events.next()) |event| switch (event) {
-    // A key, and whatever text the terminal said it produced.
-    .key => |key| std.debug.print("key:        {s}{t} {s}\n", .{
-        if (key.mods.ctrl) "ctrl+" else "",
-        key.key,
-        key.text(),
-    }),
-    // A run of printable text -- pasted, or typed faster than a read.
-    // One event and a borrowed slice, not one `KeyEvent` per character.
-    .text => |text| std.debug.print("text:       {s}\n", .{text}),
-    // The mouse, read: which button, where, and which modifiers.
-    .mouse => |click| std.debug.print(
-        "click:      {s} at {d},{d}\n",
-        .{ @tagName(click.button), click.x, click.y },
-    ),
-    // An answer to a question, read. `probeAnswered` says which question
-    // of a probe it answers, so routing is a lookup, not a parse.
-    .reply => |reply| switch (reply) {
-        .device_attributes => |da| std.debug.print("terminal:   class {d}\n", .{da.class}),
-        else => {},
-    },
-    // Framed, and not a key or an answer: an OSC nobody asked for.
-    .unhandled => {},
-    // A terminal asked for in-band resize says so here rather than
-    // through a signal.
-    .resize => |size| std.debug.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),
-    // A terminal in mode 2031 says so when the user's theme flips.
-    .color_scheme => |scheme| std.debug.print("scheme:     {t}\n", .{scheme}),
-    // A reply longer than the buffer: said, never turned into the keys
-    // its bytes look like. Size the buffer for the answers you ask for.
-    .overflow => |bytes| std.debug.print("dropped:    {d} bytes\n", .{bytes}),
-    .paste_start, .paste_end, .focus_in, .focus_out => {},
-};
-
-// A lone ESC is both the Escape key and the first byte of every sequence.
-// This parser never guesses: it holds the byte, and `flush` is what a
-// caller whose own timeout has expired calls to settle it.
-var held = keys.feed("\x1b");
-std.debug.assert(held.next() == null);
-std.debug.assert(keys.pending().len == 1);
-const escape = keys.flush().?;
-
-// A reply parses on its own too, for a program that framed it some other
-// way. Every parser takes a whole sequence and returns null for anything
-// it does not recognise.
-const mode = morse.parseModeReply("\x1b[?2026;1$y").?;
-const position = morse.parseCursorPosition("\x1b[12;40R").?;
-const background = morse.parseColorReply("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\").?;
-
-// A capability the terminal answered for. Names and values travel as
-// hex, because a value is often itself an escape sequence, and they are
-// decoded into a buffer you size from the reply.
-const caps = morse.parseCapabilityReply("\x1bP1+r436f=323536\x1b\\").?;
-var entries = caps.iterator();
-const colors = entries.next().?;
-var capability: [8]u8 = undefined;
-const color_count = try colors.decodeValue(&capability);
-
-// A pixel report (mode 1016) is byte-identical to a cell report, so the
-// program that asked for pixels is the one that says so.
-var pixel = morse.parseMouse("\x1b[<0;321;97M").?;
-pixel.pixels = true;
-const cell = morse.toCells(pixel, 8, 16);
-
-// On the way out, in reverse. The image and the extra cursors are taken
-// away explicitly: they outlive the program that drew them.
-try morse.extraCursorsClear(w);
-try morse.deleteImage(w, .{
-    .target = .{ .image = .{ .id = 7 } },
-    .free = true,
-    .quiet = .silent,
-});
-try morse.colorScheme.set(w, false);
-try morse.win32Input.set(w, false);
-try morse.inBandResize.set(w, false);
-try morse.bracketedPaste.set(w, false);
-try morse.kittyKeyboardPop(w);
-try morse.mouseOff(w);
-try morse.cursorVisible.set(w, true);
-try morse.altScreen.set(w, false);
+events = parser.feed("5u\x1b[<0;40;12M");
+const key = (events.next() orelse return error.MissingKey).key;
+const mouse = (events.next() orelse return error.MissingMouse).mouse;
 ```
 <!-- END GENERATED -->
 
-## Install
-
-```sh
-zig fetch --save git+https://github.com/pedronaugusto/morse
-```
-
-```zig
-const morse_dep = b.dependency("morse", .{ .target = target, .optimize = optimize });
-exe.root_module.addImport("morse", morse_dep.module("morse"));
-```
-
-No dependencies: nothing to link, and no C toolchain involved. The one entry
-in `build.zig.zon` belongs to `zig build conformance`, is lazy, and is asked
-for only when morse is the root package, so a build of this module never
-fetches it.
-
-## The API
-
-**Keyboard input.** `KeyParser`, `Events`, `Event`, `KeyEvent`, `Key`,
-`Modifiers`, `Kind`, `Resize`.
-
-**The Windows console.** `ConsoleRecord`, `ConsoleKeyRecord`,
-`ConsoleMouseRecord`, `ConsoleSizeRecord`, `ConsoleEvent`, `ConsoleEvents`,
-`ControlKeyState`, `ConsoleDecoder`, `ConsoleState`, `ConsoleKey`.
-
-**Styles and colour.** `Style`, `Color` (with `Color.Kind`, `Color.default`,
-`Color.ansi`, `Color.palette`, `Color.rgb`, `Color.fromRgb`, `index`,
-`toAnsi`, `toRgb`, `eql`), `Ansi`, `Rgb`, `Underline`, `Script`, `setStyle`,
-`diffStyle`, `resetStyle`.
-
-**Cursor and screen.** `cursorTo`, `cursorUp`, `cursorDown`, `cursorRight`,
-`cursorLeft`, `cursorNextLine`, `cursorPrevLine`, `cursorColumn`, `cursorRow`,
-`cursorSave`, `cursorRestore`, `ClearLine` / `clearLine`, `ClearScreen` /
-`clearScreen`, `scrollRegion`, `scrollRegionReset`, `scrollUp`, `scrollDown`,
-`insertLines`, `deleteLines`, `insertChars`, `deleteChars`, `eraseChars`,
-`repeatChar` (REP).
-
-**Titles and links.** `title`, `iconName` (OSC 1), `titlePush`, `titlePop`,
-`workingDirectory` (OSC 7), `hyperlinkStart`, `hyperlinkEnd`, `hyperlink`.
-
-**Text sizing (OSC 66).** `TextSize`, `textSize`, `VerticalAlign`,
-`HorizontalAlign`, `text_size_max`.
-
-**Clipboard (OSC 52).** `Clipboard`, `clipboardWrite`, `clipboardRequest`,
-`ClipboardReply`, `parseClipboardReply`, `decodeClipboard`.
-
-**Notifications, progress and prompt marks.** `notify` (OSC 777), `notify9`
-(OSC 9), `Progress` / `progress` (OSC 9;4), `promptStart`, `promptEnd`,
-`commandStart`, `commandEnd` (OSC 133).
-
-**Modes.** `altScreen`, `bracketedPaste`, `syncOutput`, `focusEvents`,
-`cursorVisible`, `unicodeCore`, `inBandResize`, `autoWrap`, `win32Input`,
-`colorScheme` — each a type with
-`set(w, on)` and a `number` — plus `setMode` for any mode morse does not name,
-and `Mouse` (`Mouse.Motion`, `Mouse.Encoding`) / `mouse` / `mouseOff`.
-
-**Keyboard protocol, cursor and pointer.** `KittyFlags`, `kittyKeyboardPush`,
-`kittyKeyboardPop`, `kittyKeyboardSet` / `KittyFlagChange`,
-`kittyKeyboardQuery`, `parseKittyKeyboardReply`, `ModifyKeys` / `modifyKeys`
-/ `modifyKeysReset` / `queryModifyKeys` / `ModifyKeysReport` /
-`parseModifyKeysReply` (XTMODKEYS), `CursorShape`, `cursorShape`,
-`PointerShape` / `pointerShape` / `pointerShapeReset` (OSC 22).
-
-**Asking the terminal what it is.** `queryMode` / `ModeState` / `ModeReport` /
-`parseModeReply`, `requestCursorPosition` / `CursorPosition` /
-`parseCursorPosition`, `requestExtendedCursorPosition` /
-`ExtendedCursorPosition` / `parseExtendedCursorPosition` (DECXCPR),
-`queryDeviceAttributes` / `DeviceAttributes` /
-`parseDeviceAttributes`, `querySecondaryDeviceAttributes` /
-`SecondaryDeviceAttributes` / `parseSecondaryDeviceAttributes`,
-`queryVersion` / `parseVersion`, `queryColor` / `setColor` / `resetColor` /
-`ColorTarget` / `Rgb16` / `ColorReport` / `parseColorReply`,
-`queryPaletteColor` / `setPaletteColor` / `resetPaletteColor` /
-`resetPalette` / `PaletteReport` / `parsePaletteReply` / `palette_size`
-(OSC 4 and 104), `queryCapability` / `queryCapabilities` / `CapabilityReply` /
-`Capabilities` / `Capability` / `parseCapabilityReply` (XTGETTCAP),
-`GraphicsResponse` / `parseGraphicsResponse`, `SizeQuery` /
-`queryWindowSize` / `resizeTextArea` / `WindowSize` / `parseWindowSize`,
-`queryColorScheme` / `ColorScheme` / `parseColorSchemeReply` (`CSI ? 996 n`
-and its `CSI ? 997` answer).
-
-**Graphics.** `transmitImage`, `placeImage`, `deleteImage`, `queryGraphics`,
-with `Transmit`, `Place`, `Placement`, `Delete`, `DeleteTarget`,
-`GraphicsFormat`, `GraphicsMedium`, `GraphicsQuiet`, `GraphicsImage`,
-`GraphicsRect`, `GraphicsAction`, `graphics_chunk_bytes` and
-`graphics_chunk_base64_max`; `transmitFrame`, `animateImage` and
-`composeFrames` for animation, with `AnimationImage`, `Frame`, `Animate`, `Compose`,
-`AnimationState`, `GraphicsCompose` and `GraphicsColor`; `placeholderRow`,
-`placeholderCell`, `Placeholder`, `graphics_placeholder`,
-`graphics_placeholder_max` for the Unicode placeholder path.
-
-**Extra cursors.** `extraCursors`, `extraCursorsClear`, `extraCursorColor`,
-`queryExtraCursorSupport`, `queryExtraCursors`, `queryExtraCursorColors`,
-with `ExtraCursorShape`, `CursorCell`, `CursorRect`, `CursorSpan`,
-`CursorColor`, `CursorColorTarget`, and the three replies —
-`ExtraCursorSupport` / `parseExtraCursorSupport`, `ExtraCursorReport` /
-`ExtraCursors` / `ExtraCursorAt` / `parseExtraCursors`, `ExtraCursorColors` /
-`parseExtraCursorColors`.
-
-**The startup probe.** `Probe` — the questions to ask, `Probe.write` to ask
-them all in one call, `Probe.Question`, `probeMatches` to route the answers.
-
-**Mouse reports.** `Button`, `MouseEvent`, `encodeMouse`, `parseMouse`,
-`parseMouseX10`, `parseMouseRxvt`, `mouse_x10_max`, `toCells`.
-
 ## Design
 
-**Writers take a `*std.Io.Writer` and write protocol bytes.** One call may
-write several sequences, as a probe, a mouse setting or an image does. No
-writer allocates its own storage or flushes, so you decide when to batch;
-OSC 52's base64 goes
-into the writer three input bytes at a time, needing no buffer sized to the
-payload. Titles, URIs, sized text and notification fields refuse C0 controls
-and DEL with `error.ControlInText` before writing anything. Ordinary text
-is unchanged. `checkText` checks without writing; `printable(out, text)`
-strips controls explicitly into your buffer. Percent-encode URIs before
-passing them in.
+The library uses only `std` and allocates no storage of its own. The conformance step
+alone fetches a lazy, pinned Ghostty emulator dependency to check terminal behaviour;
+consumer builds do not fetch it. Writers take a `*std.Io.Writer` and leave flushing to
+the caller. Parsers borrow their input; `KeyParser` retains incomplete sequences in a
+caller-owned buffer. Drain each `Events` iterator before feeding more bytes, and consume
+borrowed event data before the next iterator step, feed or flush.
 
-**Parsers take `[]const u8` and return `?T`, never an error.** Truncated,
-mistyped and arithmetically impossible inputs all return null, no number in a
-reply can overflow the field it is parsed into, and what comes back borrows
-from the bytes you passed in. `Event.copy(out)` and `Reply.copy(out)` keep
-every borrowed field in your buffer, with `copySize()` giving the bytes
-needed. The copy lasts until that buffer changes or is freed, so a consumer
-can hand it to another thread without keeping the parser stopped. A reply parser is liberal where the grammar is:
-a parameter the terminal left out takes its default, so the trailing `;` in
-`CSI ? 62 ; 52 ; c` is a third attribute of zero and not a reject.
-`KeyEvent.text` likewise holds only what the terminal said the key produced,
-and is empty for a report like `CSI 97 u`, which names a key without saying
-what it typed. `KeyEvent.matches(key, mods)` compares a shortcut across the
-encodings, its typed text and shifted codepoint, ignoring lock states.
-Check `kind` yourself when only presses should act.
+`Style` describes SGR attributes and colours. `setStyle` writes from the terminal's
+default state; `diffStyle` writes the changes between two known styles. Cursor and erase
+commands use typed parameters. Text-bearing control sequences reject C0 controls and DEL
+before writing; `printable` explicitly strips them into a supplied buffer.
 
-**One parser frames the byte stream.** `KeyParser`
-decides where each sequence ends and reads what it framed: a key is
-`Event.key`, a mouse report `Event.mouse`, and an answer to anything this
-package asks is `Event.reply`, a `Reply` holding the answer as a value — a
-mode's state, a colour, a size, a graphics acknowledgement, the terminal's
-name — so a program never parses a reply a second time and never copies one
-to read it later. Whether SGR mouse reports are in pixels is not in the
-report, so a program that asked for them sets `KeyParser.mouse_pixels`. What
-is framed and answers nothing asked comes back whole as `Event.unhandled`, so
-an unrecognised sequence never resynchronises the stream a byte at a time.
-`probeAnswered` says which question of a `Probe` an event answers. A run of printable text — a paste, or typing faster
-than a read — comes back as one `Event.text` borrowing the same buffer; a
-single printable codepoint is a keypress and comes back as `Event.key`. You
-own the buffer: `min_buffer` covers keys, but an OSC 52 reply is as long as
-whatever was copied. A sequence longer than the buffer is the one thing the
-parser cannot hand back, and it says so — `Event.overflow` with the count of
-bytes it dropped, and the stream picked up at the end of that sequence
-rather than in the middle of it, where a base64 payload reads as a few
-hundred keys nobody typed.
+`KeyParser` frames legacy and kitty keys, win32 input sequences, paste, focus, resize,
+mouse reports and replies in one stream. An unknown framed sequence becomes
+`Event.unhandled`. A lone ESC stays undecided until more input or `flush`; the
+application decides when to settle it. Whole-sequence parsers return null for
+unrecognized or malformed input.
 
-Drain each `Events` iterator before the next `feed`; if a consumer stops
-early, `remainder()` returns the part of that read not yet copied into the
-parser so it can be passed to the next `feed` without losing stream order.
+`ConsoleDecoder` accepts Windows console records without reading a console handle. It
+maintains keyboard and mouse state, including held Ctrl records and UTF-16 surrogate
+pairs. Release events are available when the input protocol reports them.
 
-**The Windows console arrives in two shapes, and both come out as `Key`.** A
-terminal in win32 input mode (`win32Input`, mode 9001) sends every key as
-`CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`, which `KeyParser` decodes: the repeat
-count becomes that many events, and the key coming up is dropped unless
-`report_key_up` is set. Reading the console yourself instead, you copy each
-record into a `ConsoleRecord` and hand it to `ConsoleDecoder.feed`, which reads
-it through the same virtual-key table and gives back its keys, mouse reports
-and resizes as a `ConsoleEvents` to take with `next`. Neither path calls an
-operating system API.
-
-Three things a console does that nothing else does are handled in both: the
-halves of a UTF-16 surrogate pair are paired into one character; a character
-composed on the keypad, which rides the Alt key *coming up*, is held and
-reported as a press; and AltGr, which sets the right-Alt bit and a control bit
-together, is reported as the character it produced. `ConsoleDecoder` also
-holds the synthetic Ctrl press that can precede right Alt: call `flush` after
-`ConsoleDecoder.altgr_window_ms` if right Alt has not arrived. Another key,
-mouse or size record settles it too, and then one record can give back two
-events, the Ctrl press first. Menu and focus records leave it held. `reset`
-forgets all held state.
-
-**A lone `ESC` is settled by you.** It is both the Escape key and the first
-byte of every sequence, so `KeyParser` holds it, `pending()` shows it, and
-`flush()` settles it once your own timeout expires.
-`KittyFlags.disambiguate_escape_codes` removes the question.
-
-**No terminfo: I ask the terminal.** `queryMode` (DECRQM) asks whether a mode
-is really implemented; `queryDeviceAttributes`, `queryVersion`, `queryColor`,
-`queryPaletteColor` and `queryCapability` (XTGETTCAP) ask the rest. Silence is
-an answer if you pair the question with one always answered, usually
-`queryDeviceAttributes` to prove the input path works. Only your timeout or an
-explicit quiet period says the optional query went unanswered; DA1 may return
-first through a multiplexer. What to do with that is yours: no timeout, no
-cache, no fallback lives here.
-
-**A startup probe is one write and one waiting window.** `Probe.write` asks
-nineteen questions in 160 bytes, ordered with the slow paths first: the
-cursor position leads, so a terminal that bleeds an unrecognised
-sequence bleeds it in front of everything; the OSC colour queries next,
-because a multiplexer forwards those and they take the long way round; DA2
-late, because it identifies nothing alone; DA1 **last**, because nearly every
-terminal answers it. DA1 proves the input path works, but is not a completion
-sentinel: a multiplexer can answer it locally while an earlier OSC query is
-still travelling outward. Keep the overall timeout armed, or finish after an
-explicit quiet period restarted by each reply; only then read silence as a
-no. `probeAnswered(event)` routes each event the parser reads, and
-`probeMatches(reply, question)` a sequence framed elsewhere.
-
-**`Style` and `Color` are `extern` structs.**
-A renderer keeps a style in every cell, and a cell that is `extern` is a row
-that compares with `memcmp` and a screen that diffs a row at a time. That is
-why `Color` is a tagged four-byte struct rather than the tagged union its
-shape asks for: Zig gives an auto-layout union no guaranteed representation
-and will not put one inside an `extern struct`. Write a colour with
-`.default`, `.ansi(.red)`, `.palette(196)` or `.rgb(255, 128, 0)`, each of
-which zeroes the channels its kind does not use, so `Color.eql` and a byte
-comparison are the same comparison; read one by switching on `kind`. A
-`comptime` block checks that `Style` is aligned to one and has no padding,
-and the tests pin its size at 22 bytes. A field added in the wrong place
-fails the build rather than quietly making that comparison read the holes.
-`CursorColor`, `MouseEvent`, `Resize`,
-`CursorPosition`, `ExtendedCursorPosition`, `Rgb`, `Rgb16`, `CursorCell`,
-`CursorRect`, `Placement` and `GraphicsRect` are `extern` for the same
-reason.
-
-**Styles are written as a diff.** `diffStyle(w, from, to)` writes the shortest
-`CSI ... m` between two styles, and nothing when they are equal. Off codes go
-first, then on codes, then colours: SGR 22 turns off bold and dim together, so
-turning bold off while dim stays on has to state the dim again. There are two
-ways to spell the same move and it writes the shorter — a leading `0` costs
-two bytes and buys every off code at once, so coming back from an
-everything-on style is `CSI 0 m` rather than thirty-eight bytes of off codes.
-Both are priced with `Writer.Discarding`, which runs the code that writes the
-bytes, so there is no second encoder to keep in step. You keep `from`.
-
-**The mouse is one motion and one encoding.** A terminal keeps the mouse as
-two settings, not as a switch per mode: what the pointer reports (1000 press,
-1002 drag, 1003 any motion) and how the report is spelled (1006 SGR, 1016 SGR
-pixels, 1015 rxvt). Turning on 1002 replaces 1000, and turning off any mode
-of a setting resets the whole setting. `Mouse` has the same shape, a `motion`
-and an `encoding` (SGR by default), and `mouse(w, .{ .motion = .drag })`
-puts the terminal in exactly that state whatever was on before: every other
-mode of both settings off, X10 (9) and UTF-8 (1005) included, then one `h`
-for the motion and one for the encoding. That holds on the terminals that
-keep a flag per mode as well, where only the offs clear what something
-earlier left on. `mouseOff` turns every mode of both settings off. Focus
-reports (1004) are not the mouse; `focusEvents` switches them.
-
-The X10 and UTF-8 encodings cannot be asked for: X10 caps a coordinate at 223
-and names no button on a release, and UTF-8 cannot be framed without knowing
-it was asked for. `parseMouseX10` and `parseMouseRxvt` read what a terminal
-left in X10 or rxvt sends meanwhile. Modes 1006 and 1016 are byte-identical,
-so `parseMouse` always reports cells and leaves `MouseEvent.pixels` false:
-set it yourself and call `toCells` with your cell size. Both count from 1.
-
-**An image is chunked by the protocol's rule, not by a buffer.**
-`transmitImage` base64-encodes the pixels straight into the writer in the
-3072-byte pieces that fill a 4096-character chunk exactly, writes `m=1` on
-every sequence but the last, and writes no `m` at all when the whole payload
-fitted in one. A megabyte of pixels costs 3,094 bytes of framing — 0.22% —
-and no buffer of its own. `transmitFrame` sends an animation frame through
-the same chunker, adding the `a=f` the protocol wants on every chunk of a
-frame and not only on the first. Placement lifecycle, acknowledgements and
-z-layers are not here: they need graphics state between frames, which stays
-with the caller.
-
-**Synchronised output is a bracket, not a setting.** Mode 2026 goes on
-immediately before a frame and off immediately after it. It does not nest,
-and `syncOutput.set` writes exactly eight bytes on its own, because at least
-one terminal matches those eight rather than parsing the parameter list —
-which is also why no writer here ever puts two modes in one sequence.
-
-**A parsed reply borrows, and its decoder takes a buffer.** `decodeClipboard`
-writes into a buffer you size from `reply.decodedLen()`, exact because the
-parser has already established the payload is well-formed base64;
-`Capability.decodeName` and `decodeValue` size from `nameLen` and `valueLen`.
-`error.NoSpaceLeft` is the only error any of them returns.
+Graphics commands cover kitty image transmission, placement and deletion. Clipboard and
+capability replies borrow their encoded payloads and decode into supplied buffers.
+`Probe` writes startup questions; `probeAnswered` routes replies to those questions. The
+caller supplies deadlines because a terminal need not answer.
 
 ## Scope
 
-- **No I/O and no raw mode.** `termios`, `SetConsoleMode` and every timeout
-  are the caller's.
-- **No screen model.** No cells, no damage tracking, no layout, no width
-  tables, no grapheme segmentation.
-- **No widgets and no event loop.**
-- **No placement model.** morse writes and reads every graphics command;
-  which image ids are free, what is on screen, and when to swap one picture
-  for another are a layer up.
-- **No capability database.** morse asks the terminal instead; see Design.
+- It does not open or read a terminal, set raw mode or install signal handlers.
+- It does not hold a screen grid, lay out text or measure grapheme widths.
+- It does not provide widgets or an event loop.
+- It does not track image placement or assign image identifiers.
+- It does not maintain a terminal capability database.
 
-## Platforms
-
-| Platform | Tested |
-| --- | --- |
-| Linux | `ubuntu-latest` in CI, four optimize modes |
-| macOS | `macos-latest` in CI, four optimize modes |
-| Windows | `windows-latest` in CI, four optimize modes |
-
-morse calls no operating system API, so the same source builds everywhere Zig
-does, and the three rows above are what has actually been run. `zig build
-check -Dtarget=…` compiles the suite and the examples without running them,
-and CI does that for `x86_64-linux-gnu`, `aarch64-linux-gnu`,
-`x86_64-windows-gnu`, `aarch64-windows-gnu`, `x86_64-macos` and
-`aarch64-macos`.
-
-[`ci/linux.sh`](ci/linux.sh) runs the Linux half in Docker from a machine
-that is not Linux; it is a local script and no CI job calls it.
+<!-- performance: quiet pass -->
 
 ## Testing
 
-`zig build test` runs the suite and the examples under `std.testing.allocator`,
-so a leak or an invalid free fails the test rather than the process. Writers
-are pinned to their exact bytes, and the round trips are exhaustive: every
-base64 tail length, every clipboard length to 193, every mouse event this
-package can represent, every key sequence in every spelling. Each parser has a
-table of malformed inputs — truncated, wrong terminator, trailing rubbish, a
-number too large for its field — and a `std.testing.fuzz` test asserting it
-never panics, never overflows, and that whatever it accepts survives a round
-trip back through the writer. Where morse writes a command nothing answers —
-a graphics command, an OSC 66 — the suite carries a reader of that grammar so
-the round trip is against the bytes rather than against the writer twice.
-`src/work_test.zig` keeps the byte counts and buffer bounds for a style diff,
-a cursor move, a megabyte of pixels and a megabyte of input. The figures are
-exact on every machine: the eighty-one-pair style matrix costs 1,312 bytes,
-a 200×60 frame of style changes 8,515, and a megabyte of pixels adds 3,094
-bytes of framing. The unit suite reads no clock, and `python3 ci/clocks.py`
-checks the library and test sources for clock use. Timing measurements and
-their speed ceilings live on the [`bench` branch](https://github.com/pedronaugusto/morse/tree/bench):
-`zig build timings -Doptimize=ReleaseFast` there measures style diffs, cursor
-moves, integer encoding, image transmission and input parsing. Its separate
-`bench/run.sh` harness compares morse with other terminal libraries.
+`zig build test` runs the unit suite and both examples in Debug by default. Tests check
+writer bytes, malformed input, split framing, console records and parser round trips.
+`zig build examples` runs the examples separately; `zig build check` compiles the tests
+and examples without running them. CI also runs `ci/check-readme.sh`.
 
-`KeyParser` is fuzzed fed in two pieces, so the
-split lands anywhere a real read could have, and its framing is checked
-against a second framer written from the same grammar as a state machine —
-two implementations that share no line, and a disagreement about where a
-sequence ends fails the build. `zig build test --fuzz` keeps searching from
-those seeds: thirty-one targets, a corpus each, and the same invariants the
-fixed run asserts.
+[CI](.github/workflows/ci.yml) runs tests and examples in Debug and ReleaseSafe on
+`ubuntu-latest`, `macos-latest` and `windows-latest`, plus ReleaseFast on Ubuntu.
+ReleaseSmall is compile-only on Ubuntu. Source jobs check formatting, cast reasons and
+the clock policy. There is no ThreadSanitizer job.
 
-`zig build conformance` is the other half of the question. Byte-exact tests
-say morse writes what the specifications say; they cannot say a terminal
-agrees. This step builds a terminal emulator from source, feeds it every
-writer, and asks the emulator what it did — the cursor, the modes, the style,
-the screen after each erase and scroll, the image storage, the cell under a
-hyperlink — then sends the emulator's own replies back through the parsers
-here. 3,780 assertions, and two named skips: this emulator has neither
-superscript nor a multiple cursors protocol, so `Style.script` and
-`extraCursors` stand on their byte-exact tests alone. The emulator is a lazy
-dependency, pinned to a commit and reached by this step alone, so a program
-that depends on morse never fetches it. CI runs the step on Linux and macOS.
-
-## Requirements
-
-Zig 0.16.0.
+Compile-only jobs cover `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-windows-gnu`,
+`aarch64-windows-gnu`, `x86_64-macos` and `aarch64-macos`. Separate Ubuntu and macOS
+jobs run `zig build conformance`.
 
 ## Licence
 

@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A compiled heading and split-input example supplies the README usage block.
+
 ### Fixed
 
 - Astral characters composed with AltGr keep their text and ordinary modifiers in console records and win32 input mode.
