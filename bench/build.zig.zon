@@ -3,6 +3,12 @@
     .version = "0.1.0",
     .fingerprint = 0xa80d85560341ab00,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{ .vaxis = .{ .path = "build/deps/libvaxis" } },
+    .dependencies = .{
+        .vaxis = .{ .path = "build/deps/libvaxis" },
+        .after = .{
+            .url = "https://github.com/pedronaugusto/morse/archive/6f6335eaf5c6bd4b029bcdc37a1d4a0f7968c252.tar.gz",
+            .hash = "morse-0.7.0-OKnGoX2oDgCoteMKWnEe4Wi1zlGqP7pP2vB7KISQXTHT",
+        },
+    },
     .paths = .{ "build.zig", "build.zig.zon", "src" },
 }

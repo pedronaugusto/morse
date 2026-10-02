@@ -18,7 +18,7 @@ Results go to `bench/results/<UTC-date>/smoke-<time>.md` + `.json` or
 `revisions.json` fixes A (before) at
 `ebe7020141cb2b0be92fe692521cc477d7d13ca3`, the last first-parent main commit
 before **2026-09-30 00:00:00 +01:00**, and B (after) at
-`954c7fa2f9dd25237842f87a5716061ef243195c`. The midnight cutoff is explicit because Git's
+`6f6335eaf5c6bd4b029bcdc37a1d4a0f7968c252`. The midnight cutoff is explicit because Git's
 bare `--before=2026-09-30` can inherit the time of day. Refresh the pins and
 merge main into bench when main advances; the runner refuses a silently
 changed local main. `git archive` extracts exact source snapshots inside
@@ -95,3 +95,6 @@ includes the machine record, samples, and (only for a timed pass) paired B/A
 medians. Smoke has null time fields and no performance ratios. Additional
 internal artifacts are `build/correctness.json` and `build/results.tsv`.
 No timing results are committed, and this preparation makes no speed claim.
+
+`python3 bench/src/run.py --check-only` runs the protocol and encoder oracle
+against already built tools, then returns before every workload loop.

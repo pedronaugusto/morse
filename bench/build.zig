@@ -3,8 +3,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const vaxis = b.dependency("vaxis", .{ .target = target, .optimize = optimize }).module("vaxis");
-    const package_root = b.option([]const u8, "package-root", "Archived package root") orelse "..";
-    const morse = b.createModule(.{ .root_source_file = b.path(b.fmt("{s}/src/morse.zig", .{package_root})), .target = target, .optimize = optimize });
+    const archived_root = b.option([]const u8, "package-root", "Archived package root");
+    const package_root = archived_root orelse "..";
+    const morse = if (archived_root == null) b.dependency("after", .{ .target = target, .optimize = optimize }).module("morse") else b.createModule(.{ .root_source_file = b.path(b.fmt("{s}/src/morse.zig", .{package_root})), .target = target, .optimize = optimize });
     const budget_options = b.addOptions();
     budget_options.addOption(bool, "smoke", b.option(bool, "smoke", "Skip every benchmark clock") orelse false);
     const budgets = b.addTest(.{

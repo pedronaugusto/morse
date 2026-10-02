@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Correctness first, then in-process throughput (no clock in smoke mode)."""
+import argparse
 import csv
 import json
 import os
@@ -17,7 +18,7 @@ def invoke(side, task, mode, chunk, data):
     if side in ('morse-before', 'morse', 'vaxis'):
         argv = [str(BUILD / ('before-out/bin/morse-bench' if side == 'morse-before' else f'zig-out/bin/{side}-bench')), task, mode, str(chunk)]
     else:
-        argv = [str(BUILD / 'cargo-target/release/terminal-bench'), side, task, mode, str(chunk)]
+        argv = [os.environ.get('MORSE_RUST_BENCH', str(BUILD / 'cargo-target/release/terminal-bench')), side, task, mode, str(chunk)]
     return subprocess.check_output(argv, input=data).decode().splitlines()
 
 def classify(case, side, chunk):
@@ -84,7 +85,10 @@ def output_state(task, hex_line):
     return [saw, state]
 
 def main():
-    generate(SMOKE)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check-only', action='store_true', help='Run the protocol oracle without workload loops')
+    args = parser.parse_args()
+    generate(SMOKE or args.check_only)
     rows = json.loads((BUILD / 'inputs/cases.json').read_text())
     differences = []
     checks = []
@@ -143,6 +147,9 @@ def main():
         raise SystemExit('correctness differences changed; review build/correctness.json against known-differences.json')
     if failures:
         raise SystemExit('morse differs from protocol oracle; see build/correctness.json')
+    if args.check_only:
+        print(f'Correctness passed: {len(checks)} input checks; encoder semantics agree; no workloads run')
+        return
     r = random.Random(0x4D4F5253)
     output = bytes([42]) if SMOKE else r.randbytes(100_000)
     reps = 1 if SMOKE else 5
