@@ -51,6 +51,8 @@ consumer builds do not fetch it. Writers take a `*std.Io.Writer` and leave flush
 the caller. Parsers borrow their input; `KeyParser` retains incomplete sequences in a
 caller-owned buffer. Drain each `Events` iterator before feeding more bytes, and consume
 borrowed event data before the next iterator step, feed or flush.
+Key events own their text; retained sequence bytes keep split input intact and borrowed
+replies independent of the read buffer.
 
 `Style` describes SGR attributes and colours. `setStyle` writes from the terminal's
 default state; `diffStyle` writes the changes between two known styles. Cursor and erase

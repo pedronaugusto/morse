@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Read single-byte ASCII and plain CSI values without copying them, and resume incomplete sequences after appending new input.
+
 - Reject undeclared dependencies, duplicate layer membership and imports of source executables.
 
 - Run the import gate in the source job that installs Zig.
