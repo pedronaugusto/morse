@@ -62,6 +62,8 @@ writes it.
 `applySgr` reads a style change back into a `Style`, `parseHyperlink` and
 `parseTextSize` read the bodies of OSC 8 and OSC 66, and `parseCsi` and
 `parseControlString` frame sequences, for a program that reads what was written.
+`strip` and `Stripper` take the sequences and C1 controls out of output on
+the same framers, whole or a read at a time, keeping C0 controls.
 Text-bearing control sequences reject C0 controls and DEL before writing; `printable`
 explicitly strips them into a supplied buffer.
 

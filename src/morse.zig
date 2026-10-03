@@ -38,6 +38,7 @@ const query = @import("query.zig");
 const replies = @import("reply.zig");
 const status = @import("status.zig");
 const strings = @import("strings.zig");
+const stripping = @import("strip.zig");
 const style = @import("style.zig");
 const tcap = @import("tcap.zig");
 const win32 = @import("win32.zig");
@@ -383,6 +384,12 @@ pub const ControlString = framing.ControlString;
 /// Frames the control string at the front of a byte stream, or null when it
 /// is not all there.
 pub const parseControlString = framing.parseControlString;
+/// Strips control sequences and C1 controls from output that arrives a
+/// piece at a time, keeping where it is inside a sequence between pieces.
+pub const Stripper = stripping.Stripper;
+/// Strips control sequences and C1 controls from a whole string into a
+/// buffer, which may be the string itself.
+pub const strip = stripping.strip;
 
 //=========================================================================
 // Lengths, counted without writing.
@@ -736,6 +743,7 @@ test {
     _ = @import("reply.zig");
     _ = @import("seq.zig");
     _ = @import("status.zig");
+    _ = @import("strip.zig");
     _ = @import("style.zig");
     _ = @import("tcap.zig");
     _ = @import("win32.zig");
@@ -778,6 +786,29 @@ test "a frame's lengths, counted through cost, add up to what it writes" {
         cost.cursorRestore() +
         cost.setMode(syncOutput.number, false);
     try std.testing.expectEqual(out.written().len, counted);
+}
+
+test "a frame stripped is the text it wrote" {
+    const std = @import("std");
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    const w = &out.writer;
+    try syncOutput.set(w, true);
+    try cursorTo(w, 2, 3);
+    try setStyle(w, .{ .bold = true, .fg = .rgb(1, 2, 3) });
+    try w.writeAll("one ");
+    try hyperlink(w, "two", "https://ziglang.org");
+    try textSize(w, .{ .scale = 2 }, "three");
+    try transmitImage(w, .{ .image = .{ .id = 9 } }, "\x00\x01\x02\x03");
+    try w.writeAll(" four\n");
+    try title(w, "five");
+    try resetStyle(w);
+    try syncOutput.set(w, false);
+
+    // The text OSC 8 and OSC 66 carry inside them goes with the sequence;
+    // the link's text sits between its two sequences and stays.
+    var buffer: [512]u8 = undefined;
+    try std.testing.expectEqualStrings("one two four\n", try strip(&buffer, out.written()));
 }
 
 test "the root module re-exports what the README promises" {

@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `strip` and `Stripper` remove control sequences, control strings, short escapes and C1 controls from terminal output, whole or a read at a time with no buffer for a sequence cut between reads; the C0 controls stay, and the conformance step checks the result against the text the emulator prints.
+
 - `encodeKey` writes a `KeyEvent` as the bytes a terminal sends for it, in the kitty keyboard protocol for any set of flags and in the legacy encodings with `modifyOtherKeys`, DECCKM, DECKPAM and DECBKM, and `cost.encodeKey` counts them; with every kitty flag set `KeyParser` reads each key back as itself, and the conformance step compares the bytes with ghostty's encoder.
 
 - `KeyParser` reads F21 to F25 in the `CSI 42 ~` to `CSI 46 ~` form ghostty writes them in; they came back as unhandled sequences before.

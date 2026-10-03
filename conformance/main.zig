@@ -1942,10 +1942,86 @@ test "every key is written as the emulator's encoder writes it, or the differenc
 }
 
 //=========================================================================
+// Stripping, against the emulator's parser.
+//
+// What `strip` leaves of a terminal's output is the text the emulator
+// prints and the C0 controls it executes, for output a program writes:
+// morse's own writers between runs of text, and sequences the emulator
+// reads and morse does not write.
+//=========================================================================
+
+const StreamAction = vt.StreamAction;
+
+/// The text the emulator prints, and the four C0 controls it executes that
+/// a program writes into text, collected as bytes.
+const Printed = struct {
+    out: [8192]u8 = undefined,
+    len: usize = 0,
+
+    fn put(p: *Printed, cp: u21) void {
+        p.len += std.unicode.utf8Encode(cp, p.out[p.len..]) catch unreachable;
+    }
+
+    pub fn vt(p: *Printed, comptime action: StreamAction.Tag, value: StreamAction.Value(action)) void {
+        switch (action) {
+            .print => p.put(value.cp),
+            .print_slice => for (value.cps) |cp| p.put(@intCast(cp)),
+            .linefeed => p.put('\n'),
+            .carriage_return => p.put('\r'),
+            .horizontal_tab => p.put('\t'),
+            .bell => p.put(0x07),
+            else => {},
+        }
+    }
+};
+
+test "strip leaves what the emulator prints" {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    const w = &out.writer;
+
+    // morse's writers, between runs of text.
+    try w.writeAll("plain ");
+    try morse.setStyle(w, .{ .bold = true, .fg = .rgb(255, 128, 0), .underline = .curly, .underline_color = .ansi(.red) });
+    try w.writeAll("styled\u{e9}\u{4e2d}");
+    try morse.diffStyle(w, .{ .bold = true }, .{ .italic = true });
+    try morse.cursorTo(w, 3, 7);
+    try w.writeAll("\u{1f642}\r\n\t");
+    try morse.title(w, "a title");
+    try morse.hyperlink(w, "link text", "https://ziglang.org");
+    try morse.textSize(w, .{ .scale = 2 }, "big");
+    try morse.clipboardWrite(w, .clipboard, "copied");
+    try morse.syncOutput.set(w, true);
+    try morse.mouse(w, .{ .motion = .any });
+    try morse.kittyKeyboardPush(w, .{ .disambiguate_escape_codes = true });
+    try morse.transmitImage(w, .{ .image = .{ .id = 1 }, .format = .rgb, .width = 1, .height = 1 }, "\x00\x00\x00");
+    try morse.cursorShape(w, .bar);
+    try morse.queryCapability(w, "TN");
+    try morse.repeatChar(w, 3);
+    try morse.notify(w, "t", "b");
+    try morse.promptStart(w);
+    try w.writeAll("$ ");
+    try morse.promptEnd(w);
+    // Sequences morse does not write: charsets, DECSC and DECRC, keypad
+    // modes, a reset, an SOS and a PM, and a C1 control spelled as UTF-8,
+    // which the emulator ignores as xterm does.
+    try w.writeAll("\x1b(0q\x1b(B\x1b7x\x1b8\x1b=\x1b>\x1bXsos\x1b\\\x1b^pm\x1b\\a\u{9b}31mb\x07end");
+
+    var parsed: vt.Stream(*Printed) = .init(.{ .handler = undefined });
+    var printed: Printed = .{};
+    parsed.handler = &printed;
+    parsed.nextSlice(out.written());
+
+    var buffer: [8192]u8 = undefined;
+    const stripped = try morse.strip(&buffer, out.written());
+    try checkString(printed.out[0..printed.len], stripped);
+}
+
+//=========================================================================
 // The count.
 //=========================================================================
 
 test "how many claims this file made" {
-    try std.testing.expectEqual(@as(usize, 3790), checks);
+    try std.testing.expectEqual(@as(usize, 3791), checks);
     std.debug.print("conformance: {d} assertions against the emulator\n", .{checks});
 }
