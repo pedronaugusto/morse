@@ -3,9 +3,9 @@
 //!
 //! Two sequences carry base64 payloads — the OSC 52 clipboard and the kitty
 //! graphics transmit — and they carry a lot of it: a clipboard is as long as
-//! whatever the user copied and an image is a megabyte. So the encoder never
-//! holds more than four output bytes at once, and the decoder writes into
-//! memory the caller already had.
+//! whatever the user copied and an image is a megabyte. So the encoder writes
+//! into the writer's own buffer, and the decoder writes into memory the
+//! caller already had.
 //!
 //! Nothing here is re-exported by `morse.zig`. A caller who wants base64 has
 //! it in the standard library; this exists so the two sequences above spell
@@ -33,37 +33,42 @@ pub fn encodedLen(len: usize) usize {
     return (len + 2) / 3 * 4;
 }
 
-/// Writes `bytes` as padded standard base64, three input bytes at a time,
-/// with no buffer proportional to the input and no allocator.
+/// Writes `bytes` as padded standard base64, with no buffer proportional to
+/// the input and no allocator.
+///
+/// The characters are encoded straight into the writer's buffer, as many
+/// whole groups as it has room for at a time, and the buffer is drained only
+/// when it is full. A writer with a buffer too small for one group goes
+/// through a block on the stack instead.
 pub fn write(w: *Writer, bytes: []const u8) Writer.Error!void {
-    var group: [4]u8 = undefined;
     var i: usize = 0;
-    while (i + 3 <= bytes.len) : (i += 3) {
-        const in = bytes[i..][0..3];
-        group[0] = alphabet[in[0] >> 2];
-        group[1] = alphabet[(in[0] & 0x03) << 4 | in[1] >> 4];
-        group[2] = alphabet[(in[1] & 0x0f) << 2 | in[2] >> 6];
-        group[3] = alphabet[in[2] & 0x3f];
-        try w.writeAll(&group);
+    while (bytes.len - i >= 3) {
+        const groups_left = (bytes.len - i) / 3;
+        if (w.buffer.len < 4) {
+            var block: [1024]u8 = undefined;
+            const groups: usize = @min(groups_left, block.len / 4);
+            encodeGroups(block[0 .. groups * 4], bytes[i..][0 .. groups * 3]);
+            try w.writeAll(block[0 .. groups * 4]);
+            i += groups * 3;
+            continue;
+        }
+        const dest = try w.writableSliceGreedy(4);
+        const groups: usize = @min(groups_left, dest.len / 4);
+        encodeGroups(dest[0 .. groups * 4], bytes[i..][0 .. groups * 3]);
+        w.advance(groups * 4);
+        i += groups * 3;
     }
-    switch (bytes.len - i) {
-        0 => {},
-        1 => {
-            group[0] = alphabet[bytes[i] >> 2];
-            group[1] = alphabet[(bytes[i] & 0x03) << 4];
-            group[2] = '=';
-            group[3] = '=';
-            try w.writeAll(&group);
-        },
-        2 => {
-            group[0] = alphabet[bytes[i] >> 2];
-            group[1] = alphabet[(bytes[i] & 0x03) << 4 | bytes[i + 1] >> 4];
-            group[2] = alphabet[(bytes[i + 1] & 0x0f) << 2];
-            group[3] = '=';
-            try w.writeAll(&group);
-        },
-        else => unreachable,
+    if (i < bytes.len) {
+        var group: [4]u8 = undefined;
+        try w.writeAll(std.base64.standard.Encoder.encode(&group, bytes[i..]));
     }
+}
+
+/// Encodes `src`, whole groups of three bytes, into `dest`, four characters
+/// for each. The standard library's encoder reads twelve bytes at a time.
+fn encodeGroups(dest: []u8, src: []const u8) void {
+    std.debug.assert(src.len % 3 == 0 and dest.len == src.len / 3 * 4);
+    _ = std.base64.standard.Encoder.encode(dest, src);
 }
 
 /// Whether `data` is padded standard base64 that decodes without loss: a
@@ -147,6 +152,52 @@ test "the encoder agrees with the standard library at every tail length" {
             out.written(),
         );
         try std.testing.expectEqual(encodedLen(len), out.written().len);
+    }
+}
+
+/// A writer with a buffer of a chosen size that drains into a list, so the
+/// encoder meets a full buffer at every offset.
+const Collect = struct {
+    writer: Writer,
+    out: std.ArrayList(u8) = .empty,
+
+    fn init(buffer: []u8) Collect {
+        return .{ .writer = .{ .buffer = buffer, .vtable = &.{ .drain = drain } } };
+    }
+
+    fn drain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
+        const c: *Collect = @alignCast(@fieldParentPtr("writer", w)); // safe: this drain is installed only on a Collect's writer
+        c.out.appendSlice(std.testing.allocator, w.buffered()) catch return error.WriteFailed;
+        w.end = 0;
+        var n: usize = 0;
+        for (data[0 .. data.len - 1]) |bytes| {
+            c.out.appendSlice(std.testing.allocator, bytes) catch return error.WriteFailed;
+            n += bytes.len;
+        }
+        for (0..splat) |_| {
+            c.out.appendSlice(std.testing.allocator, data[data.len - 1]) catch return error.WriteFailed;
+            n += data[data.len - 1].len;
+        }
+        return n;
+    }
+};
+
+test "the encoder writes the same through a buffer of any size, none included" {
+    var plain: [3 * 1024 + 2]u8 = undefined;
+    for (&plain, 0..) |*b, i| b.* = @truncate(i *% 151 +% 7);
+    var expected: [encodedLen(plain.len)]u8 = undefined;
+    for ([_]usize{ 0, 1, 3, 4, 5, 7, 64, 1000, 5000 }) |size| {
+        for ([_]usize{ 0, 1, 2, 3, 4, 1023, 1024, 1025, plain.len }) |len| {
+            var buffer: [5000]u8 = undefined;
+            var sink: Collect = .init(buffer[0..size]);
+            defer sink.out.deinit(std.testing.allocator);
+            // Start mid-buffer, so the first room left is not a whole group.
+            if (size > 1) try sink.writer.writeByte('>');
+            try write(&sink.writer, plain[0..len]);
+            try sink.writer.flush();
+            const written = sink.out.items[@intFromBool(size > 1)..];
+            try std.testing.expectEqualStrings(std.base64.standard.Encoder.encode(&expected, plain[0..len]), written);
+        }
     }
 }
 
