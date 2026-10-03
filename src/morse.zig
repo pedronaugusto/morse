@@ -346,6 +346,8 @@ pub const resetStyle = style.resetStyle;
 pub const setStyle = style.setStyle;
 /// Writes only what differs between two styles.
 pub const diffStyle = style.diffStyle;
+/// How many bytes `diffStyle` writes between two styles, without writing them.
+pub const diffStyleLen = style.diffStyleLen;
 
 //=========================================================================
 // Keyboard input.
@@ -699,6 +701,7 @@ test "the root module re-exports what the README promises" {
     try resetStyle(w);
     try setStyle(w, .{ .bold = true, .fg = .ansi(.red) });
     try diffStyle(w, .{ .bold = true }, .{ .italic = true });
+    _ = diffStyleLen(.{ .bold = true }, .{ .italic = true });
 
     try queryDeviceAttributes(w);
     try querySecondaryDeviceAttributes(w);

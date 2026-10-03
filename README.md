@@ -55,8 +55,8 @@ Key events own their text; retained sequence bytes keep split input intact and b
 replies independent of the read buffer.
 
 `Style` describes SGR attributes and colours. `setStyle` writes from the terminal's
-default state; `diffStyle` writes the changes between two known styles. Cursor and erase
-commands use typed parameters. Text-bearing control sequences reject C0 controls and DEL
+default state; `diffStyle` writes the changes between two known styles, and `diffStyleLen`
+counts the bytes it would write. Cursor and erase commands use typed parameters. Text-bearing control sequences reject C0 controls and DEL
 before writing; `printable` explicitly strips them into a supplied buffer.
 
 `KeyParser` frames legacy and kitty keys, win32 input sequences, paste, focus, resize,

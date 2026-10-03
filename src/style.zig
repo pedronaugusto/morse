@@ -560,28 +560,55 @@ pub fn setStyle(w: *Writer, style: Style) Writer.Error!void {
 /// The difference is spelled once, into a buffer on the stack; the reset is
 /// priced by counting, through the same code that spells, so there is no
 /// second encoder to keep in step, and spelled only when it wins. Ties go to
-/// the difference, which touches least.
+/// the difference, which touches least. `diffStyleLen` says how many bytes
+/// this writes without writing them.
 pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
     var spelling: Spelling = .{};
     const turned_off = spell(&spelling, from, to, false);
-
-    // Nothing changed, which is the case a renderer meets most: no bytes,
-    // and nothing to price.
-    if (spelling.len == 0) return;
-
-    // Nothing was turned off, so the reset spelling would have to write
-    // every attribute `to` carries -- a superset of the difference -- and
-    // pay for the `0` besides. It cannot win, so it is not priced.
-    if (turned_off) {
-        var whole: Price = .{};
-        _ = spell(&whole, from, to, true);
-        if (whole.len < spelling.len) {
-            spelling.len = 0;
-            _ = spell(&spelling, from, to, true);
-        }
+    if (shorterReset(from, to, spelling.len, turned_off) != null) {
+        spelling.len = 0;
+        _ = spell(&spelling, from, to, true);
     }
-
     try w.writeAll(spelling.written());
+}
+
+/// How many bytes `diffStyle(w, from, to)` writes, without writing them:
+/// zero when the two styles are equal, otherwise the length of the one
+/// `CSI ... m` it would send, `CSI` and `m` included.
+///
+/// Exact, not an estimate. It counts through the same encoder `diffStyle`
+/// spells with and makes the same choice between the difference and the
+/// reset spelling, so for every pair the two agree, and a change to how a
+/// style is spelled moves both. That is what a renderer weighing a style
+/// change against some other way of drawing the same cells wants: the price
+/// of the move it would actually make, from the code that would make it.
+///
+/// `diffStyleLen(.{}, style)` is what `setStyle` writes.
+pub fn diffStyleLen(from: Style, to: Style) usize {
+    // Equal styles are the case a renderer asks about most, and a byte
+    // comparison answers it without walking the fields. `Style` has no
+    // padding, so equal bytes are equal styles and the diff is empty.
+    if (std.mem.eql(u8, std.mem.asBytes(&from), std.mem.asBytes(&to))) return 0;
+    var difference: Price = .{};
+    const turned_off = spell(&difference, from, to, false);
+    return shorterReset(from, to, difference.len, turned_off) orelse difference.len;
+}
+
+/// The length of the reset spelling of `from` to `to` when it is strictly
+/// shorter than a difference of `difference` bytes, and null when the
+/// difference is what goes out. The one place `diffStyle` and `diffStyleLen`
+/// choose between the two spellings, so they cannot choose differently.
+///
+/// `turned_off` is what `spell` said of the difference. Nothing changed, which
+/// is the case a renderer meets most: no bytes, and nothing to price. Nothing
+/// was turned off, so the reset spelling would have to write every attribute
+/// `to` carries -- a superset of the difference -- and pay for the `0`
+/// besides. It cannot win, so it is not priced. Ties go to the difference.
+fn shorterReset(from: Style, to: Style, difference: usize, turned_off: bool) ?usize {
+    if (difference == 0 or !turned_off) return null;
+    var whole: Price = .{};
+    _ = spell(&whole, from, to, true);
+    return if (whole.len < difference) whole.len else null;
 }
 
 /// Spells one `CSI ... m` into `out`, a `*Price` or a `*Spelling`, either as
@@ -1000,6 +1027,44 @@ test "what goes out is the shorter of the two spellings, on every pair" {
                 try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, w.buffered(), "\x1b["));
                 try std.testing.expectEqual(@as(u8, 'm'), w.buffered()[w.buffered().len - 1]);
             }
+        }
+    }
+}
+
+test "diffStyleLen is the length diffStyle writes" {
+    const cases = [_]struct { from: Style, to: Style, len: usize }{
+        // Equal styles: nothing written, nothing to pay.
+        .{ .from = .{}, .to = .{}, .len = 0 },
+        .{ .from = .{ .bold = true, .fg = .rgb(1, 2, 3) }, .to = .{ .bold = true, .fg = .rgb(1, 2, 3) }, .len = 0 },
+        // `CSI 1 m`.
+        .{ .from = .{}, .to = .{ .bold = true }, .len = 4 },
+        // `CSI 38;2;255;128;1 m`.
+        .{ .from = .{}, .to = .{ .fg = .rgb(255, 128, 1) }, .len = 17 },
+        // The reset spelling wins: `CSI 0;2 m` rather than `CSI 22;2 m`.
+        .{ .from = .{ .bold = true, .dim = true }, .to = .{ .dim = true }, .len = 6 },
+        // The difference wins: `CSI 24 m` rather than `CSI 0;1 m`.
+        .{ .from = .{ .underline = .curly, .bold = true }, .to = .{ .bold = true }, .len = 5 },
+    };
+    for (cases) |case| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+        try diffStyle(&out.writer, case.from, case.to);
+        try std.testing.expectEqual(case.len, out.written().len);
+        try std.testing.expectEqual(case.len, diffStyleLen(case.from, case.to));
+    }
+
+    // On random pairs, and from and to the default, which is `setStyle` and
+    // the way back.
+    var prng: std.Random.DefaultPrng = .init(0xc057);
+    const random = prng.random();
+    var buffer: [max_sequence]u8 = undefined;
+    for (0..20_000) |_| {
+        const from = randomStyle(random);
+        const to = randomStyle(random);
+        for ([_][2]Style{ .{ from, to }, .{ .{}, to }, .{ from, .{} }, .{ to, to } }) |pair| {
+            var w: Writer = .fixed(&buffer);
+            try diffStyle(&w, pair[0], pair[1]);
+            try std.testing.expectEqual(w.buffered().len, diffStyleLen(pair[0], pair[1]));
         }
     }
 }
@@ -1594,6 +1659,9 @@ fn expectSameAsOracle(from: Style, to: Style) !void {
     _ = try oracle.writeSgr(&whole.writer, from, to, true);
     const shortest = if (delta.fullCount() == 0) 0 else @min(delta.fullCount(), whole.fullCount());
     try std.testing.expectEqual(shortest, @as(u64, actual.buffered().len));
+
+    // And the price is what went out, to the byte.
+    try std.testing.expectEqual(actual.buffered().len, diffStyleLen(from, to));
 }
 
 test "the counting encoder writes what the formatting one did, on random pairs" {
