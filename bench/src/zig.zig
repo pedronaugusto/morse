@@ -1,8 +1,13 @@
 const std = @import("std");
 const m = @import("morse");
 const v = @import("vaxis");
-const comparison = @import("options").comparison;
+const side = @import("options").side;
+/// libvaxis, as the comparison the decode and encode tasks run.
+const comparison = side == .vaxis;
 const ops = @import("ops.zig");
+/// libghostty-vt, built into its own binary only: the other two never
+/// import it.
+const ghostty_ops = if (side == .ghostty) @import("ghostty_ops.zig") else struct {};
 extern "c" fn read(c_int, [*]u8, usize) isize;
 extern "c" fn write(c_int, [*]const u8, usize) isize;
 fn emit(comptime fmt: []const u8, args: anytype) void {
@@ -191,7 +196,11 @@ fn encode(task: []const u8, data: []const u8, check: bool) !usize {
 // Records are `u32 little-endian length, bytes`, one call each, loaded
 // before the clock. Check mode prints each call's output in hex.
 fn runOp(init: std.process.Init, name: []const u8, data: []const u8, check: bool, timed: bool) !void {
-    const op = (if (comparison) ops.find(ops.vaxis_ops, name) else ops.find(ops.morse_ops, name)) orelse return error.UnknownOperation;
+    const op = (switch (side) {
+        .morse => ops.find(ops.morse_ops, name),
+        .vaxis => ops.find(ops.vaxis_ops, name),
+        .ghostty => ops.find(ghostty_ops.table, name),
+    }) orelse return error.UnknownOperation;
     ops.io = init.io;
     var records: std.ArrayList([]const u8) = .empty;
     var pos: usize = 0;
@@ -248,10 +257,16 @@ pub fn main(init: std.process.Init) !void {
     }
     if (len == buf.len) return error.InputTooLarge;
     if (std.mem.startsWith(u8, args[1], "op:")) return runOp(init, args[1][3..], buf[0..len], check, timed);
+    // libghostty-vt takes part in operation workloads only, and its binary
+    // carries neither the decoders nor libvaxis.
+    return if (side == .ghostty) error.UnknownTask else runTask(init, args, buf[0..len], check, timed, chunk);
+}
+fn runTask(init: std.process.Init, args: []const [:0]const u8, data: []const u8, check: bool, timed: bool, chunk: usize) !void {
+    const len = data.len;
     const burst = if (args.len == 5) try std.fmt.parseInt(usize, args[4], 10) else @max(len, 1);
     if (burst == 0) return error.ZeroBurst;
     const start = if (timed) std.Io.Clock.now(.awake, init.io).toNanoseconds() else 0;
-    const count = if (std.mem.startsWith(u8, args[1], "decode")) try decode(buf[0..len], chunk, burst, check, std.mem.eql(u8, args[1], "decode_pixels")) else try encode(args[1], buf[0..len], check);
+    const count = if (std.mem.startsWith(u8, args[1], "decode")) try decode(data, chunk, burst, check, std.mem.eql(u8, args[1], "decode_pixels")) else try encode(args[1], data, check);
     const elapsed = if (timed) std.Io.Clock.now(.awake, init.io).toNanoseconds() - start else 0;
     if (check) emit("count:{d}\n", .{count});
     if (!check) emit("{d}\t{d}\t{d}\n", .{ len, count, elapsed });

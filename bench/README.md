@@ -7,7 +7,7 @@ machine, `./bench/quiet.sh` runs the complete timed pass. `bench/run.sh` is a
 compatibility alias. On macOS the entry point prevents sleep during the pass.
 
 Allow **15 minutes per package** in the quiet window; the expected warm-cache
-pass is about **3–8 minutes** after smoke preparation, an estimate rather than a measured duration.
+pass is about **4–9 minutes** after smoke preparation, an estimate rather than a measured duration.
 Dependency downloads and first compilation can add several minutes. All
 builds and correctness checks finish before their timed workload groups.
 Results go to `bench/results/<UTC-date>/smoke-<time>.md` + `.json` or
@@ -18,7 +18,9 @@ Results go to `bench/results/<UTC-date>/smoke-<time>.md` + `.json` or
 `revisions.json` fixes A (before) at
 `ebe7020141cb2b0be92fe692521cc477d7d13ca3`, the last first-parent main commit
 before **2026-09-30 00:00:00 +01:00**, and B (after) at
-`a874436b1e1b1e512f2505b37e2a2fc7e6a5ebcc`, the final main. The midnight cutoff is explicit because Git's
+`b89c4f4844ef3df89ab827242ea57cade23df041`, the head of the `features` branch
+(key encoding, strip, sixel and iTerm2 writers) until it merges; re-pin B
+to main then. The midnight cutoff is explicit because Git's
 bare `--before=2026-09-30` can inherit the time of day. Refresh the pins and
 merge main into bench when main advances. `after_ref` names the source branch
 (default `main`); the runner refuses a silently changed head on that branch. `git archive` extracts exact source snapshots inside
@@ -40,7 +42,10 @@ branch, but `quiet.sh` owns the complete pass and structured reporting.
 Keep **crossterm 0.29.0, termwiz 0.23.3, and libvaxis 0.6.0** (commit
 `173a890d1394946b5d7623c66cd34bcd36d8eeb8`). This compares standalone input
 parsing and protocol encoding, not a renderer, terminal emulator, or app.
-No new comparison libraries were added. `versions.json`, the Rust manifest
+libghostty-vt (the emulator tycho's bay runs, pinned to the commit morse's
+conformance step uses) joins for the two operations it has a standalone API
+for, `encodeKey` and `strip`, in its own `ghostty-bench` binary; it takes no
+part in the decode tasks. `versions.json`, the Rust manifest
 and `Cargo.lock` pin sources and dependencies. Zig is **0.16.0** and Rust is
 **1.93.0**. Python **3.12+**, rustup and Unix/macOS are required; `ZIG`,
 `RUSTUP`, and `PYTHON` may select executables. Rust toolchains and dependency
@@ -65,7 +70,7 @@ Zig uses ReleaseFast, Rust uses cargo release, and compilation uses one job.
   2-stream × 3-buffer × 4-read-size grid. The private encoder is compiled
   from the selected revision, not from the bench branch's current source.
 
-- Every public operation: one workload each (198 with sizes), listed in
+- Every public operation: one workload each (228 with sizes), listed in
   `src/ops.py` with its records and, for crossterm, termwiz and libvaxis,
   either the call that does the same job or one line saying why there is
   none. Writers (cursor, erase, scroll, modes, keyboard, colours, queries,
@@ -78,7 +83,20 @@ Zig uses ReleaseFast, Rust uses cargo release, and compilation uses one job.
   1/8/64 capability names, 1/16/256 cursor cells. Full passes run up to
   100,000 calls per workload (fewer for large records); smoke runs one. An
   operation the `before` revision lacks reports unavailable for that side
-  only. Constants, field packing and tiny getters are not timed; the list
+  only.
+- Keys, stripping and pictures: `encodeKey` presses sixteen keys under eight
+  modifier sets, as a terminal hands them over (text with shift, none with
+  control or alt), legacy and with kitty flags 0b101, against ghostty
+  (byte-equivalent) and termwiz (two reviewed differences in `KNOWN`).
+  `strip` and `Stripper` take 16 B/1 KiB/64 KiB of synthetic program output
+  (text between SGR, cursor moves, OSC 8, titles, charsets, DECSC); termwiz's
+  and ghostty's parsers are compared on the text they print and the C0
+  controls they execute, and `Stripper` reads in 64-byte pieces. `sixel` and
+  `sixel.rgba` write 1 KiB/64 KiB/1 MiB pictures in a 16-colour palette;
+  no comparison writes sixels from pixels, so termwiz's sixel reader draws
+  every checked record back and must give its source pixels. `itermImage`
+  matches termwiz's `ITermFileData` byte for byte in meaning;
+  `itermImageMultipart` has no comparison. Constants, field packing and tiny getters are not timed; the list
   and reasons are `SKIPPED` in `src/ops.py`.
 
 Native allocation policies remain part of the job. Zig protocol output uses
@@ -95,8 +113,8 @@ An independent protocol oracle checks both morse revisions against expected
 events, for isolated inputs and a shared stream, whole and one-byte chunks.
 The encoder subset decoder compares intended terminal state rather than byte
 spelling. Smoke currently covers **290 input checks**, encoder checks at each
-implementation, **198 operation workloads** (150 identical at both
-revisions, 48 new since `before`), and **six speed-budget tests at each
+implementation, **228 operation workloads** (150 identical at both
+revisions, 78 new since `before`), and **six speed-budget tests at each
 package revision**.
 Each operation is checked on 20 records (2 for the largest sizes) before it
 is timed: `morse-before` must write exactly what `morse` writes, and each

@@ -39,6 +39,65 @@ fn emitAny(w: *Writer, check: bool, result: anytype) !usize {
     return 1;
 }
 
+/// The keys the key-encoding workload presses: seeded by a record's first
+/// byte, the same at every side (bench/src/ghostty_ops.zig and the Rust
+/// harness spell the same table).
+pub const bench_keys = [16]m.Key{
+    .{ .char = 'a' }, .{ .char = 'z' }, .{ .char = '1' }, .{ .char = '/' }, .{ .char = ' ' },
+    .enter,           .tab,             .backspace,       .escape,          .up,
+    .left,            .home,            .page_up,         .delete,          .{ .f = 1 },
+    .{ .f = 5 },
+};
+pub const bench_mods = [8]m.Modifiers{
+    .{},                              .{ .shift = true },             .{ .ctrl = true },               .{ .alt = true },
+    .{ .ctrl = true, .shift = true }, .{ .ctrl = true, .alt = true }, .{ .alt = true, .shift = true }, .{},
+};
+pub fn benchShifted(c: u21) u21 {
+    return switch (c) {
+        'a'...'z' => c - 0x20,
+        '1' => '!',
+        '/' => '?',
+        else => c,
+    };
+}
+/// What a terminal hands its encoder for seed `v`: the key, the modifiers,
+/// the shifted form when shift changed it, and the text a key types when
+/// nothing but shift is held.
+pub fn benchKey(seed: u8) m.KeyEvent {
+    const key = bench_keys[seed % bench_keys.len];
+    const mods = bench_mods[(seed + seed / 16) % bench_mods.len];
+    var ev: m.KeyEvent = .{ .key = key, .mods = mods };
+    switch (key) {
+        .char => |c| {
+            const typed = if (mods.shift) benchShifted(c) else c;
+            if (typed != c) ev.shifted = typed;
+            if (!mods.ctrl and !mods.alt) {
+                const n = std.unicode.utf8Encode(typed, &ev.text_buffer) catch unreachable;
+                ev.text_len = @intCast(n);
+            }
+        },
+        else => {},
+    }
+    return ev;
+}
+/// The kitty flags of the key workload's `kitty` variant.
+pub const bench_key_flags: u5 = 0b101;
+
+/// The sixel workload's palette: sixteen registers, the colours the RGBA
+/// records use.
+pub const sixel_colours = 16;
+pub fn sixelPalette() [sixel_colours]m.Rgb {
+    var out: [sixel_colours]m.Rgb = undefined;
+    for (&out, 0..) |*c, i| c.* = .{ .r = @intCast(i * 16 + 3), .g = @intCast(255 - i * 16), .b = @intCast((i * 37) % 256) };
+    return out;
+}
+/// The width bench/src/ops.py gives a sixel picture of `pixels`.
+pub fn sixelWidth(pixels: usize) u32 {
+    var side: u32 = 8;
+    while (@as(usize, side) * side * 4 <= pixels) side *= 2;
+    return side;
+}
+
 //=========================================================================
 // morse, one function per public operation
 //=========================================================================
@@ -613,6 +672,73 @@ const M = struct {
         std.mem.doNotOptimizeAway(&copy);
         return emit(w, check, "{d}", .{copy.text.len});
     }
+    fn encodeKey(w: *Writer, r: []const u8, _: bool, _: []u8) !usize {
+        if (comptime !@hasDecl(m, "encodeKey")) return error.Unavailable;
+        const enc: m.KeyEncoding = if (r[1] == 0) .{} else .{ .kitty = .fromBits(bench_key_flags) };
+        try m.encodeKey(w, benchKey(r[0]), enc);
+        return 0;
+    }
+    fn strip(w: *Writer, r: []const u8, _: bool, _: []u8) !usize {
+        if (comptime !@hasDecl(m, "strip")) return error.Unavailable;
+        const out = try m.strip(w.unusedCapacitySlice(), r);
+        w.advance(out.len);
+        return 0;
+    }
+    fn stripper(w: *Writer, r: []const u8, _: bool, _: []u8) !usize {
+        if (comptime !@hasDecl(m, "Stripper")) return error.Unavailable;
+        // Output as a program's reads deliver it, 64 bytes at a time.
+        var s: m.Stripper = .{};
+        var at: usize = 0;
+        while (at < r.len) : (at += 64) try s.feed(w, r[at..@min(at + 64, r.len)]);
+        try s.finish(w);
+        return 0;
+    }
+    fn sixelImage(rgba: bool) Op {
+        return struct {
+            fn f(w: *Writer, r: []const u8, _: bool, _: []u8) !usize {
+                if (comptime !@hasDecl(m, "sixel")) return error.Unavailable;
+                const palette = sixelPalette();
+                const pixels = if (rgba) body(r).len / 4 else body(r).len;
+                const width = sixelWidth(pixels);
+                try m.sixel(w, .{
+                    .width = width,
+                    .height = @intCast(pixels / width),
+                    .pixels = if (rgba) .{ .rgba = body(r) } else .{ .indexed = body(r) },
+                    .palette = &palette,
+                });
+                return 0;
+            }
+        }.f;
+    }
+    const iterm_file = if (@hasDecl(m, "ItermFile")) m.ItermFile{ .name = "bench.png", .width = .{ .cells = 40 } } else {};
+    fn itermImage(w: *Writer, r: []const u8, _: bool, _: []u8) !usize {
+        if (comptime !@hasDecl(m, "itermImage")) return error.Unavailable;
+        try m.itermImage(w, iterm_file, body(r));
+        return 0;
+    }
+    fn itermImageMultipart(w: *Writer, r: []const u8, _: bool, _: []u8) !usize {
+        if (comptime !@hasDecl(m, "itermImageMultipart")) return error.Unavailable;
+        try m.itermImageMultipart(w, iterm_file, body(r), m.iterm_part_bytes);
+        return 0;
+    }
+    fn costSixel(w: *Writer, r: []const u8, check: bool, _: []u8) !usize {
+        if (comptime !@hasDecl(m, "sixel")) return error.Unavailable;
+        const palette = sixelPalette();
+        const width = sixelWidth(body(r).len);
+        const len = m.cost.sixel(.{ .width = width, .height = @intCast(body(r).len / width), .pixels = .{ .indexed = body(r) }, .palette = &palette });
+        std.mem.doNotOptimizeAway(len);
+        return emit(w, check, "{d}", .{len});
+    }
+    fn costIterm(multipart: bool) Op {
+        return struct {
+            fn f(w: *Writer, r: []const u8, check: bool, _: []u8) !usize {
+                if (comptime !@hasDecl(m, "itermImage")) return error.Unavailable;
+                const len = if (multipart) m.cost.itermImageMultipart(iterm_file, body(r), m.iterm_part_bytes) else m.cost.itermImage(iterm_file, body(r));
+                std.mem.doNotOptimizeAway(len);
+                return emit(w, check, "{d}", .{len});
+            }
+        }.f;
+    }
     fn consoleDecode(w: *Writer, r: []const u8, check: bool, _: []u8) !usize {
         var d: m.ConsoleDecoder = .{};
         var n: usize = 0;
@@ -649,7 +775,7 @@ const cursor_cells = blk: {
 fn costOp(comptime name: []const u8) Op {
     return struct {
         fn f(w: *Writer, r: []const u8, check: bool, _: []u8) !usize {
-            if (comptime !@hasDecl(m, "cost")) return error.Unavailable;
+            if (comptime !@hasDecl(m, "cost") or !@hasDecl(m.cost, name)) return error.Unavailable;
             const c = @field(m.cost, name);
             const n = n32(r);
             const len: usize = if (comptime std.mem.eql(u8, name, "diffStyle"))
@@ -668,6 +794,8 @@ fn costOp(comptime name: []const u8) Op {
                 c(body(r), uri)
             else if (comptime std.mem.eql(u8, name, "textSize"))
                 c(.{ .scale = 2, .width = 1 }, body(r))
+            else if (comptime std.mem.eql(u8, name, "encodeKey"))
+                c(benchKey(r[0]), if (r[0] & 1 == 0) m.KeyEncoding{} else m.KeyEncoding{ .kitty = .fromBits(bench_key_flags) })
             else if (comptime @typeInfo(@TypeOf(c)).@"fn".params.len == 0)
                 c()
             else
@@ -679,83 +807,88 @@ fn costOp(comptime name: []const u8) Op {
 }
 
 pub const morse_ops = .{
-    .{ "cursorUp", M.cursorUp },                                 .{ "cursorDown", M.cursorDown },
-    .{ "cursorRight", M.cursorRight },                           .{ "cursorLeft", M.cursorLeft },
-    .{ "cursorNextLine", M.cursorNextLine },                     .{ "cursorPrevLine", M.cursorPrevLine },
-    .{ "cursorColumn", M.cursorColumn },                         .{ "cursorRow", M.cursorRow },
-    .{ "cursorSave", M.cursorSave },                             .{ "cursorRestore", M.cursorRestore },
-    .{ "clearLine", M.clearLine },                               .{ "clearScreen", M.clearScreen },
-    .{ "scrollRegion", M.scrollRegion },                         .{ "scrollRegionReset", M.scrollRegionReset },
-    .{ "scrollUp", M.scrollUp },                                 .{ "scrollDown", M.scrollDown },
-    .{ "insertLines", M.insertLines },                           .{ "deleteLines", M.deleteLines },
-    .{ "insertChars", M.insertChars },                           .{ "deleteChars", M.deleteChars },
-    .{ "eraseChars", M.eraseChars },                             .{ "repeatChar", M.repeatChar },
-    .{ "resetStyle", M.resetStyle },                             .{ "diffStyle", M.diffStyle },
-    .{ "applySgr", M.applySgr },                                 .{ "paletteRgb", M.paletteRgb },
-    .{ "setMode", M.setMode },                                   .{ "altScreen", M.privateMode("altScreen") },
-    .{ "bracketedPaste", M.privateMode("bracketedPaste") },      .{ "syncOutput", M.privateMode("syncOutput") },
-    .{ "focusEvents", M.privateMode("focusEvents") },            .{ "cursorVisible", M.privateMode("cursorVisible") },
-    .{ "unicodeCore", M.privateMode("unicodeCore") },            .{ "inBandResize", M.privateMode("inBandResize") },
-    .{ "win32Input", M.privateMode("win32Input") },              .{ "autoWrap", M.privateMode("autoWrap") },
-    .{ "colorScheme", M.privateMode("colorScheme") },            .{ "mouse", M.mouse },
-    .{ "mouseOff", M.mouseOff },                                 .{ "kittyKeyboardPush", M.kittyKeyboardPush },
-    .{ "kittyKeyboardPop", M.kittyKeyboardPop },                 .{ "kittyKeyboardQuery", M.kittyKeyboardQuery },
-    .{ "kittyKeyboardSet", M.kittyKeyboardSet },                 .{ "modifyKeys", M.modifyKeys },
-    .{ "modifyKeysReset", M.modifyKeysReset },                   .{ "queryModifyKeys", M.queryModifyKeys },
-    .{ "cursorShape", M.cursorShape },                           .{ "pointerShape", M.pointerShape },
-    .{ "pointerShapeReset", M.pointerShapeReset },               .{ "queryMode", M.queryMode },
-    .{ "requestCursorPosition", M.requestCursorPosition },       .{ "requestExtendedCursorPosition", M.requestExtendedCursorPosition },
-    .{ "queryColorScheme", M.queryColorScheme },                 .{ "queryDeviceAttributes", M.queryDeviceAttributes },
+    .{ "cursorUp", M.cursorUp },                                             .{ "cursorDown", M.cursorDown },
+    .{ "cursorRight", M.cursorRight },                                       .{ "cursorLeft", M.cursorLeft },
+    .{ "cursorNextLine", M.cursorNextLine },                                 .{ "cursorPrevLine", M.cursorPrevLine },
+    .{ "cursorColumn", M.cursorColumn },                                     .{ "cursorRow", M.cursorRow },
+    .{ "cursorSave", M.cursorSave },                                         .{ "cursorRestore", M.cursorRestore },
+    .{ "clearLine", M.clearLine },                                           .{ "clearScreen", M.clearScreen },
+    .{ "scrollRegion", M.scrollRegion },                                     .{ "scrollRegionReset", M.scrollRegionReset },
+    .{ "scrollUp", M.scrollUp },                                             .{ "scrollDown", M.scrollDown },
+    .{ "insertLines", M.insertLines },                                       .{ "deleteLines", M.deleteLines },
+    .{ "insertChars", M.insertChars },                                       .{ "deleteChars", M.deleteChars },
+    .{ "eraseChars", M.eraseChars },                                         .{ "repeatChar", M.repeatChar },
+    .{ "resetStyle", M.resetStyle },                                         .{ "diffStyle", M.diffStyle },
+    .{ "applySgr", M.applySgr },                                             .{ "paletteRgb", M.paletteRgb },
+    .{ "setMode", M.setMode },                                               .{ "altScreen", M.privateMode("altScreen") },
+    .{ "bracketedPaste", M.privateMode("bracketedPaste") },                  .{ "syncOutput", M.privateMode("syncOutput") },
+    .{ "focusEvents", M.privateMode("focusEvents") },                        .{ "cursorVisible", M.privateMode("cursorVisible") },
+    .{ "unicodeCore", M.privateMode("unicodeCore") },                        .{ "inBandResize", M.privateMode("inBandResize") },
+    .{ "win32Input", M.privateMode("win32Input") },                          .{ "autoWrap", M.privateMode("autoWrap") },
+    .{ "colorScheme", M.privateMode("colorScheme") },                        .{ "mouse", M.mouse },
+    .{ "mouseOff", M.mouseOff },                                             .{ "kittyKeyboardPush", M.kittyKeyboardPush },
+    .{ "kittyKeyboardPop", M.kittyKeyboardPop },                             .{ "kittyKeyboardQuery", M.kittyKeyboardQuery },
+    .{ "kittyKeyboardSet", M.kittyKeyboardSet },                             .{ "modifyKeys", M.modifyKeys },
+    .{ "modifyKeysReset", M.modifyKeysReset },                               .{ "queryModifyKeys", M.queryModifyKeys },
+    .{ "cursorShape", M.cursorShape },                                       .{ "pointerShape", M.pointerShape },
+    .{ "pointerShapeReset", M.pointerShapeReset },                           .{ "queryMode", M.queryMode },
+    .{ "requestCursorPosition", M.requestCursorPosition },                   .{ "requestExtendedCursorPosition", M.requestExtendedCursorPosition },
+    .{ "queryColorScheme", M.queryColorScheme },                             .{ "queryDeviceAttributes", M.queryDeviceAttributes },
     .{ "querySecondaryDeviceAttributes", M.querySecondaryDeviceAttributes }, .{ "queryVersion", M.queryVersion },
-    .{ "queryColor", M.queryColor },                             .{ "setColor", M.setColor },
-    .{ "resetColor", M.resetColor },                             .{ "queryPaletteColor", M.queryPaletteColor },
-    .{ "setPaletteColor", M.setPaletteColor },                   .{ "resetPaletteColor", M.resetPaletteColor },
-    .{ "resetPalette", M.resetPalette },                         .{ "queryWindowSize", M.queryWindowSize },
-    .{ "resizeTextArea", M.resizeTextArea },                     .{ "queryCapability", M.queryCapability },
-    .{ "queryCapabilities", M.queryCapabilities },               .{ "transmitImage", M.transmitImage },
-    .{ "placeImage", M.placeImage },                             .{ "deleteImage", M.deleteImage },
-    .{ "queryGraphics", M.queryGraphics },                       .{ "transmitFrame", M.transmitFrame },
-    .{ "animateImage", M.animateImage },                         .{ "composeFrames", M.composeFrames },
-    .{ "placeholderRow", M.placeholderRow },                     .{ "placeholderCell", M.placeholderCell },
-    .{ "title", M.title },                                       .{ "iconName", M.iconName },
-    .{ "titlePush", M.titlePush },                               .{ "titlePop", M.titlePop },
-    .{ "workingDirectory", M.workingDirectory },                 .{ "hyperlink", M.hyperlink },
-    .{ "textSize", M.textSize },                                 .{ "promptStart", M.promptStart },
-    .{ "promptEnd", M.promptEnd },                               .{ "commandStart", M.commandStart },
-    .{ "commandEnd", M.commandEnd },                             .{ "progress", M.progress },
-    .{ "clipboardWrite", M.clipboardWrite },                     .{ "clipboardRequest", M.clipboardRequest },
-    .{ "notify", M.notify },                                     .{ "notify9", M.notify9 },
-    .{ "encodeMouse", M.encodeMouse },                           .{ "extraCursors", M.extraCursors },
-    .{ "extraCursorsClear", M.extraCursorsClear },               .{ "extraCursorColor", M.extraCursorColor },
-    .{ "queryExtraCursorSupport", M.queryExtraCursorSupport },   .{ "queryExtraCursors", M.queryExtraCursors },
-    .{ "queryExtraCursorColors", M.queryExtraCursorColors },     .{ "Probe.write", M.probeWrite },
-    .{ "parseMouse", M.parseMouse },                             .{ "parseMouseX10", M.parseMouseX10 },
-    .{ "parseMouseRxvt", M.parseMouseRxvt },                     .{ "toCells", M.toCells },
-    .{ "toCellsAt", M.toCellsAt },                               .{ "parseCursorPosition", M.parseCursorPosition },
-    .{ "parseExtendedCursorPosition", M.parseExtendedCursorPosition }, .{ "parseModeReply", M.parseModeReply },
-    .{ "parseColorSchemeReply", M.parseColorSchemeReply },       .{ "parseDeviceAttributes", M.parseDeviceAttributes },
+    .{ "queryColor", M.queryColor },                                         .{ "setColor", M.setColor },
+    .{ "resetColor", M.resetColor },                                         .{ "queryPaletteColor", M.queryPaletteColor },
+    .{ "setPaletteColor", M.setPaletteColor },                               .{ "resetPaletteColor", M.resetPaletteColor },
+    .{ "resetPalette", M.resetPalette },                                     .{ "queryWindowSize", M.queryWindowSize },
+    .{ "resizeTextArea", M.resizeTextArea },                                 .{ "queryCapability", M.queryCapability },
+    .{ "queryCapabilities", M.queryCapabilities },                           .{ "transmitImage", M.transmitImage },
+    .{ "placeImage", M.placeImage },                                         .{ "deleteImage", M.deleteImage },
+    .{ "queryGraphics", M.queryGraphics },                                   .{ "transmitFrame", M.transmitFrame },
+    .{ "animateImage", M.animateImage },                                     .{ "composeFrames", M.composeFrames },
+    .{ "placeholderRow", M.placeholderRow },                                 .{ "placeholderCell", M.placeholderCell },
+    .{ "title", M.title },                                                   .{ "iconName", M.iconName },
+    .{ "titlePush", M.titlePush },                                           .{ "titlePop", M.titlePop },
+    .{ "workingDirectory", M.workingDirectory },                             .{ "hyperlink", M.hyperlink },
+    .{ "textSize", M.textSize },                                             .{ "promptStart", M.promptStart },
+    .{ "promptEnd", M.promptEnd },                                           .{ "commandStart", M.commandStart },
+    .{ "commandEnd", M.commandEnd },                                         .{ "progress", M.progress },
+    .{ "clipboardWrite", M.clipboardWrite },                                 .{ "clipboardRequest", M.clipboardRequest },
+    .{ "notify", M.notify },                                                 .{ "notify9", M.notify9 },
+    .{ "encodeMouse", M.encodeMouse },                                       .{ "extraCursors", M.extraCursors },
+    .{ "extraCursorsClear", M.extraCursorsClear },                           .{ "extraCursorColor", M.extraCursorColor },
+    .{ "queryExtraCursorSupport", M.queryExtraCursorSupport },               .{ "queryExtraCursors", M.queryExtraCursors },
+    .{ "queryExtraCursorColors", M.queryExtraCursorColors },                 .{ "Probe.write", M.probeWrite },
+    .{ "parseMouse", M.parseMouse },                                         .{ "parseMouseX10", M.parseMouseX10 },
+    .{ "parseMouseRxvt", M.parseMouseRxvt },                                 .{ "toCells", M.toCells },
+    .{ "toCellsAt", M.toCellsAt },                                           .{ "parseCursorPosition", M.parseCursorPosition },
+    .{ "parseExtendedCursorPosition", M.parseExtendedCursorPosition },       .{ "parseModeReply", M.parseModeReply },
+    .{ "parseColorSchemeReply", M.parseColorSchemeReply },                   .{ "parseDeviceAttributes", M.parseDeviceAttributes },
     .{ "parseSecondaryDeviceAttributes", M.parseSecondaryDeviceAttributes }, .{ "parseVersion", M.parseVersion },
-    .{ "parseKittyKeyboardReply", M.parseKittyKeyboardReply },   .{ "parseModifyKeysReply", M.parseModifyKeysReply },
-    .{ "parseColorReply", M.parseColorReply },                   .{ "parsePaletteReply", M.parsePaletteReply },
-    .{ "parseWindowSize", M.parseWindowSize },                   .{ "parseCapabilityReply", M.parseCapabilityReply },
-    .{ "parseGraphicsResponse", M.parseGraphicsResponse },       .{ "parseClipboardReply", M.parseClipboardReply },
-    .{ "clipboardReplyDecoded", M.clipboardReplyDecoded },       .{ "parseHyperlink", M.parseHyperlink },
-    .{ "parseTextSize", M.parseTextSize },                       .{ "parseCsi", M.parseCsi },
-    .{ "parseControlString", M.parseControlString },             .{ "parseExtraCursorSupport", M.parseExtraCursorSupport },
-    .{ "parseExtraCursors", M.parseExtraCursors },               .{ "parseExtraCursorColors", M.parseExtraCursorColors },
-    .{ "Reply.parse", M.replyParse },                            .{ "probeMatches", M.probeMatches },
-    .{ "probeAnswered", M.probeAnswered },                       .{ "checkText", M.checkText },
-    .{ "printable", M.printable },                               .{ "KeyEvent.typed", M.keyEventTyped },
-    .{ "Event.copy", M.eventCopy },                              .{ "ConsoleDecoder", M.consoleDecode },
+    .{ "parseKittyKeyboardReply", M.parseKittyKeyboardReply },               .{ "parseModifyKeysReply", M.parseModifyKeysReply },
+    .{ "parseColorReply", M.parseColorReply },                               .{ "parsePaletteReply", M.parsePaletteReply },
+    .{ "parseWindowSize", M.parseWindowSize },                               .{ "parseCapabilityReply", M.parseCapabilityReply },
+    .{ "parseGraphicsResponse", M.parseGraphicsResponse },                   .{ "parseClipboardReply", M.parseClipboardReply },
+    .{ "clipboardReplyDecoded", M.clipboardReplyDecoded },                   .{ "parseHyperlink", M.parseHyperlink },
+    .{ "parseTextSize", M.parseTextSize },                                   .{ "parseCsi", M.parseCsi },
+    .{ "parseControlString", M.parseControlString },                         .{ "parseExtraCursorSupport", M.parseExtraCursorSupport },
+    .{ "parseExtraCursors", M.parseExtraCursors },                           .{ "parseExtraCursorColors", M.parseExtraCursorColors },
+    .{ "Reply.parse", M.replyParse },                                        .{ "probeMatches", M.probeMatches },
+    .{ "probeAnswered", M.probeAnswered },                                   .{ "checkText", M.checkText },
+    .{ "printable", M.printable },                                           .{ "KeyEvent.typed", M.keyEventTyped },
+    .{ "Event.copy", M.eventCopy },                                          .{ "ConsoleDecoder", M.consoleDecode },
+    .{ "encodeKey", M.encodeKey },                                           .{ "strip", M.strip },
+    .{ "Stripper", M.stripper },                                             .{ "sixel", M.sixelImage(false) },
+    .{ "sixel.rgba", M.sixelImage(true) },                                   .{ "itermImage", M.itermImage },
+    .{ "itermImageMultipart", M.itermImageMultipart },                       .{ "cost.sixel", M.costSixel },
+    .{ "cost.itermImage", M.costIterm(false) },                              .{ "cost.itermImageMultipart", M.costIterm(true) },
 } ++ costs;
 
 const cost_names = .{
-    "diffStyle",      "setStyle",       "resetStyle",     "cursorTo",          "cursorUp",    "cursorDown",
-    "cursorRight",    "cursorLeft",     "cursorNextLine", "cursorPrevLine",    "cursorColumn", "cursorRow",
-    "cursorSave",     "cursorRestore",  "clearLine",      "clearScreen",       "scrollRegion", "scrollRegionReset",
-    "scrollUp",       "scrollDown",     "insertLines",    "deleteLines",       "insertChars", "deleteChars",
-    "eraseChars",     "repeatChar",     "setMode",        "hyperlinkStart",    "hyperlinkEnd", "hyperlink",
-    "textSize",
+    "diffStyle",   "setStyle",      "resetStyle",     "cursorTo",       "cursorUp",     "cursorDown",
+    "cursorRight", "cursorLeft",    "cursorNextLine", "cursorPrevLine", "cursorColumn", "cursorRow",
+    "cursorSave",  "cursorRestore", "clearLine",      "clearScreen",    "scrollRegion", "scrollRegionReset",
+    "scrollUp",    "scrollDown",    "insertLines",    "deleteLines",    "insertChars",  "deleteChars",
+    "eraseChars",  "repeatChar",    "setMode",        "hyperlinkStart", "hyperlinkEnd", "hyperlink",
+    "textSize",    "encodeKey",
 };
 const costs = blk: {
     var out: [cost_names.len]struct { []const u8, Op } = undefined;
@@ -949,35 +1082,29 @@ const V = struct {
 };
 
 pub const vaxis_ops = .{
-    .{ "cursorRight", V.cursorRight },                    .{ "cursorLeft", V.cursorLeft },
-    .{ "clearScreen", V.clearScreen },                    .{ "resetStyle", V.resetStyle },
-    .{ "altScreen", V.fixed(v.ctlseqs.smcup, v.ctlseqs.rmcup) },
-    .{ "bracketedPaste", V.fixed(v.ctlseqs.bp_set, v.ctlseqs.bp_reset) },
-    .{ "syncOutput", V.fixed(v.ctlseqs.sync_set, v.ctlseqs.sync_reset) },
-    .{ "cursorVisible", V.fixed(v.ctlseqs.show_cursor, v.ctlseqs.hide_cursor) },
-    .{ "unicodeCore", V.fixed(v.ctlseqs.unicode_set, v.ctlseqs.unicode_reset) },
-    .{ "inBandResize", V.fixed(v.ctlseqs.in_band_resize_set, v.ctlseqs.in_band_resize_reset) },
-    .{ "colorScheme", V.fixed(v.ctlseqs.color_scheme_set, v.ctlseqs.color_scheme_reset) },
-    .{ "kittyKeyboardPush", V.kittyKeyboardPush },        .{ "kittyKeyboardPop", V.constant(v.ctlseqs.csi_u_pop) },
-    .{ "kittyKeyboardQuery", V.constant(v.ctlseqs.csi_u_query) },
-    .{ "cursorShape", V.cursorShape },                    .{ "pointerShape", V.pointerShape },
-    .{ "queryMode", V.queryMode },                        .{ "requestCursorPosition", V.constant(v.ctlseqs.cursor_position_request) },
-    .{ "queryColorScheme", V.constant(v.ctlseqs.color_scheme_request) },
-    .{ "queryDeviceAttributes", V.constant(v.ctlseqs.primary_device_attrs) },
-    .{ "queryVersion", V.constant(v.ctlseqs.xtversion) }, .{ "queryColor", V.queryColor },
-    .{ "setColor", V.setColor },                          .{ "resetColor", V.resetColor },
-    .{ "queryPaletteColor", V.queryPaletteColor },        .{ "resetPalette", V.constant(v.ctlseqs.osc4_reset) },
-    .{ "placeImage", V.placeImage },                      .{ "title", V.title },                                .{ "hyperlink", V.hyperlink },
-    .{ "textSize", V.textSize },                          .{ "clipboardWrite", V.clipboardWrite },
-    .{ "clipboardRequest", V.constant(v.ctlseqs.osc52_clipboard_request) },
-    .{ "notify", V.notify },                              .{ "notify9", V.notify9 },
-    .{ "extraCursorsClear", V.constant(v.ctlseqs.reset_secondary_cursors) },
-    .{ "extraCursorColor", V.extraCursorColor },          .{ "queryExtraCursorSupport", V.constant(v.ctlseqs.multi_cursor_query) },
-    .{ "parseMouse", V.parseMouse },                      .{ "parseMouseX10", V.parseMouse },
-    .{ "parseCursorPosition", V.parseCursorPosition },    .{ "parseColorSchemeReply", V.parseColorSchemeReply },
-    .{ "parseDeviceAttributes", V.present(.cap_da1) },    .{ "parseKittyKeyboardReply", V.present(.cap_kitty_keyboard) },
-    .{ "parseGraphicsResponse", V.present(.cap_kitty_graphics) },
-    .{ "parseColorReply", V.colorReport },                .{ "parsePaletteReply", V.colorReport },
+    .{ "cursorRight", V.cursorRight },                                                     .{ "cursorLeft", V.cursorLeft },
+    .{ "clearScreen", V.clearScreen },                                                     .{ "resetStyle", V.resetStyle },
+    .{ "altScreen", V.fixed(v.ctlseqs.smcup, v.ctlseqs.rmcup) },                           .{ "bracketedPaste", V.fixed(v.ctlseqs.bp_set, v.ctlseqs.bp_reset) },
+    .{ "syncOutput", V.fixed(v.ctlseqs.sync_set, v.ctlseqs.sync_reset) },                  .{ "cursorVisible", V.fixed(v.ctlseqs.show_cursor, v.ctlseqs.hide_cursor) },
+    .{ "unicodeCore", V.fixed(v.ctlseqs.unicode_set, v.ctlseqs.unicode_reset) },           .{ "inBandResize", V.fixed(v.ctlseqs.in_band_resize_set, v.ctlseqs.in_band_resize_reset) },
+    .{ "colorScheme", V.fixed(v.ctlseqs.color_scheme_set, v.ctlseqs.color_scheme_reset) }, .{ "kittyKeyboardPush", V.kittyKeyboardPush },
+    .{ "kittyKeyboardPop", V.constant(v.ctlseqs.csi_u_pop) },                              .{ "kittyKeyboardQuery", V.constant(v.ctlseqs.csi_u_query) },
+    .{ "cursorShape", V.cursorShape },                                                     .{ "pointerShape", V.pointerShape },
+    .{ "queryMode", V.queryMode },                                                         .{ "requestCursorPosition", V.constant(v.ctlseqs.cursor_position_request) },
+    .{ "queryColorScheme", V.constant(v.ctlseqs.color_scheme_request) },                   .{ "queryDeviceAttributes", V.constant(v.ctlseqs.primary_device_attrs) },
+    .{ "queryVersion", V.constant(v.ctlseqs.xtversion) },                                  .{ "queryColor", V.queryColor },
+    .{ "setColor", V.setColor },                                                           .{ "resetColor", V.resetColor },
+    .{ "queryPaletteColor", V.queryPaletteColor },                                         .{ "resetPalette", V.constant(v.ctlseqs.osc4_reset) },
+    .{ "placeImage", V.placeImage },                                                       .{ "title", V.title },
+    .{ "hyperlink", V.hyperlink },                                                         .{ "textSize", V.textSize },
+    .{ "clipboardWrite", V.clipboardWrite },                                               .{ "clipboardRequest", V.constant(v.ctlseqs.osc52_clipboard_request) },
+    .{ "notify", V.notify },                                                               .{ "notify9", V.notify9 },
+    .{ "extraCursorsClear", V.constant(v.ctlseqs.reset_secondary_cursors) },               .{ "extraCursorColor", V.extraCursorColor },
+    .{ "queryExtraCursorSupport", V.constant(v.ctlseqs.multi_cursor_query) },              .{ "parseMouse", V.parseMouse },
+    .{ "parseMouseX10", V.parseMouse },                                                    .{ "parseCursorPosition", V.parseCursorPosition },
+    .{ "parseColorSchemeReply", V.parseColorSchemeReply },                                 .{ "parseDeviceAttributes", V.present(.cap_da1) },
+    .{ "parseKittyKeyboardReply", V.present(.cap_kitty_keyboard) },                        .{ "parseGraphicsResponse", V.present(.cap_kitty_graphics) },
+    .{ "parseColorReply", V.colorReport },                                                 .{ "parsePaletteReply", V.colorReport },
     .{ "clipboardReplyDecoded", V.clipboardReplyDecoded },
 };
 

@@ -16,7 +16,7 @@ SMOKE = os.environ.get('BENCH_MODE', 'full') == 'smoke'
 SIDES = ['morse-before', 'morse', 'crossterm', 'termwiz', 'vaxis']
 
 def invoke(side, task, mode, chunk, data, burst=None):
-    if side in ('morse-before', 'morse', 'vaxis'):
+    if side in ('morse-before', 'morse', 'vaxis', 'ghostty'):
         argv = [str(BUILD / ('before-out/bin/morse-bench' if side == 'morse-before' else f'zig-out/bin/{side}-bench')), task, mode, str(chunk)]
     else:
         argv = [os.environ.get('MORSE_RUST_BENCH', str(BUILD / 'cargo-target/release/terminal-bench')), side, task, mode, str(chunk)]
@@ -131,6 +131,16 @@ def operation_checks():
             else:
                 failures.append(dict(workload=workload, side=side, expected=[x.hex() for x in ours], actual=[x.hex() for x in theirs]))
                 row['alternatives'][side] = 'differs'
+        if name in ('sixel', 'sixel.rgba'):
+            # No comparison writes sixels from pixels; termwiz reads them.
+            # Its reader must draw every record back to the picture it was.
+            drawn = lines_of(invoke('termwiz', 'op:sixelDraw', 'check', 64, b''.join(len(x).to_bytes(4, 'little') + x for x in ours)))
+            expected = [ops.sixel_expected(name, rec) for rec in ops.split_records(data)]
+            if [bytes.fromhex(x.decode()) for x in drawn] != expected:
+                failures.append(dict(workload=workload, side='termwiz sixel reader', expected='the source pixels', actual='differs'))
+                row['reference'] = 'differs'
+            else:
+                row['reference'] = 'termwiz sixel reader draws every record back to its pixels'
         coverage.append(row)
     return coverage, failures
 

@@ -9,8 +9,8 @@ import base64
 import random
 import struct
 
-CT, TW, VX = 'crossterm', 'termwiz', 'vaxis'
-ALTS = (CT, TW, VX)
+CT, TW, VX, GH = 'crossterm', 'termwiz', 'vaxis', 'ghostty'
+ALTS = (CT, TW, VX, GH)
 
 # Reasons an alternative has no call for an operation. Every operation names
 # each comparison library: either it runs, or one of these says why not.
@@ -22,6 +22,12 @@ NO_COST = 'no API counts bytes without writing them'
 NO_HELPER = 'no equivalent helper'
 CT_FIXED = 'crossterm has commands for named modes only, not a numbered DECSET'
 VX_FIXED = 'libvaxis has constants for named modes only, not a numbered DECSET'
+# libghostty-vt (the emulator tycho's bay runs, pinned as morse's conformance
+# step pins it) joins the comparisons for what it has a standalone API for:
+# encoding keys and reading output. Every other operation names this reason.
+NO_GH = 'libghostty-vt is a terminal emulator; compared here only where it has a standalone API (key encoding, output parsing)'
+NO_IMAGE_CT = 'crossterm has no image encoder'
+NO_IMAGE_VX = 'libvaxis sends kitty graphics only'
 
 
 def _sized(sizes, make):
@@ -92,6 +98,57 @@ def reply_sample(r, v, size):
     return [f'\x1b[{1 + v % 50};{1 + v}R'.encode(), f'\x1b[?2026;{1 + v % 2}$y'.encode(), b'\x1b[?62;22;52c',
             f'\x1b]11;rgb:{v:02x}{v:02x}/6464/3232\x1b\\'.encode(), f'\x1b_Gi={v + 1};OK\x1b\\'.encode(),
             f'\x1b[?{v % 32}u'.encode(), f'\x1bP>|term({v})\x1b\\'.encode(), f'\x1b[8;{24 + v};{80 + v}t'.encode()][v % 8]
+
+
+STREAMED = 'its parser is streaming too and is timed whole in strip'
+NO_SIXEL_TW = 'termwiz writes sixel commands it parsed; it has no encoder from pixels'
+NO_SIXEL_GH = 'libghostty-vt does not implement sixel'
+SIXEL_COLOURS = 16
+
+
+def sixel_width(pixels):
+    """The width of a sixel workload image: square-ish, a multiple of 8."""
+    side = 8
+    while side * side * 4 <= pixels:
+        side *= 2
+    return side
+
+
+def sixel_indices(r, n):
+    """`n` palette indices of a blocky picture with noise in it."""
+    width = sixel_width(n)
+    out = bytearray(n)
+    for i in range(n):
+        y, x = divmod(i, width)
+        out[i] = ((x // 6) + (y // 5)) % SIXEL_COLOURS
+    for i in range(0, n, 7):
+        out[i] = r.randrange(SIXEL_COLOURS)
+    return bytes(out)
+
+
+def sixel_rgba(r, n):
+    """The same picture as RGBA, `n` bytes, some pixels transparent."""
+    indices = sixel_indices(r, n // 4)
+    out = bytearray()
+    for i, c in enumerate(indices):
+        out += bytes([c * 16 + 3, 255 - c * 16, (c * 37) % 256, 0 if i % 29 == 0 else 255])
+    return bytes(out)
+
+
+_OUTPUT_PIECES = [b'\x1b[1m', b'\x1b[0m', b'\x1b[38;2;255;128;0m', b'\x1b[12;40H', b'\x1b[2K', b'\x1b[?25l',
+                  b'\x1b]8;;https://example.org/bench\x1b\\', b'\x1b]8;;\x1b\\', b'\x1b]0;a title\x07', b'\x1b(B',
+                  b'\x1b7', b'\x1b8', b'\r\n', b'\t', '\u00e9\u4e2d'.encode(), '\U0001f642'.encode()]
+
+
+def output_text(r, n):
+    """About `n` bytes of a program's output, never more: text between styles,
+    moves, links and titles, cut only where a piece ends."""
+    out = bytearray()
+    while True:
+        piece = text(r, r.randrange(1, 24)) + _OUTPUT_PIECES[r.randrange(len(_OUTPUT_PIECES))]
+        if out and len(out) + len(piece) > n:
+            return bytes(out)
+        out += piece if out or len(piece) <= n else text(r, n)
 
 
 MOUSE = [0, 1, 2, 32, 64]
@@ -198,6 +255,18 @@ OPS = {
     'checkText': rd(lambda r, v, s: bytes([v]) + text(r, s), {CT: NO_HELPER, TW: NO_HELPER, VX: NO_HELPER}, TEXT_SCAN),
     'printable': rd(lambda r, v, s: bytes([v]) + text(r, s, True), {CT: NO_HELPER, TW: NO_HELPER, VX: NO_HELPER}, TEXT_SCAN),
     'KeyEvent.typed': rd(lambda r, v, s: bytes([v]) + ['a', 'é', '👍🏽', 'Z'][v % 4].encode(), {CT: NO_HELPER, TW: NO_HELPER, VX: NO_HELPER}),
+    'encodeKey': w({CT: 'crossterm parses keys; it has no encoder',
+                    TW: True,
+                    VX: 'libvaxis encodes keys only inside its terminal widget, to a live pty; the encoder is private and legacy-only',
+                    GH: True},
+                   {'legacy': 0, 'kitty': 1}, lambda r, v, variant: bytes([variant])),
+    'strip': rd(lambda r, v, n: output_text(r, n), {CT: 'crossterm parses input, not output', TW: True,
+                                                     VX: 'libvaxis parses output only inside its terminal widget', GH: True}, TEXT_SCAN),
+    'Stripper': rd(lambda r, v, n: output_text(r, n), {CT: 'crossterm parses input, not output', TW: STREAMED, VX: 'libvaxis parses output only inside its terminal widget', GH: STREAMED}, TEXT_SCAN),
+    'sixel': w({CT: NO_IMAGE_CT, TW: NO_SIXEL_TW, VX: NO_IMAGE_VX, GH: NO_SIXEL_GH}, PIXELS, lambda r, v, n: sixel_indices(r, n)),
+    'sixel.rgba': w({CT: NO_IMAGE_CT, TW: NO_SIXEL_TW, VX: NO_IMAGE_VX, GH: NO_SIXEL_GH}, PIXELS, lambda r, v, n: sixel_rgba(r, n)),
+    'itermImage': w({CT: NO_IMAGE_CT, TW: True, VX: NO_IMAGE_VX, GH: 'libghostty-vt does not implement iTerm2 images'}, BULK, lambda r, v, n: r.randbytes(n)),
+    'itermImageMultipart': w({CT: NO_IMAGE_CT, TW: 'termwiz has no MultipartFile form', VX: NO_IMAGE_VX, GH: 'libghostty-vt does not implement iTerm2 images'}, BULK, lambda r, v, n: r.randbytes(n)),
     'Event.copy': rd(lambda r, v, s: bytes([v]) + text(r, s), {CT: 'events are owned when parsed', TW: 'events are owned when parsed', VX: 'events borrow; no copy helper'}, TEXT_SCAN),
     'ConsoleDecoder': rd(lambda r, v, s: bytes([v]) + text(r, s), {CT: 'its console decoder is Windows-only; not built on this Mac', TW: 'its console decoder is Windows-only; not built on this Mac', VX: 'its console decoder is Windows-only; not built on this Mac'}, {'small': 16, 'medium': 1024}),
 }
@@ -205,8 +274,14 @@ for _name in ('diffStyle', 'setStyle', 'resetStyle', 'cursorTo', 'cursorUp', 'cu
               'cursorNextLine', 'cursorPrevLine', 'cursorColumn', 'cursorRow', 'cursorSave', 'cursorRestore', 'clearLine',
               'clearScreen', 'scrollRegion', 'scrollRegionReset', 'scrollUp', 'scrollDown', 'insertLines', 'deleteLines',
               'insertChars', 'deleteChars', 'eraseChars', 'repeatChar', 'setMode', 'hyperlinkStart', 'hyperlinkEnd',
-              'hyperlink', 'textSize'):
+              'hyperlink', 'textSize', 'encodeKey'):
     OPS['cost.' + _name] = rd(lambda r, v, s: bytes([v]) + text(r, 16), {CT: NO_COST, TW: NO_COST, VX: NO_COST})
+for _name, _sizes, _make in (('sixel', PIXELS, lambda r, v, n: bytes([v]) + sixel_indices(r, n)),
+                             ('itermImage', BULK, lambda r, v, n: bytes([v]) + r.randbytes(n)),
+                             ('itermImageMultipart', BULK, lambda r, v, n: bytes([v]) + r.randbytes(n))):
+    OPS['cost.' + _name] = rd(_make, {CT: NO_COST, TW: NO_COST, VX: NO_COST}, _sizes)
+for _op in OPS.values():
+    _op[3].setdefault(GH, NO_GH)
 
 # Operations the `before` revision does not have report unavailable at run time.
 SKIPPED = {
@@ -236,6 +311,23 @@ def records(name, size_name, smoke, check):
         rec = make(r, v, size)
         out += struct.pack('<I', len(rec)) + rec
     return bytes(out)
+
+
+def split_records(data):
+    out, pos = [], 0
+    while pos < len(data):
+        n = struct.unpack_from('<I', data, pos)[0]
+        out.append(data[pos + 4:pos + 4 + n])
+        pos += 4 + n
+    return out
+
+
+def sixel_expected(name, rec):
+    """The register each pixel of a sixel record is drawn in, 0xff for none."""
+    payload = rec[1:]
+    if name == 'sixel':
+        return payload
+    return bytes(0xff if payload[i + 3] < 128 else (payload[i] - 3) // 16 for i in range(0, len(payload), 4))
 
 
 def workloads():
@@ -339,4 +431,6 @@ KNOWN = {
     ('transmitFrame/large', TW): 'termwiz writes one unchunked APC; kitty caps a direct chunk at 4096 base64 bytes, morse splits',
     ('parseMouseRxvt', CT): 'crossterm leaves the 32 bias on rxvt (1015) coordinates; xterm adds 1+32 to each',
     ('parseKittyKeyboardReply', CT): 'crossterm reads one digit of the flags, so 10-31 come back wrong',
+    ('encodeKey/legacy', TW): 'termwiz spells alt with control or shift on enter and tab as ESC before the unmodified key; morse and ghostty write the modifyOtherKeys form, CSI 27 ; m ; code ~',
+    ('encodeKey/kitty', TW): 'termwiz leaves escape, and control or alt with a key that has a legacy byte, in legacy form under disambiguation; kitty, ghostty and morse write CSI u',
 }

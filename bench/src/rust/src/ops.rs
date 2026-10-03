@@ -326,6 +326,18 @@ fn tw_value(name: &str, r: &[u8]) -> Option<Box<dyn Display>> {
         "clipboardRequest" => osc(OperatingSystemCommand::QuerySelection(Selection::CLIPBOARD)),
         "notify" => osc(OperatingSystemCommand::RxvtExtension(vec!["notify".into(), "bench".into(), body(r).to_string()])),
         "notify9" => osc(OperatingSystemCommand::SystemNotification(body(r).to_string())),
+        "itermImage" => osc(OperatingSystemCommand::ITermProprietary(termwiz::escape::osc::ITermProprietary::File(Box::new(
+            termwiz::escape::osc::ITermFileData {
+                name: Some("bench.png".into()),
+                size: Some(r.len() - 1),
+                width: termwiz::escape::osc::ITermDimension::Cells(40),
+                height: termwiz::escape::osc::ITermDimension::Automatic,
+                preserve_aspect_ratio: true,
+                inline: true,
+                do_not_move_cursor: false,
+                data: r[1..].to_vec(),
+            },
+        )))),
         "encodeMouse" => csi(CSI::Mouse(MouseReport::SGR1006 {
             x: c as u16,
             y: 12,
@@ -334,6 +346,46 @@ fn tw_value(name: &str, r: &[u8]) -> Option<Box<dyn Display>> {
         })),
         _ => None,
     }
+}
+
+// The key workload: the same sixteen keys and eight modifier sets as
+// bench/src/ops.zig `benchKey`, seeded by the record's first byte.
+fn bench_key(v: u8) -> (termwiz::input::KeyCode, termwiz::input::Modifiers) {
+    use termwiz::input::{KeyCode as K, Modifiers as Mo};
+    let key = [
+        K::Char('a'), K::Char('z'), K::Char('1'), K::Char('/'), K::Char(' '), K::Enter, K::Tab, K::Backspace,
+        K::Escape, K::UpArrow, K::LeftArrow, K::Home, K::PageUp, K::Delete, K::Function(1), K::Function(5),
+    ][v as usize % 16]
+    .clone();
+    let mods = [Mo::NONE, Mo::SHIFT, Mo::CTRL, Mo::ALT, Mo::CTRL | Mo::SHIFT, Mo::CTRL | Mo::ALT, Mo::ALT | Mo::SHIFT, Mo::NONE]
+        [(v as usize + v as usize / 16) % 8];
+    // A terminal hands its encoder the character shift typed.
+    let key = match key {
+        K::Char(c) if mods.contains(Mo::SHIFT) => K::Char(match c {
+            'a'..='z' => c.to_ascii_uppercase(),
+            '1' => '!',
+            '/' => '?',
+            _ => c,
+        }),
+        k => k,
+    };
+    (key, mods)
+}
+
+fn tw_encode(name: &str, r: &[u8], out: &mut String) -> Option<termwiz::Result<()>> {
+    use termwiz::escape::csi::KittyKeyboardFlags as F;
+    use termwiz::input::{KeyCodeEncodeModes, KeyboardEncoding};
+    if name != "encodeKey" {
+        return None;
+    }
+    let (key, mods) = bench_key(r[0]);
+    let encoding = if r[1] == 0 {
+        KeyboardEncoding::Xterm
+    } else {
+        KeyboardEncoding::Kitty(F::DISAMBIGUATE_ESCAPE_CODES | F::REPORT_ALTERNATE_KEYS)
+    };
+    let modes = KeyCodeEncodeModes { encoding, application_cursor_keys: false, newline_mode: false, modify_other_keys: None };
+    Some(key.encode(mods, modes, true).map(|s| out.push_str(&s)))
 }
 
 // ------------------------------------------------------------------ readers
@@ -412,6 +464,22 @@ fn tw_read(st: &mut TwReader, name: &str, r: &[u8], check: bool) -> Option<Optio
             false,
         );
         return Some(line);
+    }
+    if name == "strip" {
+        // termwiz types every sequence into an Action; the text left is
+        // what it prints and the C0 controls it carries.
+        let mut text = String::with_capacity(r.len());
+        st.parser.parse(r, |a| match a {
+            Action::Print(c) => text.push(c),
+            Action::PrintString(s) => text.push_str(&s),
+            Action::Control(c) => text.push(c as u8 as char),
+            _ => {}
+        });
+        black_box(&text);
+        return Some(Some(if check { text } else { String::new() }));
+    }
+    if name == "sixelDraw" {
+        return Some(sixel_draw(st, r));
     }
     let mut actions = Vec::with_capacity(2);
     let known = matches!(
@@ -503,6 +571,48 @@ fn tw_read(st: &mut TwReader, name: &str, r: &[u8], check: bool) -> Option<Optio
     Some(Some(line))
 }
 
+/// Draws a sixel string with termwiz's reader: the register of every pixel
+/// as two hex digits, `ff` where nothing was drawn. The reference the bench
+/// holds morse's sixel writer to.
+fn sixel_draw(st: &mut TwReader, r: &[u8]) -> Option<String> {
+    use termwiz::escape::SixelData;
+    let mut actions = Vec::new();
+    st.parser.parse(r, |a| actions.push(a));
+    let sixel = actions.into_iter().find_map(|a| if let Action::Sixel(s) = a { Some(s) } else { None })?;
+    let (w, h) = (sixel.pixel_width? as usize, sixel.pixel_height? as usize);
+    let mut grid = vec![0xffu8; w * h];
+    let (mut x, mut band, mut colour) = (0usize, 0usize, 0u16);
+    let put = |x: usize, band: usize, colour: u16, bits: u8, grid: &mut Vec<u8>| {
+        for row in 0..6 {
+            if bits & (1 << row) != 0 && x < w && band * 6 + row < h {
+                grid[(band * 6 + row) * w + x] = colour as u8;
+            }
+        }
+    };
+    for d in &sixel.data {
+        match d {
+            SixelData::Data(v) => {
+                put(x, band, colour, *v, &mut grid);
+                x += 1;
+            }
+            SixelData::Repeat { repeat_count, data } => {
+                for _ in 0..*repeat_count {
+                    put(x, band, colour, *data, &mut grid);
+                    x += 1;
+                }
+            }
+            SixelData::SelectColorMapEntry(c) => colour = *c,
+            SixelData::CarriageReturn => x = 0,
+            SixelData::NewLine => {
+                x = 0;
+                band += 1;
+            }
+            _ => {}
+        }
+    }
+    Some(grid.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 fn spec(c: &termwiz::color::ColorSpec) -> String {
     match c {
         termwiz::color::ColorSpec::TrueColor(t) => {
@@ -524,6 +634,7 @@ pub fn run(side: &str, name: &str, data: &[u8], check: bool, timed: bool) -> boo
         "crossterm" => ct_write(name, probe, &mut String::new()).is_some() || ct_read(name, probe, false).is_some(),
         _ => {
             tw_value(name, probe).is_some()
+                || tw_encode(name, probe, &mut String::new()).is_some()
                 || tw_read(&mut TwReader { parser: Parser::new(), input: termwiz::input::InputParser::new() }, name, probe, false).is_some()
         }
     };
@@ -543,6 +654,16 @@ pub fn run(side: &str, name: &str, data: &[u8], check: bool, timed: bool) -> boo
         for r in &recs {
             out.clear();
             ct_write(name, r, &mut out).unwrap().unwrap();
+            black_box(out.as_bytes());
+            count += out.len();
+            emit(&out, &mut lines);
+        }
+        elapsed = start.map(|s| s.elapsed().as_nanos()).unwrap_or(0);
+    } else if side == "termwiz" && tw_encode(name, probe, &mut String::new()).is_some() {
+        let start = timed.then(Instant::now);
+        for r in &recs {
+            out.clear();
+            tw_encode(name, r, &mut out).unwrap().unwrap();
             black_box(out.as_bytes());
             count += out.len();
             emit(&out, &mut lines);

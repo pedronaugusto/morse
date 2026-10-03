@@ -19,19 +19,27 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(budgets);
-    for ([_]bool{ false, true }) |comparison| {
+    const Side = enum { morse, vaxis, ghostty };
+    for ([_]Side{ .morse, .vaxis, .ghostty }) |side| {
         const options = b.addOptions();
-        options.addOption(bool, "comparison", comparison);
-        const exe = b.addExecutable(.{
-            .name = if (comparison) "vaxis-bench" else "morse-bench",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/zig.zig"),
-                .target = target,
-                .optimize = optimize,
-                .link_libc = true,
-                .imports = &.{ .{ .name = "morse", .module = morse }, .{ .name = "vaxis", .module = vaxis }, .{ .name = "options", .module = options.createModule() } },
-            }),
+        options.addOption(Side, "side", side);
+        const module = b.createModule(.{
+            .root_source_file = b.path("src/zig.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{ .{ .name = "morse", .module = morse }, .{ .name = "options", .module = options.createModule() } },
         });
+        // libvaxis and libghostty-vt each carry their own build of uucode,
+        // so no binary takes both.
+        if (side != .ghostty) module.addImport("vaxis", vaxis);
+        if (side == .ghostty) {
+            // The emulator morse's conformance step and tycho pin, without
+            // its vendored SIMD C++, as morse builds it.
+            const ghostty = b.lazyDependency("ghostty", .{ .target = target, .optimize = optimize, .simd = false }) orelse continue;
+            module.addImport("vt", ghostty.module("ghostty-vt"));
+        }
+        const exe = b.addExecutable(.{ .name = b.fmt("{s}-bench", .{@tagName(side)}), .root_module = module });
         b.installArtifact(exe);
     }
 }
