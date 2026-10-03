@@ -302,9 +302,9 @@ pub const KeyParser = struct {
     /// rest of it has not arrived.
     ///
     /// Empty whenever the last iterator was run to null and the input ended
-    /// on a sequence boundary. A caller timing the lone `ESC` watches this:
-    /// a single `0x1b` here, unchanged since the last read, is a user who
-    /// pressed Escape.
+    /// on a sequence boundary. A caller timing the lone `ESC` asks
+    /// `undecided`, which reads this: a single `0x1b` here, unchanged since
+    /// the last read, is a user who pressed Escape.
     ///
     /// Borrowed from the parser's buffer, on the same terms as
     /// `Event.unhandled`.
@@ -345,12 +345,30 @@ pub const KeyParser = struct {
             p.dropped = 0;
             return .{ .overflow = dropped };
         }
-        if (held.len == 0 or held[0] != seq.esc) return null;
+        if (!p.undecided()) return null;
         if (held.len == 1) return .{ .key = .{ .key = .escape } };
-        if (held.len == 2 and (held[1] == '[' or held[1] == 'O')) {
-            return .{ .key = .{ .key = .{ .char = held[1] }, .mods = .{ .alt = true } } };
-        }
-        return null;
+        return .{ .key = .{ .key = .{ .char = held[1] }, .mods = .{ .alt = true } } };
+    }
+
+    /// Whether what is pending is a key as well as the start of a sequence,
+    /// which only time can settle: a lone `ESC`, or `ESC [` or `ESC O`.
+    ///
+    /// Exactly the bytes `flush` turns into a key. A program that waits on
+    /// its input with a timeout uses this to decide whether the escape
+    /// timeout applies: while it is true, a quiet input means the user
+    /// pressed the key, and the program calls `flush`; while it is false,
+    /// either nothing is pending or what is pending is a sequence whose end
+    /// is still to arrive, and only more input settles it. False while the
+    /// tail of an over-long sequence is being skipped, which `flush` reports
+    /// as an overflow rather than as a key.
+    pub fn undecided(p: *const KeyParser) bool {
+        if (p.skipping != null) return false;
+        const held = p.pending();
+        return switch (held.len) {
+            1 => held[0] == seq.esc,
+            2 => held[0] == seq.esc and (held[1] == '[' or held[1] == 'O'),
+            else => false,
+        };
     }
 
     /// A framed sequence read as the mouse report or the reply it is, when
@@ -2183,6 +2201,41 @@ test "flush resolves the two other sequences that are also keys" {
     var second = letter.feed("\x1bO");
     try std.testing.expectEqual(@as(?Event, null), second.next());
     try std.testing.expectEqual(Key{ .char = 'O' }, letter.flush().?.key.key);
+}
+
+test "undecided is true exactly when flush would settle a key" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    const inputs = [_][]const u8{
+        "",       "\x1b",          "\x1b[",    "\x1bO",    "\x1b[1", "\x1b[1;5", "\x1b]0;t",
+        "a",      "\x1bP",         "\x1b\x1b", "\x1b[A",   "\x1bOA", "x\x1b",    "\x1b[<0;1",
+        "\x1b[?", "\x1b]8;;u\x1b", "\xe2\x82", "\x1b\xe2", "\x1b_G",
+    };
+    for (inputs) |input| {
+        var parser: KeyParser = .init(&storage);
+        var events = parser.feed(input);
+        while (events.next()) |_| {}
+        const undecided = parser.undecided();
+        const settled = parser.flush();
+        const key = if (settled) |event| event == .key else false;
+        std.testing.expectEqual(key, undecided) catch |err| {
+            std.debug.print("pending {f}\n", .{std.ascii.hexEscape(input, .lower)});
+            return err;
+        };
+    }
+
+    // The tail of an over-long sequence is not a key, though it ends on one
+    // of the bytes that would be.
+    var parser: KeyParser = .init(&storage);
+    var long: [KeyParser.min_buffer + 8]u8 = undefined;
+    long[0] = 0x1b;
+    long[1] = ']';
+    @memset(long[2..], 'x');
+    var events = parser.feed(&long);
+    while (events.next()) |_| {}
+    var tail = parser.feed("\x1b");
+    while (tail.next()) |_| {}
+    try std.testing.expect(!parser.undecided());
+    try std.testing.expect(parser.flush().? == .overflow);
 }
 
 test "flush throws away a sequence the terminal began and did not finish" {

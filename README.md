@@ -65,8 +65,8 @@ explicitly strips them into a supplied buffer.
 
 `KeyParser` frames legacy and kitty keys, win32 input sequences, paste, focus, resize,
 mouse reports and replies in one stream. An unknown framed sequence becomes
-`Event.unhandled`. A lone ESC stays undecided until more input or `flush`; the
-application decides when to settle it. Whole-sequence parsers return null for
+`Event.unhandled`. A lone ESC stays undecided until more input or `flush`, and
+`undecided` says when it is; the application decides when to settle it. Whole-sequence parsers return null for
 unrecognized or malformed input.
 
 `ConsoleDecoder` accepts Windows console records without reading a console handle. It
