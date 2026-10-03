@@ -27,6 +27,7 @@ const device = @import("device.zig");
 const framing = @import("framing.zig");
 const graphics = @import("graphics.zig");
 const key = @import("key.zig");
+const key_encode = @import("key_encode.zig");
 const mode = @import("mode.zig");
 const mouse_events = @import("mouse.zig");
 const multicursor = @import("multicursor.zig");
@@ -463,6 +464,9 @@ pub const cost = struct {
     pub const hyperlink = osc.cost.hyperlink;
     /// `textSize`.
     pub const textSize = osc.cost.textSize;
+
+    /// `encodeKey`.
+    pub const encodeKey = key_encode.cost;
 };
 
 //=========================================================================
@@ -488,6 +492,11 @@ pub const Resize = key.Resize;
 pub const KeyParser = key.KeyParser;
 /// The events one `KeyParser.feed` completes.
 pub const Events = key.Events;
+/// What the program reading keys asked the terminal for: the kitty flags,
+/// modifyOtherKeys and the cursor, keypad and backspace modes.
+pub const KeyEncoding = key_encode.KeyEncoding;
+/// Writes the bytes a terminal sends for a key, the inverse of `KeyParser`.
+pub const encodeKey = key_encode.encodeKey;
 
 //=========================================================================
 // The Windows console keyboard.
@@ -716,6 +725,7 @@ test {
     _ = @import("framing.zig");
     _ = @import("graphics.zig");
     _ = @import("key.zig");
+    _ = @import("key_encode.zig");
     _ = @import("mode.zig");
     _ = @import("mouse.zig");
     _ = @import("multicursor.zig");

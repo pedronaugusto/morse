@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `encodeKey` writes a `KeyEvent` as the bytes a terminal sends for it, in the kitty keyboard protocol for any set of flags and in the legacy encodings with `modifyOtherKeys`, DECCKM, DECKPAM and DECBKM, and `cost.encodeKey` counts them; with every kitty flag set `KeyParser` reads each key back as itself, and the conformance step compares the bytes with ghostty's encoder.
+
 - `KeyParser` reads F21 to F25 in the `CSI 42 ~` to `CSI 46 ~` form ghostty writes them in; they came back as unhandled sequences before.
 
 - Encode base64 for OSC 52 and kitty graphics straight into the writer's buffer with the standard library's encoder, as many groups as fit at a time, rather than four characters per write; the chunks and bytes written are unchanged.

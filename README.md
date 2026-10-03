@@ -57,7 +57,8 @@ replies independent of the read buffer.
 `Style` describes SGR attributes and colours. `setStyle` writes from the terminal's
 default state; `diffStyle` writes the changes between two known styles. Cursor and erase
 commands use typed parameters. `cost` counts what the style, cursor, erase, repeat, mode,
-hyperlink and text-size writers would write, through the code that writes it.
+hyperlink, text-size and key writers would write, through the code that
+writes it.
 `applySgr` reads a style change back into a `Style`, `parseHyperlink` and
 `parseTextSize` read the bodies of OSC 8 and OSC 66, and `parseCsi` and
 `parseControlString` frame sequences, for a program that reads what was written.
@@ -69,6 +70,15 @@ mouse reports and replies in one stream. An unknown framed sequence becomes
 `Event.unhandled`. A lone ESC stays undecided until more input or `flush`, and
 `undecided` says when it is; the application decides when to settle it. Whole-sequence parsers return null for
 unrecognized or malformed input.
+
+`encodeKey` goes the other way, for a program that stands where a terminal
+stands: it writes a `KeyEvent` as the bytes a terminal sends for it, given
+the kitty flags, `modifyOtherKeys` and cursor, keypad and backspace modes
+in a `KeyEncoding`. The kitty encoding follows kitty's encoder and the
+legacy one xterm's as ghostty writes it; the conformance step compares
+both with ghostty's encoder and names where kitty and ghostty differ. With
+every kitty flag set, `KeyParser` reads back what `encodeKey` wrote as the
+key it was written from.
 
 `ConsoleDecoder` accepts Windows console records without reading a console handle. It
 maintains keyboard and mouse state, including held Ctrl records and UTF-16 surrogate

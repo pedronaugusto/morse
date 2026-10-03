@@ -25,6 +25,7 @@ pub const layers: []const gantry.rules.Layer = &.{
     } },
     .{ .name = "protocols", .patterns = &.{
         "src/device.zig",
+        "src/key_encode.zig",
         "src/multicursor.zig",
         "src/win32.zig",
     } },

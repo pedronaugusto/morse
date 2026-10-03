@@ -407,6 +407,145 @@ pub fn asciiKey(b: u8, mods: *Modifiers) Key {
     };
 }
 
+/// A codepoint a terminal can legally have sent, or null.
+pub fn codepoint(value: u32) ?u21 {
+    if (value > 0x10ffff) return null;
+    if (value >= 0xd800 and value <= 0xdfff) return null;
+    return @intCast(value);
+}
+
+/// The key a codepoint in a `CSI u` or `modifyOtherKeys` sequence names.
+///
+/// Most codepoints are the key itself. The rest are either a C0 control the
+/// protocol kept for the key it has always meant, or one of the private-use
+/// codepoints the kitty protocol assigns to keys Unicode has no character
+/// for. A private-use codepoint in that assigned block that this package does
+/// not know is not a key it will invent a meaning for: it returns null and
+/// the sequence comes back as `Event.unhandled`.
+pub fn protocolKey(cp: u32) ?Key {
+    return switch (cp) {
+        9 => .tab,
+        13 => .enter,
+        27 => .escape,
+        127 => .backspace,
+
+        57358 => .caps_lock,
+        57359 => .scroll_lock,
+        57360 => .num_lock,
+        57361 => .print_screen,
+        57362 => .pause,
+        57363 => .menu,
+
+        57376...57398 => .{ .f = @intCast(cp - 57376 + 13) },
+
+        57399 => .kp_0,
+        57400 => .kp_1,
+        57401 => .kp_2,
+        57402 => .kp_3,
+        57403 => .kp_4,
+        57404 => .kp_5,
+        57405 => .kp_6,
+        57406 => .kp_7,
+        57407 => .kp_8,
+        57408 => .kp_9,
+        57409 => .kp_decimal,
+        57410 => .kp_divide,
+        57411 => .kp_multiply,
+        57412 => .kp_subtract,
+        57413 => .kp_add,
+        57414 => .kp_enter,
+        57415 => .kp_equal,
+        57416 => .kp_separator,
+        57417 => .kp_left,
+        57418 => .kp_right,
+        57419 => .kp_up,
+        57420 => .kp_down,
+        57421 => .kp_page_up,
+        57422 => .kp_page_down,
+        57423 => .kp_home,
+        57424 => .kp_end,
+        57425 => .kp_insert,
+        57426 => .kp_delete,
+        57427 => .kp_begin,
+
+        57428 => .media_play,
+        57429 => .media_pause,
+        57430 => .media_play_pause,
+        57431 => .media_reverse,
+        57432 => .media_stop,
+        57433 => .media_fast_forward,
+        57434 => .media_rewind,
+        57435 => .media_track_next,
+        57436 => .media_track_previous,
+        57437 => .media_record,
+        57438 => .lower_volume,
+        57439 => .raise_volume,
+        57440 => .mute_volume,
+
+        57441 => .left_shift,
+        57442 => .left_ctrl,
+        57443 => .left_alt,
+        57444 => .left_super,
+        57445 => .left_hyper,
+        57446 => .left_meta,
+        57447 => .right_shift,
+        57448 => .right_ctrl,
+        57449 => .right_alt,
+        57450 => .right_super,
+        57451 => .right_hyper,
+        57452 => .right_meta,
+        57453 => .iso_level3_shift,
+        57454 => .iso_level5_shift,
+
+        // The rest of the block the protocol reserves for functional keys.
+        57344...57357, 57364...57375, 57455...57599 => null,
+
+        else => if (codepoint(cp)) |value| Key{ .char = value } else null,
+    };
+}
+
+/// The codepoint `protocolKey` reads as `key`, or null for a key the
+/// protocol spells by number and final byte instead: the arrows, home,
+/// end, page up and down, insert, delete and the first twelve function
+/// keys.
+///
+/// The inverse of `protocolKey`, kept beside it so the two directions are
+/// one table read both ways.
+pub fn protocolCode(key: Key) ?u21 {
+    return switch (key) {
+        .char => |cp| cp,
+        .tab => 9,
+        .enter => 13,
+        .escape => 27,
+        .backspace => 127,
+        .f => |n| if (n >= 13 and n <= 35) 57376 + @as(u21, n - 13) else null,
+        .insert, .delete, .left, .right, .up, .down, .page_up, .page_down, .home, .end => null,
+        else => blk: {
+            // Every other named key has a codepoint in the protocol's block,
+            // in the order `Key` declares them from caps lock on.
+            const first = @intFromEnum(std.meta.Tag(Key).caps_lock);
+            const at = @intFromEnum(std.meta.activeTag(key)) - first;
+            break :blk named_codes[at];
+        },
+    };
+}
+
+/// The protocol's codepoints for the named keys from `caps_lock` to the
+/// end of `Key`, in declaration order.
+const named_codes = [_]u21{
+    57358, 57359, 57360, 57361, 57362, 57363, // locks, print screen, pause, menu
+    57399, 57400, 57401, 57402, 57403, 57404, 57405, 57406, 57407, 57408, // keypad digits
+    57409, 57410, 57411, 57412, 57413, 57414, 57415, 57416, // keypad operators, enter, equal, separator
+    57417, 57418, 57419, 57420, 57421, 57422, 57423, 57424, 57425, 57426, 57427, // keypad navigation
+    57428, 57429, 57430, 57431, 57432, 57433, 57434, 57435, 57436, 57437, 57438, 57439, 57440, // media
+    57441, 57442, 57443, 57444, 57445, 57446, 57447, 57448, 57449, 57450, 57451, 57452, 57453, 57454, // modifiers
+};
+
+comptime {
+    const tags = @typeInfo(Key).@"union".fields;
+    std.debug.assert(named_codes.len == tags.len - @intFromEnum(std.meta.Tag(Key).caps_lock));
+}
+
 /// Records the bytes a key produced, when it produced any.
 ///
 /// A key held with anything but shift produced a control code rather than
@@ -431,6 +570,22 @@ fn firstCodepoint(bytes: []const u8) ?u21 {
     const n = std.unicode.utf8ByteSequenceLength(bytes[0]) catch return null;
     if (bytes.len < n) return null;
     return std.unicode.utf8Decode(bytes[0..n]) catch null;
+}
+
+test "protocolCode and protocolKey are one table read both ways" {
+    const tags = @typeInfo(Key).@"union".fields;
+    inline for (tags) |field| {
+        const key: Key = if (field.type == void) @unionInit(Key, field.name, {}) else switch (field.type) {
+            u21 => @unionInit(Key, field.name, 'a'),
+            u8 => @unionInit(Key, field.name, 20),
+            else => unreachable,
+        };
+        if (protocolCode(key)) |code| try std.testing.expectEqual(key, protocolKey(code).?);
+    }
+    var n: u8 = 13;
+    while (n <= 35) : (n += 1) try std.testing.expectEqual(Key{ .f = n }, protocolKey(protocolCode(.{ .f = n }).?).?);
+    try std.testing.expectEqual(@as(?u21, null), protocolCode(.{ .f = 12 }));
+    try std.testing.expectEqual(@as(?u21, null), protocolCode(.up));
 }
 
 test "typed is the key a cluster types, carrying the cluster as its text" {

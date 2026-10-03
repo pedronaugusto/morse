@@ -1615,10 +1615,337 @@ test "a mode morse does not name still goes through setMode" {
 }
 
 //=========================================================================
+// Keys, against the emulator's own encoder.
+//
+// The emulator writes keys for the program inside it, which is what
+// `encodeKey` does. Each key below is built as a terminal sees it -- the
+// key, what it types, its shifted form, the key at its position on the
+// base layout -- and handed to both encoders in every state the bytes
+// depend on: the sixteen combinations of modifyOtherKeys, DECCKM, DECKPAM
+// and DECBKM, and the sixteen sets of kitty flags that disambiguate.
+//
+// Where kitty's encoder and ghostty's disagree, morse follows kitty, and
+// where ghostty has no spelling for a key morse writes one; each such
+// difference is named below with its reason, and each must still occur, so
+// the list cannot outlive the difference.
+//=========================================================================
+
+const GhosttyKey = vt.input.Key;
+
+/// The emulator's key for a morse key, or null for one it does not have.
+fn ghosttyNamed(k: morse.Key) ?GhosttyKey {
+    return switch (k) {
+        .escape => .escape,
+        .enter => .enter,
+        .tab => .tab,
+        .backspace => .backspace,
+        .insert => .insert,
+        .delete => .delete,
+        .left => .arrow_left,
+        .right => .arrow_right,
+        .up => .arrow_up,
+        .down => .arrow_down,
+        .page_up => .page_up,
+        .page_down => .page_down,
+        .home => .home,
+        .end => .end,
+        .caps_lock => .caps_lock,
+        .scroll_lock => .scroll_lock,
+        .num_lock => .num_lock,
+        .print_screen => .print_screen,
+        .pause => .pause,
+        .menu => .context_menu,
+        .kp_0 => .numpad_0,
+        .kp_1 => .numpad_1,
+        .kp_2 => .numpad_2,
+        .kp_3 => .numpad_3,
+        .kp_4 => .numpad_4,
+        .kp_5 => .numpad_5,
+        .kp_6 => .numpad_6,
+        .kp_7 => .numpad_7,
+        .kp_8 => .numpad_8,
+        .kp_9 => .numpad_9,
+        .kp_decimal => .numpad_decimal,
+        .kp_divide => .numpad_divide,
+        .kp_multiply => .numpad_multiply,
+        .kp_subtract => .numpad_subtract,
+        .kp_add => .numpad_add,
+        .kp_enter => .numpad_enter,
+        .kp_equal => .numpad_equal,
+        .kp_separator => .numpad_separator,
+        .kp_left => .numpad_left,
+        .kp_right => .numpad_right,
+        .kp_up => .numpad_up,
+        .kp_down => .numpad_down,
+        .kp_page_up => .numpad_page_up,
+        .kp_page_down => .numpad_page_down,
+        .kp_home => .numpad_home,
+        .kp_end => .numpad_end,
+        .kp_insert => .numpad_insert,
+        .kp_delete => .numpad_delete,
+        .kp_begin => .numpad_begin,
+        .left_shift => .shift_left,
+        .left_ctrl => .control_left,
+        .left_alt => .alt_left,
+        .left_super => .meta_left,
+        .right_shift => .shift_right,
+        .right_ctrl => .control_right,
+        .right_alt => .alt_right,
+        .right_super => .meta_right,
+        .f => |n| if (n >= 1 and n <= 25) @enumFromInt(@intFromEnum(GhosttyKey.f1) + @as(c_int, n - 1)) else null,
+        else => null,
+    };
+}
+
+/// What shift types on a US layout, which is the layout both encoders are
+/// told about here.
+fn usShifted(c: u21) ?u21 {
+    if (c >= 'a' and c <= 'z') return c - 0x20;
+    const from = "`1234567890-=[]\\;',./";
+    const to = "~!@#$%^&*()_+{}|:\"<>?";
+    for (from, to) |f, t| if (c == f) return t;
+    return null;
+}
+
+/// One key as a terminal sees it.
+const KeyCase = struct {
+    key: morse.Key,
+    /// The key at the same position on the base layout, when it differs.
+    base: ?u21 = null,
+    mods: morse.Modifiers,
+    kind: morse.Kind,
+};
+
+/// The two encoders' views of one key, built from the same facts.
+const KeyPair = struct {
+    ours: morse.KeyEvent,
+    theirs: vt.input.KeyEvent,
+    utf8: [4]u8 = undefined,
+};
+
+fn keyPair(case: KeyCase, pair: *KeyPair) void {
+    var ours: morse.KeyEvent = .{ .key = case.key, .mods = case.mods, .kind = case.kind, .base = case.base };
+    var theirs: vt.input.KeyEvent = .{
+        .action = switch (case.kind) {
+            .press => .press,
+            .repeat => .repeat,
+            .release => .release,
+        },
+        .mods = .{
+            .shift = case.mods.shift,
+            .ctrl = case.mods.ctrl,
+            .alt = case.mods.alt,
+            .super = case.mods.super,
+            .caps_lock = case.mods.caps_lock,
+            .num_lock = case.mods.num_lock,
+        },
+    };
+    switch (case.key) {
+        .char => |c| {
+            // What the key types with shift as held: the text a terminal
+            // reads off the layout, whatever else is held.
+            const typed = if (case.mods.shift) usShifted(c) orelse c else c;
+            const n = std.unicode.utf8Encode(typed, &pair.utf8) catch unreachable;
+            theirs.utf8 = pair.utf8[0..n];
+            theirs.unshifted_codepoint = c;
+            theirs.consumed_mods = .{ .shift = case.mods.shift };
+            const at = case.base orelse c;
+            theirs.key = if (at < 0x80) GhosttyKey.fromASCII(@intCast(at)) orelse .unidentified else .unidentified;
+            if (case.mods.shift and typed != c) ours.shifted = typed;
+            // Text only where a key types it: not with a modifier that
+            // makes it a command, and not on the way up.
+            const m = case.mods;
+            if (case.kind != .release and !m.ctrl and !m.alt and !m.super) {
+                @memcpy(ours.text_buffer[0..n], pair.utf8[0..n]);
+                ours.text_len = @intCast(n);
+            }
+        },
+        else => theirs.key = ghosttyNamed(case.key).?,
+    }
+    pair.ours = ours;
+    pair.theirs = theirs;
+}
+
+/// A difference between the two encoders that is a choice, and why.
+const Difference = enum {
+    /// Kitty reports the release of enter, tab and backspace held with a
+    /// modifier, whose press was a sequence too; ghostty drops every
+    /// release of the three unless every key is a sequence.
+    release_of_modified_enter_tab_backspace,
+    /// Ghostty reports the character a keypad key types as the key's base
+    /// layout key; kitty reports no alternates on a functional key.
+    keypad_base_layout_key,
+    /// Kitty leaves out the event type of a press on the keys with a final
+    /// of their own (`CSI A`); ghostty writes `:1`.
+    press_event_on_special_key,
+    /// Kitty writes the keypad's begin key as `CSI E`; ghostty as 57427.
+    keypad_begin,
+    /// Kitty treats scroll lock as a modifier key, reported only with every
+    /// key as a sequence; ghostty reports it with disambiguation alone.
+    scroll_lock,
+    /// Ghostty has no kitty spelling for the menu key and writes nothing.
+    menu,
+    /// Ghostty writes nothing for backspace with control, alt and shift,
+    /// which every other combination spells as its control code.
+    backspace_all_three,
+    /// The fixterms form keeps super beside control so it reads back;
+    /// ghostty's has room for shift, alt and control only.
+    super_in_fixterms,
+    /// The keypad's equals and separator are written as the other keypad
+    /// keys are in legacy mode; ghostty has no entry for them and writes
+    /// nothing.
+    keypad_equal_separator,
+};
+
+fn difference(case: KeyCase, enc: morse.KeyEncoding, ours: []const u8, theirs: []const u8) ?Difference {
+    const kitty = enc.kitty.bits() != 0;
+    if (kitty) {
+        if (enc.kitty.report_alternate_keys and std.mem.indexOf(u8, theirs, "::") != null) switch (case.key) {
+            .kp_0, .kp_1, .kp_2, .kp_3, .kp_4, .kp_5, .kp_6, .kp_7, .kp_8, .kp_9 => return .keypad_base_layout_key,
+            .kp_decimal, .kp_divide, .kp_multiply, .kp_subtract, .kp_add, .kp_equal, .kp_separator => return .keypad_base_layout_key,
+            else => {},
+        };
+        switch (case.key) {
+            .enter, .tab, .backspace => if (case.kind == .release and !enc.kitty.report_all_keys_as_escape_codes and theirs.len == 0)
+                return .release_of_modified_enter_tab_backspace
+            else
+                return null,
+            .up, .down, .left, .right, .home, .end, .kp_up, .kp_down, .kp_left, .kp_right, .kp_home, .kp_end => {},
+            .f => |n| if (n != 1 and n != 2 and n != 4) return null,
+            .kp_begin => return .keypad_begin,
+            .scroll_lock => return .scroll_lock,
+            .menu => return .menu,
+            else => return null,
+        }
+        if (enc.kitty.report_event_types and case.kind == .press) return .press_event_on_special_key;
+        return null;
+    }
+    _ = ours;
+    switch (case.key) {
+        .backspace => if (case.mods.ctrl and case.mods.alt and case.mods.shift and !enc.modify_other_keys) return .backspace_all_three,
+        .kp_equal, .kp_separator => if (theirs.len == 0) return .keypad_equal_separator,
+        .char => if (case.mods.ctrl and case.mods.super) return .super_in_fixterms,
+        else => {},
+    }
+    return null;
+}
+
+test "every key is written as the emulator's encoder writes it, or the difference is named" {
+    var keys: [160]KeyCase = undefined;
+    var n_keys: usize = 0;
+    for ("abcmz019`-=[]\\;',./ ") |c| {
+        keys[n_keys] = .{ .key = .{ .char = c }, .mods = .{}, .kind = .press };
+        n_keys += 1;
+    }
+    // A key on another layout, and a character with no key of its own.
+    keys[n_keys] = .{ .key = .{ .char = 0x441 }, .base = 'c', .mods = .{}, .kind = .press };
+    n_keys += 1;
+    keys[n_keys] = .{ .key = .{ .char = 0xe9 }, .mods = .{}, .kind = .press };
+    n_keys += 1;
+    inline for (@typeInfo(morse.Key).@"union".fields) |field| {
+        if (field.type == void) {
+            const k = @unionInit(morse.Key, field.name, {});
+            if (ghosttyNamed(k) != null) {
+                keys[n_keys] = .{ .key = k, .mods = .{}, .kind = .press };
+                n_keys += 1;
+            }
+        }
+    }
+    var f: u8 = 1;
+    while (f <= 25) : (f += 1) {
+        keys[n_keys] = .{ .key = .{ .f = f }, .mods = .{}, .kind = .press };
+        n_keys += 1;
+    }
+
+    var counts = std.EnumArray(Difference, usize).initFill(0);
+    var same: usize = 0;
+    var unexplained: usize = 0;
+    var seen = [_]bool{false} ** 1024;
+    for (keys[0..n_keys]) |base_case| {
+        var mods_bits: u8 = 0;
+        while (mods_bits < 64) : (mods_bits += 1) {
+            // Shift, alt, control and super in every combination, then
+            // with each lock.
+            var mods: morse.Modifiers = .fromBits(mods_bits & 0b1111);
+            mods.caps_lock = mods_bits & 0b010000 != 0;
+            mods.num_lock = mods_bits & 0b100000 != 0;
+            for ([_]morse.Kind{ .press, .repeat, .release }) |kind| {
+                var case = base_case;
+                case.mods = mods;
+                case.kind = kind;
+                // macOS ghostty types nothing for command and a key in the
+                // legacy encoding, which is a platform's choice, not the
+                // protocol's.
+                const mac_command = @import("builtin").os.tag == .macos and mods.super and case.key == .char;
+
+                var pair: KeyPair = .{ .ours = undefined, .theirs = undefined };
+                keyPair(case, &pair);
+
+                var state: u8 = 0;
+                while (state < 32) : (state += 1) {
+                    var enc: morse.KeyEncoding = .{};
+                    var opts: vt.input.KeyEncodeOptions = .{ .alt_esc_prefix = true, .macos_option_as_alt = .true };
+                    if (state < 16) {
+                        if (mac_command) continue;
+                        enc.modify_other_keys = state & 1 != 0;
+                        enc.cursor_keys_application = state & 2 != 0;
+                        enc.keypad_application = state & 4 != 0;
+                        enc.backarrow_sends_bs = state & 8 != 0;
+                        opts.modify_other_keys_state_2 = enc.modify_other_keys;
+                        opts.cursor_key_application = enc.cursor_keys_application;
+                        opts.keypad_key_application = enc.keypad_application;
+                        opts.backarrow_key_mode = enc.backarrow_sends_bs;
+                    } else {
+                        const bits: u5 = @intCast(((state - 16) << 1) | 1);
+                        enc.kitty = .fromBits(bits);
+                        opts.kitty_flags = @bitCast(bits);
+                    }
+
+                    var ours_buffer: [128]u8 = undefined;
+                    var ours: std.Io.Writer = .fixed(&ours_buffer);
+                    try morse.encodeKey(&ours, pair.ours, enc);
+                    var theirs_buffer: [128]u8 = undefined;
+                    var theirs: std.Io.Writer = .fixed(&theirs_buffer);
+                    try vt.input.encodeKey(&theirs, pair.theirs, opts);
+
+                    if (std.mem.eql(u8, ours.buffered(), theirs.buffered())) {
+                        same += 1;
+                        continue;
+                    }
+                    const why = difference(case, enc, ours.buffered(), theirs.buffered()) orelse {
+                        unexplained += 1;
+                        const sig = @as(usize, @intFromEnum(std.meta.activeTag(case.key))) * 8 + @as(usize, @intFromEnum(case.kind)) * 2 + @intFromBool(state >= 16);
+                        if (!seen[sig % seen.len]) {
+                            seen[sig % seen.len] = true;
+                            std.debug.print("{s} {any} {any} mods={x} kitty={b} state={d}\n  morse   {any}\n  ghostty {any}\n", .{ @tagName(case.key), case.key, case.kind, case.mods.bits(), enc.kitty.bits(), state, ours.buffered(), theirs.buffered() });
+                        }
+                        continue;
+                    };
+                    counts.getPtr(why).* += 1;
+                }
+            }
+        }
+    }
+    try checkEqual(@as(usize, 0), unexplained);
+    // Every named difference still happens.
+    var it = counts.iterator();
+    while (it.next()) |entry| {
+        // Command and a key is not compared on macOS, see above.
+        const exempt = entry.key == .super_in_fixterms and @import("builtin").os.tag == .macos;
+        if (entry.value.* == 0 and !exempt) std.debug.print("difference {s} no longer occurs\n", .{@tagName(entry.key)});
+        try check(entry.value.* != 0 or exempt);
+    }
+    std.debug.print("keys: {d} encodings agree with the emulator's", .{same});
+    it = counts.iterator();
+    while (it.next()) |entry| std.debug.print(", {d} {s}", .{ entry.value.*, @tagName(entry.key) });
+    std.debug.print("\n", .{});
+}
+
+//=========================================================================
 // The count.
 //=========================================================================
 
 test "how many claims this file made" {
-    try std.testing.expectEqual(@as(usize, 3780), checks);
+    try std.testing.expectEqual(@as(usize, 3790), checks);
     std.debug.print("conformance: {d} assertions against the emulator\n", .{checks});
 }

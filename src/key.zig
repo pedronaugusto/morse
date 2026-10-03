@@ -43,6 +43,10 @@ const query = @import("query.zig");
 const replies = @import("reply.zig");
 const seq = @import("seq.zig");
 const win32 = @import("win32.zig");
+const key_types = @import("key_types.zig");
+const key_encode = @import("key_encode.zig");
+const codepoint = key_types.codepoint;
+const protocolKey = key_types.protocolKey;
 
 /// Which way round the terminal's palette is, as mode 2031 reports it.
 /// Aliased from `query`, where the question that asks for it lives.
@@ -1142,13 +1146,6 @@ fn kittyEvent(params: Params) ?Event {
     return .{ .key = ev };
 }
 
-/// A codepoint a terminal can legally have sent, or null.
-fn codepoint(value: u32) ?u21 {
-    if (value > 0x10ffff) return null;
-    if (value >= 0xd800 and value <= 0xdfff) return null;
-    return @intCast(value);
-}
-
 /// The key a `CSI n ~` number names.
 ///
 /// Two numbers for home and two for end, because the VT220 and the PC
@@ -1171,96 +1168,6 @@ fn tildeKey(n: u32) ?Key {
         // F21 to F25 as ghostty spells them; nothing standard goes further.
         42...46 => .{ .f = @intCast(n - 21) },
         else => null,
-    };
-}
-
-/// The key a codepoint in a `CSI u` or `modifyOtherKeys` sequence names.
-///
-/// Most codepoints are the key itself. The rest are either a C0 control the
-/// protocol kept for the key it has always meant, or one of the private-use
-/// codepoints the kitty protocol assigns to keys Unicode has no character
-/// for. A private-use codepoint in that assigned block that this package does
-/// not know is not a key it will invent a meaning for: it returns null and
-/// the sequence comes back as `Event.unhandled`.
-fn protocolKey(cp: u32) ?Key {
-    return switch (cp) {
-        9 => .tab,
-        13 => .enter,
-        27 => .escape,
-        127 => .backspace,
-
-        57358 => .caps_lock,
-        57359 => .scroll_lock,
-        57360 => .num_lock,
-        57361 => .print_screen,
-        57362 => .pause,
-        57363 => .menu,
-
-        57376...57398 => .{ .f = @intCast(cp - 57376 + 13) },
-
-        57399 => .kp_0,
-        57400 => .kp_1,
-        57401 => .kp_2,
-        57402 => .kp_3,
-        57403 => .kp_4,
-        57404 => .kp_5,
-        57405 => .kp_6,
-        57406 => .kp_7,
-        57407 => .kp_8,
-        57408 => .kp_9,
-        57409 => .kp_decimal,
-        57410 => .kp_divide,
-        57411 => .kp_multiply,
-        57412 => .kp_subtract,
-        57413 => .kp_add,
-        57414 => .kp_enter,
-        57415 => .kp_equal,
-        57416 => .kp_separator,
-        57417 => .kp_left,
-        57418 => .kp_right,
-        57419 => .kp_up,
-        57420 => .kp_down,
-        57421 => .kp_page_up,
-        57422 => .kp_page_down,
-        57423 => .kp_home,
-        57424 => .kp_end,
-        57425 => .kp_insert,
-        57426 => .kp_delete,
-        57427 => .kp_begin,
-
-        57428 => .media_play,
-        57429 => .media_pause,
-        57430 => .media_play_pause,
-        57431 => .media_reverse,
-        57432 => .media_stop,
-        57433 => .media_fast_forward,
-        57434 => .media_rewind,
-        57435 => .media_track_next,
-        57436 => .media_track_previous,
-        57437 => .media_record,
-        57438 => .lower_volume,
-        57439 => .raise_volume,
-        57440 => .mute_volume,
-
-        57441 => .left_shift,
-        57442 => .left_ctrl,
-        57443 => .left_alt,
-        57444 => .left_super,
-        57445 => .left_hyper,
-        57446 => .left_meta,
-        57447 => .right_shift,
-        57448 => .right_ctrl,
-        57449 => .right_alt,
-        57450 => .right_super,
-        57451 => .right_hyper,
-        57452 => .right_meta,
-        57453 => .iso_level3_shift,
-        57454 => .iso_level5_shift,
-
-        // The rest of the block the protocol reserves for functional keys.
-        57344...57357, 57364...57375, 57455...57599 => null,
-
-        else => if (codepoint(cp)) |value| Key{ .char = value } else null,
     };
 }
 
@@ -3724,4 +3631,271 @@ test "Event.copy survives parser reuse for text, sequences and replies" {
     var short = [_]u8{99};
     try std.testing.expectError(error.NoSpaceLeft, (Event{ .text = "long" }).copy(&short));
     try std.testing.expectEqual(@as(u8, 99), short[0]);
+}
+
+//=========================================================================
+// The encoder against the decoder.
+//
+// `encodeKey` is the inverse of this parser: what it writes for a key, this
+// reads back as that key. The corpus is every spelling of a key the tests
+// above decode, generated across the modifiers, kinds, alternates and text
+// each protocol carries.
+//=========================================================================
+
+/// Every key the parser reads off `bytes`, flushed, into `out`.
+fn decodeKeys(bytes: []const u8, out: []KeyEvent) []KeyEvent {
+    var storage: [256]u8 = undefined;
+    var parser: KeyParser = .init(&storage);
+    var n: usize = 0;
+    var events = parser.feed(bytes);
+    while (events.next()) |event| switch (event) {
+        .key => |k| {
+            if (n < out.len) out[n] = k;
+            n += 1;
+        },
+        else => {},
+    };
+    if (parser.flush()) |event| switch (event) {
+        .key => |k| {
+            if (n < out.len) out[n] = k;
+            n += 1;
+        },
+        else => {},
+    };
+    return out[0..@min(n, out.len)];
+}
+
+/// Writes every spelling of a key in the corpus to `visit`, one at a time.
+fn keyCorpus(context: anytype, comptime visit: fn (@TypeOf(context), []const u8) anyerror!void) !void {
+    var buffer: [96]u8 = undefined;
+    const Print = struct {
+        fn go(b: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
+            return std.fmt.bufPrint(b, fmt, args) catch unreachable;
+        }
+    };
+
+    // Plain bytes, alt as ESC in front of them, and text past ASCII.
+    var byte: u8 = 0;
+    while (byte < 0x80) : (byte += 1) {
+        try visit(context, &.{byte});
+        switch (byte) {
+            '[', 'O', ']', 'P', 'X', '^', '_', 0x1b, 0x20...0x2f => {},
+            else => try visit(context, &.{ 0x1b, byte }),
+        }
+    }
+    for ([_][]const u8{ "\u{e9}", "\u{4e2d}", "\u{1f642}", "\x1b\u{e9}", "\x1b\u{441}" }) |text| try visit(context, text);
+
+    // The legacy cursor and function keys, in both introducers, bare and
+    // with every legacy modifier parameter.
+    const mods_params = [_]u16{ 2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 16, 17, 33, 64 };
+    for ("ABCDEFHPQS") |final| {
+        try visit(context, Print.go(&buffer, "\x1b[{c}", .{final}));
+        try visit(context, Print.go(&buffer, "\x1bO{c}", .{final}));
+        for (mods_params) |m| {
+            try visit(context, Print.go(&buffer, "\x1b[1;{d}{c}", .{ m, final }));
+            try visit(context, Print.go(&buffer, "\x1bO{d}{c}", .{ m, final }));
+        }
+    }
+    for ("RMXjklmnopqrstuvwxy") |final| {
+        try visit(context, Print.go(&buffer, "\x1bO{c}", .{final}));
+        try visit(context, Print.go(&buffer, "\x1bO5{c}", .{final}));
+    }
+    const numbers = [_]u16{ 1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 23, 24, 25, 26, 28, 29, 31, 32, 33, 34, 42, 43, 44, 45, 46 };
+    for (numbers) |n| {
+        try visit(context, Print.go(&buffer, "\x1b[{d}~", .{n}));
+        for (mods_params) |m| try visit(context, Print.go(&buffer, "\x1b[{d};{d}~", .{ n, m }));
+    }
+    for ([_][]const u8{
+        "\x1b[Z",  "\x1b[1;5Z", "\x1b[2$", "\x1b[5^", "\x1b[3@", "\x1b[23$", "\x1b[11^", "\x1b[23@",
+        "\x1b[a",  "\x1b[b",    "\x1b[c",  "\x1b[d",  "\x1bOa",  "\x1bOb",   "\x1bOc",   "\x1bOd",
+        "\x1b[[A", "\x1b[[B",   "\x1b[[C", "\x1b[[D", "\x1b[[E",
+    }) |bytes| try visit(context, bytes);
+
+    // modifyOtherKeys.
+    const mok_codes = [_]u21{ 9, 13, 27, 127, ' ', 'a', 'A', '1', '!', 'i', 'm', '[', 0xe9 };
+    for (mok_codes) |code| for (mods_params) |m| {
+        try visit(context, Print.go(&buffer, "\x1b[27;{d};{d}~", .{ m, code }));
+    };
+
+    // Kitty: every named codepoint and a spread of characters, across the
+    // modifiers, kinds, alternates and text the protocol carries.
+    var codes: [128]u21 = undefined;
+    var count: usize = 0;
+    for ([_]u21{ 9, 13, 27, 127, ' ', 'a', 'z', '1', '/', 0xe9, 0x441, 0x1f642 }) |c| {
+        codes[count] = c;
+        count += 1;
+    }
+    var cp: u21 = 57358;
+    while (cp <= 57454) : (cp += 1) if (protocolKey(cp) != null) {
+        codes[count] = cp;
+        count += 1;
+    };
+    const kitty_mods = [_]u16{ 1, 2, 3, 5, 6, 9, 17, 33, 65, 129, 256 };
+    for (codes[0..count]) |code| {
+        try visit(context, Print.go(&buffer, "\x1b[{d}u", .{code}));
+        for (kitty_mods) |m| for ([_]u8{ 1, 2, 3 }) |kind| {
+            try visit(context, Print.go(&buffer, "\x1b[{d};{d}:{d}u", .{ code, m, kind }));
+        };
+    }
+    for ([_][]const u8{
+        "\x1b[97:65;2u",                         "\x1b[97:65:97;2;65u", "\x1b[97::98u",          "\x1b[1089::99;5u",
+        "\x1b[97;;97u",                          "\x1b[97;;97:98u",     "\x1b[233;;233u",        "\x1b[97;;128578u",
+        "\x1b[97;2;65u",                         "\x1b[97;5:3u",        "\x1b[97:65:98;2:2;65u", "\x1b[49:33;2;33u",
+        "\x1b[97;1:1u",                          "\x1b[13;2u",          "\x1b[2;5~",             "\x1b[3;1:3~",
+        "\x1b[1;1:2A",                           "\x1b[1;129A",         "\x1b[1;5:3P",           "\x1b[13;65~",
+        "\x1b[97;;128578:128578:128578:128578u",
+    }) |bytes| try visit(context, bytes);
+
+    // Win32 input mode.
+    for (win32_named) |entry| try visit(context, entry.bytes);
+    for ([_][]const u8{ "\x1b[65;30;97;1;0;1_", "\x1b[65;30;65;1;16;1_", "\x1b[65;30;1;1;8;1_", "\x1b[65;30;97;0;0;1_" }) |bytes| try visit(context, bytes);
+}
+
+const every_flag: key_encode.KeyEncoding = .{ .kitty = .fromBits(0b11111) };
+
+const RoundTrip = struct {
+    keys: usize = 0,
+
+    fn visit(rt: *RoundTrip, bytes: []const u8) !void {
+        var decoded: [4]KeyEvent = undefined;
+        for (decodeKeys(bytes, &decoded)) |k| {
+            rt.keys += 1;
+            var buffer: [128]u8 = undefined;
+            var w: std.Io.Writer = .fixed(&buffer);
+            try key_encode.encodeKey(&w, k, every_flag);
+            var again: [4]KeyEvent = undefined;
+            const back = decodeKeys(w.buffered(), &again);
+            std.testing.expectEqual(@as(usize, 1), back.len) catch |err| {
+                std.debug.print("{any} from {any} wrote {any}\n", .{ k, bytes, w.buffered() });
+                return err;
+            };
+            std.testing.expectEqual(k, back[0]) catch |err| {
+                std.debug.print("{any} from {any} wrote {any}\n", .{ k, bytes, w.buffered() });
+                return err;
+            };
+        }
+    }
+};
+
+test "every key the parser reads, encoded with every kitty flag, reads back as itself" {
+    var rt: RoundTrip = .{};
+    try keyCorpus(&rt, RoundTrip.visit);
+    // The corpus is what it says it is, not a handful of cases.
+    try std.testing.expect(rt.keys > 2000);
+}
+
+/// What one encoding writes for a key, and whether that is a projection:
+/// the key it reads back as is written the same way again.
+const Projection = struct {
+    enc: key_encode.KeyEncoding,
+    single: usize = 0,
+
+    fn visit(pr: *Projection, bytes: []const u8) !void {
+        var decoded: [4]KeyEvent = undefined;
+        for (decodeKeys(bytes, &decoded)) |k| {
+            var first: [128]u8 = undefined;
+            var w: std.Io.Writer = .fixed(&first);
+            try key_encode.encodeKey(&w, k, pr.enc);
+            if (w.buffered().len == 0) continue;
+            var again: [4]KeyEvent = undefined;
+            const back = decodeKeys(w.buffered(), &again);
+            // Two keys from one: alt and escape written as two escapes, or
+            // text of several codepoints, which reads back as text.
+            if (back.len != 1) continue;
+            pr.single += 1;
+            var second: [128]u8 = undefined;
+            var w2: std.Io.Writer = .fixed(&second);
+            try key_encode.encodeKey(&w2, back[0], pr.enc);
+            std.testing.expectEqualStrings(w.buffered(), w2.buffered()) catch |err| {
+                std.debug.print("{any}: {any} -> {any} -> {any}\n", .{ pr.enc, k, w.buffered(), back[0] });
+                return err;
+            };
+        }
+    }
+};
+
+test "every encoding writes a key that reads back as a key it writes the same way" {
+    // The decoder reads BS as control and backspace, so DECBKM is the one
+    // state it cannot read back and is left out here.
+    var state: u8 = 0;
+    while (state < 8) : (state += 1) {
+        var pr: Projection = .{ .enc = .{
+            .modify_other_keys = state & 1 != 0,
+            .cursor_keys_application = state & 2 != 0,
+            .keypad_application = state & 4 != 0,
+        } };
+        try keyCorpus(&pr, Projection.visit);
+        try std.testing.expect(pr.single > 1000);
+    }
+    // Kitty's flags without disambiguation or every key as a sequence keep
+    // control and a letter as its control code, which is tab or enter or
+    // escape as well; those are kitty's own ambiguity and are left out.
+    var bits: u8 = 1;
+    while (bits < 32) : (bits += 1) {
+        if (bits & 0b1001 == 0) continue;
+        var pr: Projection = .{ .enc = .{ .kitty = .fromBits(@intCast(bits)) } };
+        try keyCorpus(&pr, Projection.visit);
+        try std.testing.expect(pr.single > 1000);
+    }
+}
+
+test "legacy spellings a terminal sends read back exactly through the legacy encoder" {
+    const cases = [_]struct { bytes: []const u8, enc: key_encode.KeyEncoding = .{} }{
+        .{ .bytes = "a" },                                                    .{ .bytes = "A" },                                                   .{ .bytes = "\x01" },
+        .{ .bytes = "\x1ba" },                                                .{ .bytes = "\x1b\x01" },                                            .{ .bytes = "\x00" },
+        .{ .bytes = "\x7f" },                                                 .{ .bytes = "\x08" },                                                .{ .bytes = "\r" },
+        .{ .bytes = "\t" },                                                   .{ .bytes = "\x1b[Z" },                                              .{ .bytes = "\x1b\t" },
+        .{ .bytes = "\x1b[A" },                                               .{ .bytes = "\x1b[1;5C" },                                           .{ .bytes = "\x1bOA", .enc = .{ .cursor_keys_application = true } },
+        .{ .bytes = "\x1bOP" },                                               .{ .bytes = "\x1b[1;2Q" },                                           .{ .bytes = "\x1b[13;5~" },
+        .{ .bytes = "\x1b[15~" },                                             .{ .bytes = "\x1b[34;3~" },                                          .{ .bytes = "\x1b[42~" },
+        .{ .bytes = "\x1b[3~" },                                              .{ .bytes = "\x1b[6;2~" },                                           .{ .bytes = "\x1b[E" },
+        .{ .bytes = "\x1bOp", .enc = .{ .keypad_application = true } },       .{ .bytes = "\x1bO5k", .enc = .{ .keypad_application = true } },     .{ .bytes = "\x1b[27;5;13~" },
+        .{ .bytes = "\x1b[27;2;27~" },                                        .{ .bytes = "\x1b[105;5u" },                                         .{ .bytes = "\x1b[97;6u" },
+        .{ .bytes = "\x1b[33;5u" },                                           .{ .bytes = "\x1b\u{e9}" },                                          .{ .bytes = "\x1b[27;5;97~", .enc = .{ .modify_other_keys = true } },
+        .{ .bytes = "\x1b[27;2;65~", .enc = .{ .modify_other_keys = true } }, .{ .bytes = "\x1b[27;2;9~", .enc = .{ .modify_other_keys = true } },
+    };
+    for (cases) |case| {
+        var decoded: [4]KeyEvent = undefined;
+        const k = decodeKeys(case.bytes, &decoded);
+        try std.testing.expectEqual(@as(usize, 1), k.len);
+        var buffer: [64]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buffer);
+        try key_encode.encodeKey(&w, k[0], case.enc);
+        try std.testing.expectEqualStrings(case.bytes, w.buffered());
+    }
+}
+
+test "fuzz the encoder against the parser" {
+    // The property: every key the parser reads off any input, written with
+    // every kitty flag, reads back as itself -- less the alternates the
+    // protocol does not carry, a shifted form without shift held and either
+    // alternate on a key that is not a codepoint, and less a typed
+    // codepoint the protocol has given to a named key.
+    try std.testing.fuzz({}, struct {
+        fn one_(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [256]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+            var decoded: [64]KeyEvent = undefined;
+            for (decodeKeys(bytes, &decoded)) |k| {
+                var expected = k;
+                if (!k.mods.shift) expected.shifted = null;
+                if (k.key != .char) {
+                    expected.shifted = null;
+                    expected.base = null;
+                }
+                var buffer: [160]u8 = undefined;
+                var w: std.Io.Writer = .fixed(&buffer);
+                try key_encode.encodeKey(&w, k, every_flag);
+                var again: [4]KeyEvent = undefined;
+                const back = decodeKeys(w.buffered(), &again);
+                try std.testing.expectEqual(@as(usize, 1), back.len);
+                try std.testing.expectEqual(expected, back[0]);
+            }
+        }
+    }.one_, .{ .corpus = &.{
+        corpus.seed("\x1b[97:65:98;2:3;65u"),
+        corpus.seed("\x1b[1;129A\x1b[3;5:2~"),
+        corpus.seed("a\x01\x1bb\x1b[27;6;97~"),
+        corpus.seed("\x1b[57399:65;2;48u\x1b[1u"),
+    } });
 }
