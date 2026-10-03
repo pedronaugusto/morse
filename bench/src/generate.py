@@ -53,6 +53,7 @@ def generate(smoke):
     r.shuffle(block)
     mixed = b''.join(block) * (1 if smoke else 2048)
     (out / 'mixed.bin').write_bytes(mixed)
+    (out / 'mixed-burst-bytes.txt').write_text(str(sum(map(len, block))) + '\n')
     (out / 'pixels.bin').write_bytes(b'\x1b[<0;640;360M' * (1 if smoke else 100_000))
     shared = [row for row in rows if row['name'] in ('ascii','unicode','text','enter','tab','ctrl_c','up','alt','kitty','mouse_press','mouse_wheel','paste')]
     random.Random(0x53484152).shuffle(shared)

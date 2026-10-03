@@ -18,10 +18,10 @@ Results go to `bench/results/<UTC-date>/smoke-<time>.md` + `.json` or
 `revisions.json` fixes A (before) at
 `ebe7020141cb2b0be92fe692521cc477d7d13ca3`, the last first-parent main commit
 before **2026-09-30 00:00:00 +01:00**, and B (after) at
-`6f6335eaf5c6bd4b029bcdc37a1d4a0f7968c252`. The midnight cutoff is explicit because Git's
+`12de2912a04c412397a94eef6e9f66137caf3554` on `perf`. The midnight cutoff is explicit because Git's
 bare `--before=2026-09-30` can inherit the time of day. Refresh the pins and
-merge main into bench when main advances; the runner refuses a silently
-changed local main. `git archive` extracts exact source snapshots inside
+merge main into bench when main advances. `after_ref` names the source branch
+(default `main`); the runner refuses a silently changed head on that branch. `git archive` extracts exact source snapshots inside
 `bench/build/revisions/`, without modifying main or switching worktrees.
 
 The protocol adapter builds unchanged against both public APIs. Each workload
@@ -50,7 +50,11 @@ Zig uses ReleaseFast, Rust uses cargo release, and compilation uses one job.
 - Input: seeded typing/navigation, UTF-8, kitty keyboard modifiers, alternate
   keys, associated text, repeat/release, SGR mouse, bracketed paste, focus,
   OSC colour and clipboard replies. Timed mixed streams use read sizes 1,
-  64 and 4096 bytes. Pixel mouse input configures both morse revisions for
+  64 and 4096 bytes. Each shuffled coverage block is one input burst (948
+  bytes in the full corpus); its end is a quiet boundary for every adapter.
+  Reads may split sequences inside a burst. Only the burst end settles ESC
+  and ambiguous key prefixes; no waits or sleeps are timed. The bytes and
+  unsupported reports remain in the workload. Pixel mouse input configures both morse revisions for
   mode 1016; standalone comparison APIs expose coordinates without that flag.
 - Output: bold plus RGB/reset, absolute cursor moves, OSC 8 open/close, and
   kitty placement headers. Full passes encode 100,000 seeded operations;
@@ -74,12 +78,21 @@ units and ceilings, including every parser-grid entry.
 An independent protocol oracle checks both morse revisions against expected
 events, for isolated inputs and a shared stream, whole and one-byte chunks.
 The encoder subset decoder compares intended terminal state rather than byte
-spelling. Smoke currently covers **275 input checks**, encoder checks at each
+spelling. Smoke currently covers **290 input checks**, encoder checks at each
 implementation, and **six speed-budget tests at each package revision**.
 `known-differences.json` is the reviewed baseline for comparison libraries;
 new, changed, or missing differences fail, as does a morse/oracle mismatch.
 No unsupported reports are dropped from the throughput stream. The corpus
 is synthetic; no terminal or personal input is captured.
+
+Termwiz's key-map fallback can defer an unsupported CSI until input is quiet.
+Keeping `maybe_more=true` across all 2048 coverage blocks made it accumulate
+almost the whole stream and drain it through repeated buffer rotations at EOF.
+The comparison now supplies the same quiet burst boundaries to every library.
+This changes the input availability policy and termwiz's native count; timings
+from the old continuous-stream harness are not a throughput baseline for the
+new burst workload. Fragmented SGR and unsupported protocol differences remain
+visible in the protocol oracle.
 
 Documented differences include uppercase/alternate-key representation, LF key
 policy, absent repeat/reply event variants, text/paste batching, released mouse

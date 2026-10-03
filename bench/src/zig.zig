@@ -68,7 +68,7 @@ fn vaxisEvent(e: v.Event, check: bool) void {
         else => emit("{s}\n", .{@tagName(e)}),
     }
 }
-fn decode(data: []const u8, chunk: usize, check: bool, pixels: bool) !usize {
+fn decode(data: []const u8, chunk: usize, burst: usize, check: bool, pixels: bool) !usize {
     var count: usize = 0;
     if (!comparison) {
         var buffer: [8192]u8 = undefined;
@@ -76,13 +76,20 @@ fn decode(data: []const u8, chunk: usize, check: bool, pixels: bool) !usize {
         parser.mouse_pixels = pixels;
         var pos: usize = 0;
         while (pos < data.len) {
-            const end = @min(pos + chunk, data.len);
+            const burst_end = @min(pos - pos % burst + burst, data.len);
+            const end = @min(pos + chunk, burst_end);
             var events = parser.feed(data[pos..end]);
             while (events.next()) |e| {
                 count += 1;
                 morseEvent(e, check);
             }
             pos = end;
+            if (pos == burst_end) {
+                if (parser.flush()) |e| {
+                    count += 1;
+                    morseEvent(e, check);
+                }
+            }
         }
         if (parser.flush()) |e| {
             count += 1;
@@ -95,13 +102,14 @@ fn decode(data: []const u8, chunk: usize, check: bool, pixels: bool) !usize {
         var pos: usize = 0;
         var end: usize = 0;
         while (end < data.len) {
-            end = @min(end + chunk, data.len);
+            const burst_end = @min(end - end % burst + burst, data.len);
+            end = @min(end + chunk, burst_end);
             while (pos < end) {
                 // A read boundary is not an Escape timeout or UTF-8 EOF.
-                if (end < data.len and end - pos == 1 and data[pos] == 27) break;
+                if (end < burst_end and end - pos == 1 and data[pos] == 27) break;
                 const result = parser.parse(data[pos..end], std.heap.page_allocator) catch {
                     // InvalidUTF8 may mean a split UTF-8 character.
-                    if (end < data.len) break;
+                    if (end < burst_end) break;
                     if (check) emit("error\n", .{});
                     count += 1;
                     pos = end;
@@ -171,7 +179,7 @@ fn encode(task: []const u8, data: []const u8, check: bool) !usize {
 }
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len != 4) return error.Arguments;
+    if (args.len != 4 and args.len != 5) return error.Arguments;
     const check = std.mem.eql(u8, args[2], "check");
     const timed = std.mem.eql(u8, args[2], "full");
     const chunk = try std.fmt.parseInt(usize, args[3], 10);
@@ -186,8 +194,10 @@ pub fn main(init: std.process.Init) !void {
         len += @intCast(got);
     }
     if (len == buf.len) return error.InputTooLarge;
+    const burst = if (args.len == 5) try std.fmt.parseInt(usize, args[4], 10) else @max(len, 1);
+    if (burst == 0) return error.ZeroBurst;
     const start = if (timed) std.Io.Clock.now(.awake, init.io).toNanoseconds() else 0;
-    const count = if (std.mem.startsWith(u8, args[1], "decode")) try decode(buf[0..len], chunk, check, std.mem.eql(u8, args[1], "decode_pixels")) else try encode(args[1], buf[0..len], check);
+    const count = if (std.mem.startsWith(u8, args[1], "decode")) try decode(buf[0..len], chunk, burst, check, std.mem.eql(u8, args[1], "decode_pixels")) else try encode(args[1], buf[0..len], check);
     const elapsed = if (timed) std.Io.Clock.now(.awake, init.io).toNanoseconds() - start else 0;
     if (check) emit("count:{d}\n", .{count});
     if (!check) emit("{d}\t{d}\t{d}\n", .{ len, count, elapsed });

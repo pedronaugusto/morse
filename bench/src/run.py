@@ -14,11 +14,12 @@ BUILD = ROOT / 'build'
 SMOKE = os.environ.get('BENCH_MODE', 'full') == 'smoke'
 SIDES = ['morse-before', 'morse', 'crossterm', 'termwiz', 'vaxis']
 
-def invoke(side, task, mode, chunk, data):
+def invoke(side, task, mode, chunk, data, burst=None):
     if side in ('morse-before', 'morse', 'vaxis'):
         argv = [str(BUILD / ('before-out/bin/morse-bench' if side == 'morse-before' else f'zig-out/bin/{side}-bench')), task, mode, str(chunk)]
     else:
         argv = [os.environ.get('MORSE_RUST_BENCH', str(BUILD / 'cargo-target/release/terminal-bench')), side, task, mode, str(chunk)]
+    if burst is not None: argv.append(str(burst))
     return subprocess.check_output(argv, input=data).decode().splitlines()
 
 def classify(case, side, chunk):
@@ -116,6 +117,21 @@ def main():
             if records[:-1] != common_expected:
                 differences.append(dict(side=side, case='common_stream', chunk=chunk, input=common.hex(), expected=common_expected, actual=records[:-1], reason=('comparison limitation: split SGR mouse falls back to keys in termwiz InputParser' if side == 'termwiz' else 'comparison limitation: split UTF-8 becomes replacement characters in standalone libvaxis Parser'), morse_bug=side in ('morse-before', 'morse')))
                 if side in ('morse-before', 'morse'): failures.append(differences[-1])
+    # Quiet boundaries belong to the workload, not to a parser's chunk size.
+    # Repeat a shared burst to check that deferred input cannot cross them.
+    for side in SIDES:
+        for chunk in [1, 64]:
+            single = invoke(side, 'decode', 'check', chunk, common)
+            repeated = invoke(side, 'decode', 'check', chunk, common * 3, len(common))
+            assert repeated[:-1] == single[:-1] * 3, (side, chunk, repeated, single)
+            assert int(repeated[-1].split(':')[1]) == int(single[-1].split(':')[1]) * 3
+            checks.append(dict(side=side, case='common_bursts', chunk=chunk,
+                               native_count=int(repeated[-1].split(':')[1]), events=repeated[:-1]))
+        separate = invoke(side, 'decode', 'check', 1, b'\x1bx', 1)
+        assert separate[:-1] == ['key:27:0:press', 'key:120:0:press'], (side, separate)
+        checks.append(dict(side=side, case='escape_then_typing', chunk=1,
+                           native_count=int(separate[-1].split(':')[1]), events=separate[:-1]))
+
     # Pixel mode 1016 has the same SGR bytes as cell mode 1006. Only morse
     # exposes the unit flag in the standalone parser; preserve that difference.
     for side in SIDES:
@@ -163,7 +179,8 @@ def main():
                     if side == 'crossterm' and task in ('link', 'graphics'):
                         results.append([side,task,chunk,rep,'unavailable','','','',''])
                         continue
-                    lines = invoke(side, 'decode' if task == 'decode_pixels' and side not in ('morse-before', 'morse') else task, 'smoke' if SMOKE else 'full', chunk, data)
+                    burst = int((BUILD / ('inputs-smoke' if SMOKE else 'inputs-full') / 'mixed-burst-bytes.txt').read_text()) if task == 'decode' else None
+                    lines = invoke(side, 'decode' if task == 'decode_pixels' and side not in ('morse-before', 'morse') else task, 'smoke' if SMOKE else 'full', chunk, data, burst)
                     size,count,ns = map(int, lines[0].split('\t'))
                     assert size == len(data) and count > 0
                     if SMOKE: assert ns == 0

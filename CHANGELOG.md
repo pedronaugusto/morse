@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Give benchmark input shared quiet burst boundaries so termwiz settles unsupported prefixes before the whole stream accumulates.
+
 - Reject undeclared dependencies, duplicate layer membership and imports of source executables.
 
 - Run the import gate in the source job that installs Zig.

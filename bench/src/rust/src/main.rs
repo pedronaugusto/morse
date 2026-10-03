@@ -145,14 +145,17 @@ fn tw_event(e: &InputEvent) {
         _ => println!("other:{e:?}"),
     }
 }
-fn decode(side: &str, data: &[u8], chunk: usize, check: bool) -> usize {
+fn decode(side: &str, data: &[u8], chunk: usize, burst: usize, check: bool) -> usize {
     let mut count = 0;
     if side == "crossterm" {
         let mut pending = Vec::with_capacity(8192);
         // Same byte-at-a-time accumulation as crossterm's Unix event source.
         for (i, b) in data.iter().enumerate() {
             pending.push(*b);
-            match crossterm::event::bench_parse_event(&pending, i + 1 < data.len()) {
+            match crossterm::event::bench_parse_event(
+                &pending,
+                i + 1 < data.len() && (i + 1) % burst != 0,
+            ) {
                 Ok(Some(e)) => {
                     count += 1;
                     if check {
@@ -179,18 +182,22 @@ fn decode(side: &str, data: &[u8], chunk: usize, check: bool) -> usize {
         }
     } else {
         let mut parser = InputParser::new();
-        for (i, bytes) in data.chunks(chunk).enumerate() {
-            parser.parse(
-                bytes,
-                |e| {
-                    count += 1;
-                    if check {
-                        tw_event(&e)
-                    };
-                    black_box(&e);
-                },
-                (i + 1) * chunk < data.len(),
-            );
+        // Each burst ends with a quiet input boundary. Reads within it may
+        // split any sequence; only its end resolves ambiguous key prefixes.
+        for input in data.chunks(burst) {
+            for (i, bytes) in input.chunks(chunk).enumerate() {
+                parser.parse(
+                    bytes,
+                    |e| {
+                        count += 1;
+                        if check {
+                            tw_event(&e)
+                        };
+                        black_box(&e);
+                    },
+                    (i + 1) * chunk < input.len(),
+                );
+            }
         }
         parser.parse(
             &[],
@@ -319,12 +326,17 @@ fn encode(side: &str, task: &str, data: &[u8], check: bool) -> usize {
 }
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(args.len(), 5);
+    assert!(args.len() == 5 || args.len() == 6);
     let (side, task, mode) = (&args[1], &args[2], &args[3]);
     let chunk: usize = args[4].parse().unwrap();
     assert!(chunk > 0);
     let mut data = Vec::new();
     io::stdin().read_to_end(&mut data).unwrap();
+    let burst: usize = args
+        .get(5)
+        .map(|s| s.parse().unwrap())
+        .unwrap_or(data.len().max(1));
+    assert!(burst > 0);
     crossterm::style::force_color_output(true);
     let start = if mode == "full" {
         Some(Instant::now())
@@ -332,7 +344,7 @@ fn main() {
         None
     };
     let count = if task == "decode" {
-        decode(side, &data, chunk, mode == "check")
+        decode(side, &data, chunk, burst, mode == "check")
     } else {
         encode(side, task, &data, mode == "check")
     };
@@ -344,4 +356,31 @@ fn main() {
         println!("{}\t{count}\t{ns}", data.len())
     };
     io::stdout().flush().unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quiet_bursts_settle_escape_without_settling_read_boundaries() {
+        // Escape, then a separate burst of typing, is two keys, not Alt+x.
+        assert_eq!(decode("termwiz", b"\x1bx", 1, 1, false), 2);
+        // One-byte reads inside a burst must still assemble an arrow.
+        assert_eq!(decode("termwiz", b"\x1b[A", 1, 3, false), 1);
+        assert_eq!(decode("crossterm", b"\x1bx", 1, 1, false), 2);
+    }
+
+    #[test]
+    fn unsupported_csi_does_not_hold_later_bursts() {
+        let burst = b"\x1b[97:65;2uabc";
+        let once = decode("termwiz", burst, 1, burst.len(), false);
+        let repeated = burst.repeat(4);
+        for chunk in [1, 64, 4096] {
+            assert_eq!(
+                decode("termwiz", &repeated, chunk, burst.len(), false),
+                once * 4
+            );
+        }
+    }
 }
