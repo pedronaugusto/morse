@@ -1168,6 +1168,8 @@ fn tildeKey(n: u32) ?Key {
         // 27 is modifyOtherKeys and 30 is missing.
         28, 29 => .{ .f = @intCast(n - 13) },
         31...34 => .{ .f = @intCast(n - 14) },
+        // F21 to F25 as ghostty spells them; nothing standard goes further.
+        42...46 => .{ .f = @intCast(n - 21) },
         else => null,
     };
 }
@@ -1675,6 +1677,19 @@ test "the numbered keys decode from their CSI tilde form" {
         .{ .bytes = "\x1b[29~", .key = .{ .f = 16 } },
         .{ .bytes = "\x1b[31~", .key = .{ .f = 17 } },
         .{ .bytes = "\x1b[34~", .key = .{ .f = 20 } },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqual(case.key, oneKey(case.bytes).?.key);
+    }
+}
+
+test "the numbered keys past F20 decode from the form ghostty sends" {
+    const cases = [_]struct { bytes: []const u8, key: Key }{
+        .{ .bytes = "\x1b[42~", .key = .{ .f = 21 } },
+        .{ .bytes = "\x1b[43~", .key = .{ .f = 22 } },
+        .{ .bytes = "\x1b[44~", .key = .{ .f = 23 } },
+        .{ .bytes = "\x1b[45~", .key = .{ .f = 24 } },
+        .{ .bytes = "\x1b[46;5~", .key = .{ .f = 25 } },
     };
     for (cases) |case| {
         try std.testing.expectEqual(case.key, oneKey(case.bytes).?.key);
