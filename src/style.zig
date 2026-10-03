@@ -199,6 +199,26 @@ pub const Color = extern struct {
     }
 };
 
+/// The colour entry `index` of the 256-colour palette is above the sixteen
+/// theme slots, as terminals define it: the 6x6x6 cube at 16-231, its six
+/// levels 0, 95, 135, 175, 215 and 255 a channel with red the slowest to
+/// change, and the twenty-four greys at 232-255, from 8 in steps of 10.
+///
+/// Null for 0-15, which are the theme's slots: what they look like is the
+/// user's choice, and the terminal says what it chose when asked
+/// (`queryPaletteColor`). A program may redefine the upper entries too, and
+/// almost none does; this is the palette a terminal starts with.
+pub fn paletteRgb(index: u8) ?Rgb {
+    if (index < 16) return null;
+    if (index >= 232) {
+        const level: u8 = 8 + 10 * (index - 232);
+        return .{ .r = level, .g = level, .b = level };
+    }
+    const cube = index - 16;
+    const levels = [6]u8{ 0, 95, 135, 175, 215, 255 };
+    return .{ .r = levels[cube / 36], .g = levels[cube / 6 % 6], .b = levels[cube % 6] };
+}
+
 /// Whether a cell's glyphs are raised, lowered, or neither: SGR 73, 74 and
 /// 75.
 ///
@@ -1954,4 +1974,17 @@ test "applySgr passes over what it does not know and what does not fit" {
     try std.testing.expectEqual(Style{ .underline = .single }, got);
     applySgr(&got, "4:0");
     try std.testing.expectEqual(Style{}, got);
+}
+
+test "paletteRgb gives the cube and the grey ramp, and leaves the theme's slots alone" {
+    for (0..16) |i| try std.testing.expectEqual(@as(?Rgb, null), paletteRgb(@intCast(i)));
+    try std.testing.expectEqual(Rgb{ .r = 0, .g = 0, .b = 0 }, paletteRgb(16).?);
+    try std.testing.expectEqual(Rgb{ .r = 0, .g = 0, .b = 95 }, paletteRgb(17).?);
+    try std.testing.expectEqual(Rgb{ .r = 0, .g = 95, .b = 0 }, paletteRgb(22).?);
+    try std.testing.expectEqual(Rgb{ .r = 95, .g = 0, .b = 0 }, paletteRgb(52).?);
+    try std.testing.expectEqual(Rgb{ .r = 255, .g = 0, .b = 0 }, paletteRgb(196).?);
+    try std.testing.expectEqual(Rgb{ .r = 255, .g = 135, .b = 0 }, paletteRgb(208).?);
+    try std.testing.expectEqual(Rgb{ .r = 255, .g = 255, .b = 255 }, paletteRgb(231).?);
+    try std.testing.expectEqual(Rgb{ .r = 8, .g = 8, .b = 8 }, paletteRgb(232).?);
+    try std.testing.expectEqual(Rgb{ .r = 238, .g = 238, .b = 238 }, paletteRgb(255).?);
 }

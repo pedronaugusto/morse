@@ -340,6 +340,9 @@ pub const Ansi = style.Ansi;
 pub const Rgb = style.Rgb;
 /// A colour, in the forms SGR can spell.
 pub const Color = style.Color;
+/// What an entry of the 256-colour palette above the theme's sixteen looks
+/// like on a terminal that has not redefined it.
+pub const paletteRgb = style.paletteRgb;
 /// Which underline a cell carries.
 pub const Underline = style.Underline;
 /// Whether a cell's glyphs are raised, lowered, or on the baseline.
@@ -846,6 +849,7 @@ test "the root module re-exports what the README promises" {
     try resetStyle(w);
     try setStyle(w, .{ .bold = true, .fg = .ansi(.red) });
     try diffStyle(w, .{ .bold = true }, .{ .italic = true });
+    try std.testing.expectEqual(Rgb{ .r = 255, .g = 135, .b = 0 }, paletteRgb(208).?);
     var read_back: Style = .{};
     applySgr(&read_back, "1;73");
     try std.testing.expectEqual(Style{ .bold = true, .script = .superscript }, read_back);

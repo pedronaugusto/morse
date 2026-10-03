@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `paletteRgb` gives the colour of a 256-colour palette entry above the sixteen theme slots: the cube and the grey ramp terminals start with.
+
 - `KeyEvent.typed` builds the keypress that types a cluster with given modifiers, carrying its text on the parser's terms.
 
 - `toCellsAt` converts a mouse report into its cell and the position inside that cell for a fractional cell size, agreeing with `toCells` for whole-number sizes.
