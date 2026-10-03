@@ -23,10 +23,7 @@ const Writer = std.Io.Writer;
 /// C0 controls and DEL in `text` return `error.ControlInText` before
 /// anything is written. Ordinary text, including UTF-8, is unchanged.
 pub fn title(w: *Writer, text: []const u8) strings.Error!void {
-    try strings.checkText(text);
-    try w.writeAll(seq.osc ++ "2;");
-    try w.writeAll(text);
-    try w.writeByte(seq.bel);
+    try strings.writeChecked(w, &.{ false, true, false }, .{ seq.osc ++ "2;", text, &.{seq.bel} });
 }
 
 /// Sets the icon name: `OSC 1 ; text BEL`.
@@ -39,10 +36,7 @@ pub fn title(w: *Writer, text: []const u8) strings.Error!void {
 ///
 /// Like `title`, refuses C0 controls and DEL before writing any bytes.
 pub fn iconName(w: *Writer, text: []const u8) strings.Error!void {
-    try strings.checkText(text);
-    try w.writeAll(seq.osc ++ "1;");
-    try w.writeAll(text);
-    try w.writeByte(seq.bel);
+    try strings.writeChecked(w, &.{ false, true, false }, .{ seq.osc ++ "1;", text, &.{seq.bel} });
 }
 
 /// Pushes the window title onto the terminal's title stack:
@@ -84,10 +78,7 @@ pub fn titlePop(w: *Writer) Writer.Error!void {
 /// A shell is the usual writer of this; a program that changes directory on
 /// the user's behalf is the other one.
 pub fn workingDirectory(w: *Writer, uri: []const u8) strings.Error!void {
-    try strings.checkText(uri);
-    try w.writeAll(seq.osc ++ "7;");
-    try w.writeAll(uri);
-    try w.writeAll(seq.st);
+    try strings.writeChecked(w, &.{ false, true, false }, .{ seq.osc ++ "7;", uri, seq.st });
 }
 
 /// Opens a hyperlink: every cell written until the matching `hyperlinkEnd`
@@ -100,20 +91,30 @@ pub fn workingDirectory(w: *Writer, uri: []const u8) strings.Error!void {
 /// Percent-encode the URI as the spec requires; params must use its grammar,
 /// which has no `;`, or `parseHyperlink` reads them back cut at it.
 pub fn hyperlinkStart(w: *Writer, uri: []const u8, params: ?[]const u8) strings.Error!void {
-    try strings.checkText(uri);
-    if (params) |p| try strings.checkText(p);
-    try spellHyperlinkStart(w, uri, params);
+    try strings.writeChecked(w, &hyperlink_start_checked, hyperlinkStartParts(uri, params));
 }
 
 /// The bytes of `hyperlinkStart`, once its fields are known to be clean, into
-/// a `*Writer` or a `*seq.Count`.
+/// a `*Writer` or a `*seq.Count`: the parts the writer copies.
 fn spellHyperlinkStart(w: anytype, uri: []const u8, params: ?[]const u8) !void {
-    try w.writeAll(seq.osc ++ "8;");
-    if (params) |p| try w.writeAll(p);
-    try w.writeByte(';');
-    try w.writeAll(uri);
-    try w.writeAll(seq.st);
+    var parts = hyperlinkStartParts(uri, params);
+    try w.writeVecAll(&parts);
 }
+
+/// The pieces of `hyperlinkStart` in order, handed to a writer together so
+/// they are copied in one go; `hyperlink_start_checked` marks the caller's.
+fn hyperlinkStartParts(uri: []const u8, params: ?[]const u8) [5][]const u8 {
+    return .{ seq.osc ++ "8;", params orelse "", ";", uri, seq.st };
+}
+const hyperlink_start_checked = [5]bool{ false, true, false, true, false };
+
+/// The pieces of `hyperlink`: its start, the text, its end.
+fn hyperlinkParts(text: []const u8, uri: []const u8) [7][]const u8 {
+    return hyperlinkStartParts(uri, null) ++ [_][]const u8{ text, hyperlink_end };
+}
+const hyperlink_checked = hyperlink_start_checked ++ [_]bool{ true, false };
+
+const hyperlink_end = seq.osc ++ "8;;" ++ seq.st;
 
 /// Closes the hyperlink opened by `hyperlinkStart`: `OSC 8 ; ; ST`. Cells
 /// written after this one carry no link.
@@ -123,23 +124,21 @@ pub fn hyperlinkEnd(w: *Writer) Writer.Error!void {
 
 /// The bytes of `hyperlinkEnd`, into a `*Writer` or a `*seq.Count`.
 fn spellHyperlinkEnd(w: anytype) !void {
-    try w.writeAll(seq.osc ++ "8;;" ++ seq.st);
+    try w.writeAll(hyperlink_end);
 }
 
 /// Writes `text` as a hyperlink to `uri`: `hyperlinkStart`, the text, then
 /// `hyperlinkEnd`. C0 controls and DEL in either field are refused before
 /// writing. Text keeps the attributes set before the call.
 pub fn hyperlink(w: *Writer, text: []const u8, uri: []const u8) strings.Error!void {
-    try strings.checkText(text);
-    try strings.checkText(uri);
-    try spellHyperlink(w, text, uri);
+    try strings.writeChecked(w, &hyperlink_checked, hyperlinkParts(text, uri));
 }
 
-/// The bytes of `hyperlink`, into a `*Writer` or a `*seq.Count`.
+/// The bytes of `hyperlink`, into a `*Writer` or a `*seq.Count`: the parts
+/// the writer copies.
 fn spellHyperlink(w: anytype, text: []const u8, uri: []const u8) !void {
-    try spellHyperlinkStart(w, uri, null);
-    try w.writeAll(text);
-    try spellHyperlinkEnd(w);
+    var parts = hyperlinkParts(text, uri);
+    try w.writeVecAll(&parts);
 }
 
 /// Where fractionally scaled text sits inside the cells it was given,

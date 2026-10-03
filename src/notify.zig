@@ -22,13 +22,7 @@ const Writer = std.Io.Writer;
 /// C0 controls and DEL in either field are refused before writing.
 /// Ordinary text is unchanged; neither field should contain the `;` separator.
 pub fn notify(w: *Writer, title: []const u8, body: []const u8) strings.Error!void {
-    try strings.checkText(body);
-    try strings.checkText(title);
-    try w.writeAll(seq.osc ++ "777;notify;");
-    try w.writeAll(title);
-    try w.writeByte(';');
-    try w.writeAll(body);
-    try w.writeAll(seq.st);
+    try strings.writeChecked(w, &.{ false, true, false, true, false }, .{ seq.osc ++ "777;notify;", title, ";", body, seq.st });
 }
 
 /// Posts a notification with no title: `OSC 9 ; body ST`.
@@ -37,10 +31,7 @@ pub fn notify(w: *Writer, title: []const u8, body: []const u8) strings.Error!voi
 /// implement instead of OSC 777. C0 controls and DEL in `body` are refused
 /// before writing; ordinary text is unchanged.
 pub fn notify9(w: *Writer, body: []const u8) strings.Error!void {
-    try strings.checkText(body);
-    try w.writeAll(seq.osc ++ "9;");
-    try w.writeAll(body);
-    try w.writeAll(seq.st);
+    try strings.writeChecked(w, &.{ false, true, false }, .{ seq.osc ++ "9;", body, seq.st });
 }
 
 test "notify writes OSC 777 with both fields" {

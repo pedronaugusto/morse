@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Check text for controls a vector at a time, and have the title, icon name, working directory, hyperlink and notification writers copy their text into the writer's buffer in one pass that checks it; the bytes written are unchanged.
+
 - `parseHyperlink` and `parseTextSize` read the bodies of OSC 8 and OSC 66 back into a `Hyperlink` and a `SizedText`, the inverses of `hyperlinkStart` and `textSize`; the test-only OSC 66 reader is gone.
 
 - `paletteRgb` gives the colour of a 256-colour palette entry above the sixteen theme slots: the cube and the grey ramp terminals start with.

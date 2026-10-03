@@ -79,7 +79,7 @@ pub fn decimalLen(value: u64) usize {
 /// A writer with a counted twin spells its sequence through one body that
 /// takes the sink first, a `*std.Io.Writer` or a `*Count`, and `count` runs
 /// that body here. So a count is of the bytes the same code writes, not of a
-/// second spelling kept in step by hand. The methods are the two of
+/// second spelling kept in step by hand. The methods are the three of
 /// `std.Io.Writer` those bodies call, and they cannot fail.
 pub const Count = struct {
     /// Bytes counted so far.
@@ -94,6 +94,11 @@ pub const Count = struct {
     pub fn writeByte(c: *Count, byte: u8) error{}!void {
         _ = byte;
         c.n += 1;
+    }
+
+    /// Counts every slice of `parts`.
+    pub fn writeVecAll(c: *Count, parts: [][]const u8) error{}!void {
+        for (parts) |part| c.n += part.len;
     }
 };
 
