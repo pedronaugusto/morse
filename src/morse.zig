@@ -269,6 +269,11 @@ pub const parseMouseRxvt = mouse_events.parseMouseRxvt;
 pub const mouse_x10_max = mouse_events.x10_max;
 /// Converts a pixel report into cells.
 pub const toCells = mouse_events.toCells;
+/// Where a report falls in the grid: the cell, and where inside it.
+pub const CellPosition = mouse_events.CellPosition;
+/// Converts a report into its cell and the position inside it, for a cell
+/// size that need not be whole.
+pub const toCellsAt = mouse_events.toCellsAt;
 
 //=========================================================================
 // Cursor and screen.
@@ -911,6 +916,13 @@ test "the root module re-exports what the README promises" {
         .press = true,
         .pixels = true,
     }, 8, 16).x);
+    try std.testing.expectEqual(@as(u32, 80), toCellsAt(.{
+        .button = .left,
+        .x = 1001,
+        .y = 4,
+        .press = true,
+        .pixels = true,
+    }, 12.5, 16).col);
 
     var buffer: [8]u8 = undefined;
     const reply: ClipboardReply = parseClipboardReply("\x1b]52;c;aGk=\x1b\\").?;

@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `toCellsAt` converts a mouse report into its cell and the position inside that cell for a fractional cell size, agreeing with `toCells` for whole-number sizes.
+
 - `KeyParser.undecided` says whether what is pending is the lone `ESC`, `ESC [` or `ESC O` that only a timeout settles; `flush` settles exactly those.
 
 - `applySgr` applies the parameters of a `CSI ... m` to a `Style`, reading back everything `diffStyle` writes, superscript and subscript included; `parseCsi` and `parseControlString` frame control sequences and control strings in a byte stream, and `KeyParser` frames its control strings with the latter.

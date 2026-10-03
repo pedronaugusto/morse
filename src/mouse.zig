@@ -324,6 +324,61 @@ pub fn toCells(ev: MouseEvent, cell_w: u32, cell_h: u32) MouseEvent {
     return cells;
 }
 
+/// Where a mouse report falls in the grid: the cell, and where inside it.
+///
+/// The cell counts from zero, unlike the report it came from: it is the
+/// index a program holds its grid by, and a column past the last a `u32`
+/// can count is the last.
+pub const CellPosition = struct {
+    /// The column, counting from 0.
+    col: u32,
+    /// The row, counting from 0.
+    row: u32,
+    /// How far across the cell, from 0 at its left edge up to, and never
+    /// reaching, 1 at its right.
+    x: f32,
+    /// How far down the cell, from 0 at its top edge up to, and never
+    /// reaching, 1 at its bottom.
+    y: f32,
+};
+
+/// Converts a report into the cell it falls in and where inside that cell,
+/// given the size of one cell in pixels, which need not be whole.
+///
+/// A cell size worked out from a text area and a grid -- a window 1001
+/// pixels wide over 80 columns -- is a fraction, and rounding it to a whole
+/// number puts the pointer a column off by the right-hand edge. This divides
+/// by the fraction. For a whole-number size the cell is the one `toCells`
+/// gives, pixel for pixel, counted from zero.
+///
+/// Pixels count from 1, as in `toCells`, and pixel 0 is taken as pixel 1. A
+/// report already in cells says only the cell, so its position inside it is
+/// the middle, 0.5 each way; a cell coordinate of 0 is taken as 1 too.
+/// `cell_w` and `cell_h` must be greater than zero.
+pub fn toCellsAt(ev: MouseEvent, cell_w: f32, cell_h: f32) CellPosition {
+    std.debug.assert(cell_w > 0);
+    std.debug.assert(cell_h > 0);
+    if (!ev.pixels) return .{ .col = ev.x -| 1, .row = ev.y -| 1, .x = 0.5, .y = 0.5 };
+    const across = cellOf(ev.x, cell_w);
+    const down = cellOf(ev.y, cell_h);
+    return .{ .col = across.cell, .row = down.cell, .x = across.within, .y = down.within };
+}
+
+/// One axis of `toCellsAt`: the cell, from 0, and the fraction of it.
+///
+/// In `f64`, where a pixel and a whole-number cell size are exact and their
+/// quotient is correctly rounded, so it can never round up onto the next
+/// cell: a pixel short of a cell boundary is short of it by at least one part
+/// in the pixel's own size, which is far more than `f64` loses.
+fn cellOf(pixel: u32, size: f32) struct { cell: u32, within: f32 } {
+    const offset = @as(f64, @floatFromInt(pixel -| 1)) / @as(f64, size);
+    const whole = @floor(offset);
+    return .{
+        .cell = @intFromFloat(@min(whole, std.math.maxInt(u32))),
+        .within = @floatCast(offset - whole),
+    };
+}
+
 test "encodeMouse writes a left press" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
@@ -904,4 +959,48 @@ test "fuzz parseMouseRxvt" {
         corpus.seed("\x1b[<0;1;1M"),
         corpus.seed("\x1b[M\x20\x21\x21"),
     } });
+}
+
+test "toCellsAt is the cell toCells gives, for every whole-number cell size" {
+    var prng: std.Random.DefaultPrng = .init(0x7ce1);
+    const random = prng.random();
+    for (0..20_000) |i| {
+        const w = random.intRangeAtMost(u32, 1, if (i % 2 == 0) 40 else 5000);
+        const h = random.intRangeAtMost(u32, 1, if (i % 2 == 0) 40 else 5000);
+        const x = if (i % 3 == 0) random.int(u32) else random.uintAtMost(u32, 4000);
+        const y = if (i % 5 == 0) random.int(u32) else random.uintAtMost(u32, 4000);
+        const ev: MouseEvent = .{ .button = .left, .x = x, .y = y, .press = true, .pixels = true };
+        const cells = toCells(ev, w, h);
+        const at = toCellsAt(ev, @floatFromInt(w), @floatFromInt(h));
+        try std.testing.expectEqual(cells.x, at.col + 1);
+        try std.testing.expectEqual(cells.y, at.row + 1);
+        try std.testing.expect(at.x >= 0 and at.x < 1 and at.y >= 0 and at.y < 1);
+    }
+}
+
+test "toCellsAt divides by a fractional cell and says where in the cell" {
+    const ev: MouseEvent = .{ .button = .left, .x = 1001, .y = 1, .press = true, .pixels = true };
+    // 1000 pixels in from the first over cells 12.5 wide: the 81st cell,
+    // its left edge.
+    const at = toCellsAt(ev, 12.5, 25);
+    try std.testing.expectEqual(@as(u32, 80), at.col);
+    try std.testing.expectEqual(@as(u32, 0), at.row);
+    try std.testing.expectEqual(@as(f32, 0), at.x);
+    const mid = toCellsAt(.{ .button = .left, .x = 7, .y = 19, .press = true, .pixels = true }, 12, 24);
+    try std.testing.expectEqual(@as(f32, 0.5), mid.x);
+    try std.testing.expectEqual(@as(f32, 0.75), mid.y);
+}
+
+test "toCellsAt takes a report in cells as the middle of its cell" {
+    const at = toCellsAt(.{ .button = .left, .x = 40, .y = 12, .press = true }, 8, 16);
+    try std.testing.expectEqual(CellPosition{ .col = 39, .row = 11, .x = 0.5, .y = 0.5 }, at);
+    const zero = toCellsAt(.{ .button = .left, .x = 0, .y = 0, .press = true, .pixels = true }, 8, 16);
+    try std.testing.expectEqual(CellPosition{ .col = 0, .row = 0, .x = 0, .y = 0 }, zero);
+    const cell_zero = toCellsAt(.{ .button = .left, .x = 0, .y = 0, .press = true }, 8, 16);
+    try std.testing.expectEqual(CellPosition{ .col = 0, .row = 0, .x = 0.5, .y = 0.5 }, cell_zero);
+    // A pixel past what the grid can count lands in the last cell a `u32`
+    // can, still somewhere inside it.
+    const far = toCellsAt(.{ .button = .left, .x = std.math.maxInt(u32), .y = 1, .press = true, .pixels = true }, 1.0 / 65535.0, 1);
+    try std.testing.expectEqual(@as(u32, std.math.maxInt(u32)), far.col);
+    try std.testing.expect(far.x >= 0 and far.x < 1);
 }
