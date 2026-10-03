@@ -51,16 +51,23 @@ consumer builds do not fetch it. Writers take a `*std.Io.Writer` and leave flush
 the caller. Parsers borrow their input; `KeyParser` retains incomplete sequences in a
 caller-owned buffer. Drain each `Events` iterator before feeding more bytes, and consume
 borrowed event data before the next iterator step, feed or flush.
+Key events own their text; retained sequence bytes keep split input intact and borrowed
+replies independent of the read buffer.
 
 `Style` describes SGR attributes and colours. `setStyle` writes from the terminal's
 default state; `diffStyle` writes the changes between two known styles. Cursor and erase
-commands use typed parameters. Text-bearing control sequences reject C0 controls and DEL
-before writing; `printable` explicitly strips them into a supplied buffer.
+commands use typed parameters. `cost` counts what the style, cursor, erase, repeat, mode,
+hyperlink and text-size writers would write, through the code that writes it.
+`applySgr` reads a style change back into a `Style`, `parseHyperlink` and
+`parseTextSize` read the bodies of OSC 8 and OSC 66, and `parseCsi` and
+`parseControlString` frame sequences, for a program that reads what was written.
+Text-bearing control sequences reject C0 controls and DEL before writing; `printable`
+explicitly strips them into a supplied buffer.
 
 `KeyParser` frames legacy and kitty keys, win32 input sequences, paste, focus, resize,
 mouse reports and replies in one stream. An unknown framed sequence becomes
-`Event.unhandled`. A lone ESC stays undecided until more input or `flush`; the
-application decides when to settle it. Whole-sequence parsers return null for
+`Event.unhandled`. A lone ESC stays undecided until more input or `flush`, and
+`undecided` says when it is; the application decides when to settle it. Whole-sequence parsers return null for
 unrecognized or malformed input.
 
 `ConsoleDecoder` accepts Windows console records without reading a console handle. It

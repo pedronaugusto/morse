@@ -19,10 +19,26 @@ const Writer = std.Io.Writer;
 /// The named modes below are this function with the number filled in; reach
 /// for this one for a mode `morse` does not name.
 pub fn setMode(w: *Writer, mode: u16, on: bool) Writer.Error!void {
+    try spellMode(w, mode, on);
+}
+
+/// The bytes of `setMode`, into a `*Writer` or a `*seq.Count`.
+fn spellMode(w: anytype, mode: u16, on: bool) !void {
     try w.writeAll(seq.csi ++ "?");
     try seq.writeInt(w, mode);
     try w.writeByte(if (on) 'h' else 'l');
 }
+
+/// How many bytes the mode writers write, given the same arguments less the
+/// writer, without writing them. Each runs the body its writer spells with
+/// into a `seq.Count`, so a count is exactly the length of what is written.
+pub const cost = struct {
+    /// `setMode`, and the `set` of every named mode with its `number`:
+    /// `CSI ? mode h` or `l`, so four bytes and the digits of the mode.
+    pub fn setMode(mode: u16, on: bool) usize {
+        return seq.count(spellMode, .{ mode, on });
+    }
+};
 
 /// One DEC private mode, named and reduced to a single `set` call.
 fn PrivateMode(comptime mode_number: u16) type {
@@ -979,4 +995,19 @@ test "no writer here puts two modes in one sequence" {
         rest = body[end + 1 ..];
     }
     try std.testing.expectEqual(@as(usize, 11), count);
+}
+
+test "the setMode cost is the length setMode writes, for every mode" {
+    var buffer: [16]u8 = undefined;
+    var mode: u32 = 0;
+    while (mode <= std.math.maxInt(u16)) : (mode += 1) {
+        for ([_]bool{ false, true }) |on| {
+            var w: Writer = .fixed(&buffer);
+            try setMode(&w, @intCast(mode), on);
+            try std.testing.expectEqual(w.buffered().len, cost.setMode(@intCast(mode), on));
+        }
+    }
+    var w: Writer = .fixed(&buffer);
+    try unicodeCore.set(&w, false);
+    try std.testing.expectEqual(w.buffered().len, cost.setMode(unicodeCore.number, false));
 }

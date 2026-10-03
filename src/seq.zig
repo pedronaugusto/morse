@@ -44,17 +44,65 @@ pub const apc = "\x1b_";
 ///
 /// `u64` so that every unsigned type in the package coerces to it. The
 /// buffer is twenty digits, which is the widest a `u64` spells.
-pub fn writeInt(w: *std.Io.Writer, value: u64) std.Io.Writer.Error!void {
-    var buffer: [20]u8 = undefined;
-    var i: usize = buffer.len;
-    var rest = value;
-    while (true) {
-        i -= 1;
-        buffer[i] = '0' + @as(u8, @intCast(rest % 10));
-        rest /= 10;
-        if (rest == 0) break;
+///
+/// `w` is a `*std.Io.Writer` or a `*Count`. Into a `Count` the digits are
+/// counted rather than spelled, which is the one place a count and a write
+/// part ways; the suite holds the two to the same length for every width.
+pub fn writeInt(w: anytype, value: u64) !void {
+    if (@TypeOf(w) == *Count) {
+        w.n += decimalLen(value);
+    } else {
+        var buffer: [20]u8 = undefined;
+        var i: usize = buffer.len;
+        var rest = value;
+        while (true) {
+            i -= 1;
+            buffer[i] = '0' + @as(u8, @intCast(rest % 10));
+            rest /= 10;
+            if (rest == 0) break;
+        }
+        try w.writeAll(buffer[i..]);
     }
-    try w.writeAll(buffer[i..]);
+}
+
+/// How many digits `writeInt` spells `value` in: 1 to 20.
+pub fn decimalLen(value: u64) usize {
+    var n: usize = 1;
+    var rest = value;
+    while (rest >= 10) : (rest /= 10) n += 1;
+    return n;
+}
+
+/// Where a sequence goes when only its length is wanted: every byte a writer
+/// would be handed is counted, and none is kept.
+///
+/// A writer with a counted twin spells its sequence through one body that
+/// takes the sink first, a `*std.Io.Writer` or a `*Count`, and `count` runs
+/// that body here. So a count is of the bytes the same code writes, not of a
+/// second spelling kept in step by hand. The methods are the two of
+/// `std.Io.Writer` those bodies call, and they cannot fail.
+pub const Count = struct {
+    /// Bytes counted so far.
+    n: usize = 0,
+
+    /// Counts `bytes`.
+    pub fn writeAll(c: *Count, bytes: []const u8) error{}!void {
+        c.n += bytes.len;
+    }
+
+    /// Counts one byte.
+    pub fn writeByte(c: *Count, byte: u8) error{}!void {
+        _ = byte;
+        c.n += 1;
+    }
+};
+
+/// How many bytes `body` writes for `args`: `body` is a spelling that takes
+/// its sink first, and here it is handed a `Count`.
+pub fn count(comptime body: anytype, args: anytype) usize {
+    var c: Count = .{};
+    @call(.auto, body, .{&c} ++ args) catch |err| switch (err) {};
+    return c.n;
 }
 
 /// Writes `value` in decimal with a leading `-` when it is negative.
@@ -181,6 +229,25 @@ test "writeInt agrees with the formatter on every value to ten thousand" {
         try b.print("{d}", .{value});
         try std.testing.expectEqualStrings(b.buffered(), a.buffered());
     }
+}
+
+test "decimalLen is the length writeInt spells, at every width" {
+    var value: u64 = 1;
+    for (0..20) |_| {
+        for ([_]u64{ value - 1, value, value + 1 }) |v| {
+            var buffer: [24]u8 = undefined;
+            var w: std.Io.Writer = .fixed(&buffer);
+            try writeInt(&w, v);
+            try std.testing.expectEqual(w.buffered().len, decimalLen(v));
+
+            var c: Count = .{};
+            try writeInt(&c, v);
+            try std.testing.expectEqual(w.buffered().len, c.n);
+        }
+        value = std.math.mul(u64, value, 10) catch break;
+    }
+    try std.testing.expectEqual(@as(usize, 20), decimalLen(std.math.maxInt(u64)));
+    try std.testing.expectEqual(@as(usize, 1), decimalLen(0));
 }
 
 test "writeSigned writes the sign and the digits, the smallest i32 included" {

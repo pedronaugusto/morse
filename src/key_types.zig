@@ -283,6 +283,23 @@ pub const KeyEvent = struct {
         return ev.text_buffer[0..ev.text_len];
     }
 
+    /// The keypress that types `cluster` with `mods` held: the `.char` of
+    /// its first codepoint, carrying the cluster as its text.
+    ///
+    /// For a program that holds text and wants it as keys: a burst of typed
+    /// text read cluster by cluster, a script of keystrokes. The text is
+    /// set as the parser sets it, so a key held with anything but shift, a
+    /// control code, a cluster longer than `text_capacity` or bytes that are
+    /// not UTF-8 type no text, and the key is all there is. U+FFFD stands for
+    /// a cluster that does not begin with a codepoint, the empty one
+    /// included.
+    pub fn typed(cluster: []const u8, mods: Modifiers) KeyEvent {
+        const cp = firstCodepoint(cluster) orelse 0xfffd;
+        var ev: KeyEvent = .{ .key = .{ .char = cp }, .mods = mods };
+        if (std.unicode.utf8ValidateSlice(cluster)) setText(&ev, cluster);
+        return ev;
+    }
+
     /// Whether this is `on` with `mods`, however the terminal encoded it.
     /// Compares the key, then its single codepoint of typed text, then the
     /// alternate shifted codepoint. Caps lock and num lock are ignored on
@@ -291,8 +308,8 @@ pub const KeyEvent = struct {
     /// A cluster of more than one codepoint names no key. `kind` is left to
     /// the caller, so presses, repeats and releases match alike.
     pub fn matches(ev: KeyEvent, on: Key, mods: Modifiers) bool {
-        const typed = ev.text();
-        if (typed.len > 0 and (std.unicode.utf8CountCodepoints(typed) catch 2) != 1) return false;
+        const produced = ev.text();
+        if (produced.len > 0 and (std.unicode.utf8CountCodepoints(produced) catch 2) != 1) return false;
         const have = unlocked(ev.mods);
         const want = unlocked(mods);
         if (std.meta.eql(ev.key, on) and have == want) return true;
@@ -300,11 +317,11 @@ pub const KeyEvent = struct {
             .char => |c| c,
             else => return false,
         };
-        if (typed.len > 0) {
+        if (produced.len > 0) {
             const wanted_cp: u21 = if (cp < 128 and want.shift) std.ascii.toUpper(@intCast(cp)) else cp;
             var buf: [4]u8 = undefined;
             const n = std.unicode.utf8Encode(wanted_cp, &buf) catch return false;
-            if (std.mem.eql(u8, typed, buf[0..n]) and unshifted(have) == unshifted(want)) return true;
+            if (std.mem.eql(u8, produced, buf[0..n]) and unshifted(have) == unshifted(want)) return true;
         }
         if (ev.shifted) |sc| if (have.shift and sc == cp and unshifted(have) == unshifted(want)) return true;
         return false;
@@ -405,4 +422,47 @@ pub fn setText(ev: *KeyEvent, bytes: []const u8) void {
         },
         else => {},
     }
+}
+
+/// The codepoint `bytes` begin with, or null when they do not begin with
+/// one.
+fn firstCodepoint(bytes: []const u8) ?u21 {
+    if (bytes.len == 0) return null;
+    const n = std.unicode.utf8ByteSequenceLength(bytes[0]) catch return null;
+    if (bytes.len < n) return null;
+    return std.unicode.utf8Decode(bytes[0..n]) catch null;
+}
+
+test "typed is the key a cluster types, carrying the cluster as its text" {
+    const flag = KeyEvent.typed("\u{1f1f5}\u{1f1f9}", .{});
+    try std.testing.expectEqual(Key{ .char = 0x1f1f5 }, flag.key);
+    try std.testing.expectEqualStrings("\u{1f1f5}\u{1f1f9}", flag.text());
+
+    const shifted = KeyEvent.typed("A", .{ .shift = true });
+    try std.testing.expectEqualStrings("A", shifted.text());
+    try std.testing.expect(shifted.mods.shift);
+    try std.testing.expect(shifted.matches(.{ .char = 'a' }, .{ .shift = true }));
+
+    const held = KeyEvent.typed("c", .{ .ctrl = true });
+    try std.testing.expectEqual(Key{ .char = 'c' }, held.key);
+    try std.testing.expectEqualStrings("", held.text());
+    try std.testing.expect(held.matches(.{ .char = 'c' }, .{ .ctrl = true }));
+}
+
+test "typed carries no text a parser would not" {
+    const long = "e\u{301}\u{301}\u{301}\u{301}\u{301}\u{301}\u{301}\u{301}";
+    try std.testing.expect(long.len > KeyEvent.text_capacity);
+    const too_long = KeyEvent.typed(long, .{});
+    try std.testing.expectEqual(Key{ .char = 'e' }, too_long.key);
+    try std.testing.expectEqualStrings("", too_long.text());
+
+    try std.testing.expectEqualStrings("", KeyEvent.typed("\t", .{}).text());
+    try std.testing.expectEqualStrings("", KeyEvent.typed("a\xff", .{}).text());
+    try std.testing.expectEqual(Key{ .char = 0xfffd }, KeyEvent.typed("\xff", .{}).key);
+    try std.testing.expectEqual(Key{ .char = 0xfffd }, KeyEvent.typed("", .{}).key);
+
+    // The same event the parser reads off the same bytes.
+    var parsed: KeyEvent = .{ .key = .{ .char = 0xe9 } };
+    setText(&parsed, "\u{e9}");
+    try std.testing.expectEqual(parsed, KeyEvent.typed("\u{e9}", .{}));
 }

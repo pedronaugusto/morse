@@ -24,6 +24,7 @@
 const clipboard = @import("clipboard.zig");
 const cursor = @import("cursor.zig");
 const device = @import("device.zig");
+const framing = @import("framing.zig");
 const graphics = @import("graphics.zig");
 const key = @import("key.zig");
 const mode = @import("mode.zig");
@@ -67,6 +68,10 @@ pub const hyperlinkStart = osc.hyperlinkStart;
 pub const hyperlinkEnd = osc.hyperlinkEnd;
 /// Writes one piece of text as a hyperlink.
 pub const hyperlink = osc.hyperlink;
+/// One OSC 8 read back: its params and its URI.
+pub const Hyperlink = osc.Hyperlink;
+/// Reads the body of an OSC 8, the inverse of `hyperlinkStart`.
+pub const parseHyperlink = osc.parseHyperlink;
 
 //=========================================================================
 // Text sizing, OSC 66.
@@ -82,6 +87,10 @@ pub const TextSize = osc.TextSize;
 pub const textSize = osc.textSize;
 /// The most text one OSC 66 sequence may carry.
 pub const text_size_max = osc.text_size_max;
+/// One OSC 66 read back: its size and its text.
+pub const SizedText = osc.SizedText;
+/// Reads the body of an OSC 66, the inverse of `textSize`.
+pub const parseTextSize = osc.parseTextSize;
 
 //=========================================================================
 // Semantic prompt marks, OSC 133.
@@ -268,6 +277,11 @@ pub const parseMouseRxvt = mouse_events.parseMouseRxvt;
 pub const mouse_x10_max = mouse_events.x10_max;
 /// Converts a pixel report into cells.
 pub const toCells = mouse_events.toCells;
+/// Where a report falls in the grid: the cell, and where inside it.
+pub const CellPosition = mouse_events.CellPosition;
+/// Converts a report into its cell and the position inside it, for a cell
+/// size that need not be whole.
+pub const toCellsAt = mouse_events.toCellsAt;
 
 //=========================================================================
 // Cursor and screen.
@@ -334,6 +348,9 @@ pub const Ansi = style.Ansi;
 pub const Rgb = style.Rgb;
 /// A colour, in the forms SGR can spell.
 pub const Color = style.Color;
+/// What an entry of the 256-colour palette above the theme's sixteen looks
+/// like on a terminal that has not redefined it.
+pub const paletteRgb = style.paletteRgb;
 /// Which underline a cell carries.
 pub const Underline = style.Underline;
 /// Whether a cell's glyphs are raised, lowered, or on the baseline.
@@ -346,6 +363,107 @@ pub const resetStyle = style.resetStyle;
 pub const setStyle = style.setStyle;
 /// Writes only what differs between two styles.
 pub const diffStyle = style.diffStyle;
+/// Applies the parameters of one `CSI ... m` to a style: what `diffStyle`
+/// wrote, read back.
+pub const applySgr = style.applySgr;
+
+//=========================================================================
+// Reading sequences back.
+//=========================================================================
+
+/// One control sequence, `CSI ... final`, framed.
+pub const Csi = framing.Csi;
+/// Frames the control sequence at the front of a byte stream, or null when
+/// it is not all there.
+pub const parseCsi = framing.parseCsi;
+/// One control string, `OSC`, `DCS`, `SOS`, `PM` or `APC` to its
+/// terminator, framed.
+pub const ControlString = framing.ControlString;
+/// Frames the control string at the front of a byte stream, or null when it
+/// is not all there.
+pub const parseControlString = framing.parseControlString;
+
+//=========================================================================
+// Lengths, counted without writing.
+//=========================================================================
+
+/// How many bytes a writer writes, given its arguments less the writer, for
+/// a program choosing between ways of drawing the same thing: a renderer
+/// weighing a relative cursor move against an absolute one, a repeat count
+/// against the glyphs, an erase against the blanks.
+///
+/// Each of these runs the very body its writer spells with, into a counter
+/// in place of a `*std.Io.Writer`, so a count is the exact length of what the
+/// writer writes for those arguments -- not an estimate, and not a second
+/// spelling to keep in step. A writer that checks its text counts it
+/// unchecked: the length is of the write that succeeds.
+pub const cost = struct {
+    /// `diffStyle`: zero for equal styles, else the one sequence it writes.
+    pub const diffStyle = style.cost.diffStyle;
+    /// `setStyle`.
+    pub const setStyle = style.cost.setStyle;
+    /// `resetStyle`.
+    pub const resetStyle = style.cost.resetStyle;
+
+    /// `cursorTo`.
+    pub const cursorTo = cursor.cost.cursorTo;
+    /// `cursorUp`.
+    pub const cursorUp = cursor.cost.cursorUp;
+    /// `cursorDown`.
+    pub const cursorDown = cursor.cost.cursorDown;
+    /// `cursorRight`.
+    pub const cursorRight = cursor.cost.cursorRight;
+    /// `cursorLeft`.
+    pub const cursorLeft = cursor.cost.cursorLeft;
+    /// `cursorNextLine`.
+    pub const cursorNextLine = cursor.cost.cursorNextLine;
+    /// `cursorPrevLine`.
+    pub const cursorPrevLine = cursor.cost.cursorPrevLine;
+    /// `cursorColumn`.
+    pub const cursorColumn = cursor.cost.cursorColumn;
+    /// `cursorRow`.
+    pub const cursorRow = cursor.cost.cursorRow;
+    /// `cursorSave`.
+    pub const cursorSave = cursor.cost.cursorSave;
+    /// `cursorRestore`.
+    pub const cursorRestore = cursor.cost.cursorRestore;
+    /// `clearLine`.
+    pub const clearLine = cursor.cost.clearLine;
+    /// `clearScreen`.
+    pub const clearScreen = cursor.cost.clearScreen;
+    /// `scrollRegion`.
+    pub const scrollRegion = cursor.cost.scrollRegion;
+    /// `scrollRegionReset`.
+    pub const scrollRegionReset = cursor.cost.scrollRegionReset;
+    /// `scrollUp`.
+    pub const scrollUp = cursor.cost.scrollUp;
+    /// `scrollDown`.
+    pub const scrollDown = cursor.cost.scrollDown;
+    /// `insertLines`.
+    pub const insertLines = cursor.cost.insertLines;
+    /// `deleteLines`.
+    pub const deleteLines = cursor.cost.deleteLines;
+    /// `insertChars`.
+    pub const insertChars = cursor.cost.insertChars;
+    /// `deleteChars`.
+    pub const deleteChars = cursor.cost.deleteChars;
+    /// `eraseChars`.
+    pub const eraseChars = cursor.cost.eraseChars;
+    /// `repeatChar`.
+    pub const repeatChar = cursor.cost.repeatChar;
+
+    /// `setMode`, and the `set` of each named mode given its `number`.
+    pub const setMode = mode.cost.setMode;
+
+    /// `hyperlinkStart`.
+    pub const hyperlinkStart = osc.cost.hyperlinkStart;
+    /// `hyperlinkEnd`.
+    pub const hyperlinkEnd = osc.cost.hyperlinkEnd;
+    /// `hyperlink`.
+    pub const hyperlink = osc.cost.hyperlink;
+    /// `textSize`.
+    pub const textSize = osc.cost.textSize;
+};
 
 //=========================================================================
 // Keyboard input.
@@ -595,6 +713,7 @@ test {
     _ = @import("clipboard.zig");
     _ = @import("cursor.zig");
     _ = @import("device.zig");
+    _ = @import("framing.zig");
     _ = @import("graphics.zig");
     _ = @import("key.zig");
     _ = @import("mode.zig");
@@ -610,6 +729,45 @@ test {
     _ = @import("style.zig");
     _ = @import("tcap.zig");
     _ = @import("win32.zig");
+}
+
+test "a frame's lengths, counted through cost, add up to what it writes" {
+    const std = @import("std");
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    const w = &out.writer;
+    const heading: Style = .{ .bold = true, .fg = .rgb(255, 128, 1) };
+
+    try syncOutput.set(w, true);
+    try cursorTo(w, 12, 40);
+    try setStyle(w, heading);
+    try hyperlinkStart(w, "https://ziglang.org", "id=z");
+    try textSize(w, .{ .scale = 2, .width = 1 }, "Z");
+    try hyperlinkEnd(w);
+    try diffStyle(w, heading, .{});
+    try w.writeByte('-');
+    try repeatChar(w, 79);
+    try cursorColumn(w, 1);
+    try eraseChars(w, 12);
+    try clearLine(w, .to_end);
+    try cursorRestore(w);
+    try syncOutput.set(w, false);
+
+    const counted = cost.setMode(syncOutput.number, true) +
+        cost.cursorTo(12, 40) +
+        cost.setStyle(heading) +
+        cost.hyperlinkStart("https://ziglang.org", "id=z") +
+        cost.textSize(.{ .scale = 2, .width = 1 }, "Z") +
+        cost.hyperlinkEnd() +
+        cost.diffStyle(heading, .{}) +
+        1 +
+        cost.repeatChar(79) +
+        cost.cursorColumn(1) +
+        cost.eraseChars(12) +
+        cost.clearLine(.to_end) +
+        cost.cursorRestore() +
+        cost.setMode(syncOutput.number, false);
+    try std.testing.expectEqual(out.written().len, counted);
 }
 
 test "the root module re-exports what the README promises" {
@@ -699,6 +857,17 @@ test "the root module re-exports what the README promises" {
     try resetStyle(w);
     try setStyle(w, .{ .bold = true, .fg = .ansi(.red) });
     try diffStyle(w, .{ .bold = true }, .{ .italic = true });
+    try std.testing.expectEqual(Rgb{ .r = 255, .g = 135, .b = 0 }, paletteRgb(208).?);
+    var read_back: Style = .{};
+    applySgr(&read_back, "1;73");
+    try std.testing.expectEqual(Style{ .bold = true, .script = .superscript }, read_back);
+    try std.testing.expectEqual(@as(u8, 'm'), parseCsi("\x1b[1m").?.final);
+    try std.testing.expect(parseControlString("\x1b]8;;\x1b\\").?.terminated);
+
+    // Every length in `cost` is named for a writer the root exports.
+    inline for (@typeInfo(cost).@"struct".decls) |decl| {
+        if (!@hasDecl(@This(), decl.name)) @compileError("cost." ++ decl.name ++ " has no writer");
+    }
 
     try queryDeviceAttributes(w);
     try querySecondaryDeviceAttributes(w);
@@ -759,6 +928,14 @@ test "the root module re-exports what the README promises" {
         .press = true,
         .pixels = true,
     }, 8, 16).x);
+    try std.testing.expectEqualStrings("\u{e9}", KeyEvent.typed("\u{e9}", .{}).text());
+    try std.testing.expectEqual(@as(u32, 80), toCellsAt(.{
+        .button = .left,
+        .x = 1001,
+        .y = 4,
+        .press = true,
+        .pixels = true,
+    }, 12.5, 16).col);
 
     var buffer: [8]u8 = undefined;
     const reply: ClipboardReply = parseClipboardReply("\x1b]52;c;aGk=\x1b\\").?;

@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `parseHyperlink` and `parseTextSize` read the bodies of OSC 8 and OSC 66 back into a `Hyperlink` and a `SizedText`, the inverses of `hyperlinkStart` and `textSize`; the test-only OSC 66 reader is gone.
+
+- `paletteRgb` gives the colour of a 256-colour palette entry above the sixteen theme slots: the cube and the grey ramp terminals start with.
+
+- `KeyEvent.typed` builds the keypress that types a cluster with given modifiers, carrying its text on the parser's terms.
+
+- `toCellsAt` converts a mouse report into its cell and the position inside that cell for a fractional cell size, agreeing with `toCells` for whole-number sizes.
+
+- `KeyParser.undecided` says whether what is pending is the lone `ESC`, `ESC [` or `ESC O` that only a timeout settles; `flush` settles exactly those.
+
+- `applySgr` applies the parameters of a `CSI ... m` to a `Style`, reading back everything `diffStyle` writes, superscript and subscript included; `parseCsi` and `parseControlString` frame control sequences and control strings in a byte stream, and `KeyParser` frames its control strings with the latter.
+
+- `cost` counts the bytes the style, cursor, erase, repeat, mode, hyperlink and text-size writers write for given arguments, running the same spelling code into a counter.
+
+- Spell style changes once into a stack buffer with a decimal table, pricing the reset spelling by counting instead of formatting it; the bytes written are unchanged.
+
+- Read single-byte ASCII and plain CSI values without copying them, and resume incomplete sequences after appending new input.
+
 - Give benchmark input shared quiet burst boundaries so termwiz settles unsupported prefixes before the whole stream accumulates.
 
 - Reject undeclared dependencies, duplicate layer membership and imports of source executables.

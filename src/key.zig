@@ -37,6 +37,7 @@
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
+const framing = @import("framing.zig");
 const mouse = @import("mouse.zig");
 const query = @import("query.zig");
 const replies = @import("reply.zig");
@@ -273,6 +274,8 @@ pub const KeyParser = struct {
     skipping: ?Skipping = null,
     /// How many bytes of that sequence have been dropped so far.
     dropped: usize = 0,
+    // The last decode needs more bytes, rather than another decode of the same prefix.
+    waiting: bool = false,
 
     /// A parser over `buffer`, which must be at least `min_buffer` bytes.
     pub fn init(buffer: []u8) KeyParser {
@@ -299,9 +302,9 @@ pub const KeyParser = struct {
     /// rest of it has not arrived.
     ///
     /// Empty whenever the last iterator was run to null and the input ended
-    /// on a sequence boundary. A caller timing the lone `ESC` watches this:
-    /// a single `0x1b` here, unchanged since the last read, is a user who
-    /// pressed Escape.
+    /// on a sequence boundary. A caller timing the lone `ESC` asks
+    /// `undecided`, which reads this: a single `0x1b` here, unchanged since
+    /// the last read, is a user who pressed Escape.
     ///
     /// Borrowed from the parser's buffer, on the same terms as
     /// `Event.unhandled`.
@@ -332,6 +335,7 @@ pub const KeyParser = struct {
         defer {
             p.start = 0;
             p.end = 0;
+            p.waiting = false;
         }
         // A sequence too long for the buffer whose end never arrived. The
         // bytes are already gone; what is owed is the count.
@@ -341,12 +345,30 @@ pub const KeyParser = struct {
             p.dropped = 0;
             return .{ .overflow = dropped };
         }
-        if (held.len == 0 or held[0] != seq.esc) return null;
+        if (!p.undecided()) return null;
         if (held.len == 1) return .{ .key = .{ .key = .escape } };
-        if (held.len == 2 and (held[1] == '[' or held[1] == 'O')) {
-            return .{ .key = .{ .key = .{ .char = held[1] }, .mods = .{ .alt = true } } };
-        }
-        return null;
+        return .{ .key = .{ .key = .{ .char = held[1] }, .mods = .{ .alt = true } } };
+    }
+
+    /// Whether what is pending is a key as well as the start of a sequence,
+    /// which only time can settle: a lone `ESC`, or `ESC [` or `ESC O`.
+    ///
+    /// Exactly the bytes `flush` turns into a key. A program that waits on
+    /// its input with a timeout uses this to decide whether the escape
+    /// timeout applies: while it is true, a quiet input means the user
+    /// pressed the key, and the program calls `flush`; while it is false,
+    /// either nothing is pending or what is pending is a sequence whose end
+    /// is still to arrive, and only more input settles it. False while the
+    /// tail of an over-long sequence is being skipped, which `flush` reports
+    /// as an overflow rather than as a key.
+    pub fn undecided(p: *const KeyParser) bool {
+        if (p.skipping != null) return false;
+        const held = p.pending();
+        return switch (held.len) {
+            1 => held[0] == seq.esc,
+            2 => held[0] == seq.esc and (held[1] == '[' or held[1] == 'O'),
+            else => false,
+        };
     }
 
     /// A framed sequence read as the mouse report or the reply it is, when
@@ -378,6 +400,7 @@ pub const KeyParser = struct {
         p.console.reset();
         p.skipping = null;
         p.dropped = 0;
+        p.waiting = false;
     }
 
     /// Moves the unread bytes to the front, making room at the end.
@@ -412,6 +435,36 @@ pub const Events = struct {
     /// Null does not mean the parser is empty: see `KeyParser.pending`.
     pub fn next(it: *Events) ?Event {
         const p = it.parser;
+        if (p.repeating == null and p.skipping == null and p.start == p.end) {
+            if (it.fresh.len == 0) return null;
+            if (it.fresh.len == 1 and it.fresh[0] < 0x80 and it.fresh[0] != seq.esc) {
+                // A single ASCII key owns its text. Nothing needs to survive
+                // this call in the retained buffer, including control keys.
+                const byte = it.fresh[0];
+                const event: Event = if (byte >= 0x20 and byte < 0x7f) .{ .key = asciiText(byte) } else decodePlain(it.fresh, .{}, 0).ready.event;
+                it.fresh = it.fresh[1..];
+                return event;
+            }
+        }
+        if (p.waiting and it.fresh.len == 1 and p.end - p.start == 2 and
+            p.buffer[p.start] == seq.esc and p.buffer[p.start + 1] == '[')
+        {
+            if (bareCsiEvent(it.fresh[0])) |event| {
+                // This final completes a key or focus event, both values.
+                // The two-byte introducer no longer needs to be retained.
+                p.start = 0;
+                p.end = 0;
+                p.waiting = false;
+                it.fresh = it.fresh[1..];
+                return event;
+            }
+        }
+        return it.nextBuffered();
+    }
+
+    // Keep framing and reply decoding out of the single-key read loop.
+    noinline fn nextBuffered(it: *Events) ?Event {
+        const p = it.parser;
 
         // A repeat owed from a win32 sequence comes before any new bytes, so
         // that a held key arrives in the order it was typed.
@@ -435,7 +488,13 @@ pub const Events = struct {
             // buffer per keypress and costs more the larger the buffer is.
             // The other place it is done is on `.incomplete`, which is the
             // only other time more bytes can change the answer.
-            if (p.start == p.end and it.fresh.len != 0) _ = it.fill();
+            if (p.waiting) {
+                if (it.fresh.len == 0) return null;
+                _ = it.fill();
+                p.waiting = false;
+            } else if (p.start == p.end and it.fresh.len != 0) {
+                _ = it.fill();
+            }
 
             if (p.start == p.end) return null;
 
@@ -480,6 +539,7 @@ pub const Events = struct {
                         p.end = kept;
                         continue;
                     }
+                    p.waiting = true;
                     return null;
                 },
             }
@@ -544,7 +604,11 @@ pub const Events = struct {
         const p = it.parser;
         p.compact();
         const take = @min(p.buffer.len - p.end, it.fresh.len);
-        @memcpy(p.buffer[p.end..][0..take], it.fresh[0..take]);
+        if (take == 1) {
+            p.buffer[p.end] = it.fresh[0];
+        } else {
+            @memcpy(p.buffer[p.end..][0..take], it.fresh[0..take]);
+        }
         p.end += take;
         it.fresh = it.fresh[take..];
         return take;
@@ -623,6 +687,13 @@ fn decodeRun(bytes: []const u8) Decoded {
     return ready(.{ .text = bytes[0..len] }, len);
 }
 
+// An unmodified printable ASCII key, including its owned text.
+fn asciiText(byte: u8) KeyEvent {
+    var event: KeyEvent = .{ .key = .{ .char = byte }, .text_len = 1 };
+    event.text_buffer[0] = byte;
+    return event;
+}
+
 /// Reads a key that is not introduced by `ESC`: a C0 control, or UTF-8 text.
 ///
 /// `prefix` is how many bytes came before `bytes` in the sequence being
@@ -698,23 +769,15 @@ fn decodeShortEscape(bytes: []const u8) Decoded {
 }
 
 /// Frames a control string: `OSC`, `DCS`, `SOS`, `PM` or `APC` up to its
-/// terminator.
+/// terminator, `ST` or `BEL`, with `framing.parseControlString`.
 ///
-/// `ST` is the terminator the standard names and `BEL` the one xterm has
-/// always accepted, so both end a string here. An `ESC` that is not the start
-/// of an `ST` abandons the string, which is how a terminal that was
-/// interrupted mid-reply does not eat the sequence that follows.
+/// An `ESC` that is not the start of an `ST` abandons the string, which is
+/// how a terminal that was interrupted mid-reply does not eat the sequence
+/// that follows: what there is goes back, and reading starts again at the
+/// `ESC`.
 fn decodeString(bytes: []const u8) Decoded {
-    var i: usize = 2;
-    while (i < bytes.len) : (i += 1) {
-        if (bytes[i] == seq.bel) return ready(.{ .unhandled = bytes[0 .. i + 1] }, i + 1);
-        if (bytes[i] != seq.esc) continue;
-        if (i + 1 >= bytes.len) return .incomplete;
-        if (bytes[i + 1] == '\\') return ready(.{ .unhandled = bytes[0 .. i + 2] }, i + 2);
-        // Abandoned: give back what there is and start again at the ESC.
-        return ready(.{ .unhandled = bytes[0..i] }, i);
-    }
-    return .incomplete;
+    const string = framing.parseControlString(bytes) orelse return .incomplete;
+    return ready(.{ .unhandled = bytes[0..string.len] }, string.len);
 }
 
 /// Reads `SS3`: `ESC O` and one final byte, with the modifier parameter some
@@ -798,6 +861,12 @@ fn rxvtCursorKey(final: u8) ?Key {
 /// still a sequence whose length is known, so it comes back whole as
 /// `Event.unhandled` rather than being resynchronised byte by byte.
 fn decodeCsi(bytes: []const u8, report_key_up: bool, console: *win32.ConsoleState) Decoded {
+    // A final immediately after CSI has no parameters to scan or copy.
+    // M is deliberately absent: its three X10 fields still need framing.
+    if (bytes.len > 2 and bytes[2] >= 0x40 and bytes[2] <= 0x7e) {
+        if (bareCsiEvent(bytes[2])) |event| return ready(event, 3);
+    }
+
     // The Linux virtual console spells F1 through F5 with a second `[` in
     // front of the final. Treat that byte as an intermediate here even
     // though it lies in the standard final-byte range.
@@ -942,20 +1011,25 @@ fn win32Event(params: Params, console: *win32.ConsoleState) ?Win32Report {
     return .{ .report = .{ .event = ev, .repeat = @max(repeat, 1) } };
 }
 
-/// The event a parameterised `CSI` with no private marker stands for, or null
-/// when it stands for none.
+/// The value event a CSI final names without parameters, or null.
+fn bareCsiEvent(final: u8) ?Event {
+    return switch (final) {
+        'A', 'B', 'C', 'D', 'E', 'F', 'H', 'P', 'Q', 'S' => .{ .key = .{ .key = ss3Key(final).? } },
+        'a', 'b', 'c', 'd' => .{ .key = .{ .key = rxvtCursorKey(final).?, .mods = .{ .shift = true } } },
+        'Z' => .{ .key = .{ .key = .tab, .mods = .{ .shift = true } } },
+        'I' => .focus_in,
+        'O' => .focus_out,
+        else => null,
+    };
+}
+
+/// The event a parameterised CSI with no private marker stands for, or null.
 fn csiEvent(final: u8, params: Params) ?Event {
+    if (params.count == 0) return bareCsiEvent(final);
     switch (final) {
         'u' => return kittyEvent(params),
         '~' => return tildeEvent(params),
         '^', '@' => return rxvtNumberedEvent(final, params),
-        'a', 'b', 'c', 'd' => {
-            if (params.count != 0) return null;
-            return .{ .key = .{
-                .key = rxvtCursorKey(final).?,
-                .mods = .{ .shift = true },
-            } };
-        },
         'A', 'B', 'C', 'D', 'E', 'F', 'H', 'P', 'Q', 'S' => {
             const key = ss3Key(final).?;
             var ev: KeyEvent = .{ .key = key };
@@ -969,8 +1043,6 @@ fn csiEvent(final: u8, params: Params) ?Event {
             ev.mods.shift = true;
             return .{ .key = ev };
         },
-        'I' => return if (params.count == 0) .focus_in else null,
-        'O' => return if (params.count == 0) .focus_out else null,
         't' => return resizeEvent(params),
         // R is the cursor position report. A terminal that wants to send F3
         // with modifiers sends `CSI 13 ; mods ~` instead, for this reason.
@@ -1260,8 +1332,10 @@ const max_subparams = 4;
 /// `:`, with a missing number kept as null rather than as a zero — because
 /// `CSI ; 5 A` and `CSI 0 ; 5 A` are not the same sequence.
 const Params = struct {
-    values: [max_params][max_subparams]?u32 = @splat(@splat(null)),
-    subs: [max_params]u8 = @splat(0),
+    // Only entries below count and subs are read. Initialize each as it
+    // arrives, including an omitted number, rather than clearing all slots.
+    values: [max_params][max_subparams]?u32 = undefined,
+    subs: [max_params]u8 = undefined,
     count: u8 = 0,
 
     /// Sub-parameter `j` of parameter `i`, or null when either is absent.
@@ -1283,6 +1357,7 @@ fn scanParams(bytes: []const u8) ?Params {
     var j: usize = 0;
     params.count = 1;
     params.subs[0] = 1;
+    params.values[0][0] = null;
 
     var rest = bytes;
     while (rest.len != 0) {
@@ -1293,12 +1368,14 @@ fn scanParams(bytes: []const u8) ?Params {
                 j = 0;
                 params.count = @intCast(i + 1);
                 params.subs[i] = 1;
+                params.values[i][0] = null;
                 rest = rest[1..];
             },
             ':' => {
                 j += 1;
                 if (j >= max_subparams) return null;
                 params.subs[i] = @intCast(j + 1);
+                params.values[i][j] = null;
                 rest = rest[1..];
             },
             '0'...'9' => {
@@ -2036,6 +2113,66 @@ test "an abandoned iterator exposes the unread tail for a later feed" {
     try std.testing.expectEqual(@as(?Event, null), resumed.next());
 }
 
+test "single-byte ASCII keys need no retained storage and own their text" {
+    var storage: [KeyParser.min_buffer]u8 = @splat(0xa5);
+    var parser = KeyParser.init(&storage);
+    for (0..128) |value| {
+        if (value == seq.esc) continue;
+        var input = [_]u8{@intCast(value)};
+        var events = parser.feed(&input);
+        const event = events.next().?;
+        try std.testing.expect(event == .key);
+        const saved = event.key;
+        input[0] = '?';
+        // The value outlives the input; the caller's retained buffer was not
+        // used as a temporary for a byte that was already a complete key.
+        try std.testing.expectEqual(saved, event.key);
+        try std.testing.expectEqualSlices(u8, &@as([KeyParser.min_buffer]u8, @splat(0xa5)), &storage);
+        try std.testing.expectEqual(@as(usize, 0), events.remainder().len);
+        try std.testing.expectEqual(@as(?Event, null), events.next());
+        try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
+    }
+}
+
+test "a split plain CSI final needs no retained storage" {
+    const cases = [_]struct { final: u8, event: Event }{
+        .{ .final = 'A', .event = .{ .key = .{ .key = .up } } },
+        .{ .final = 'D', .event = .{ .key = .{ .key = .left } } },
+        .{ .final = 'Z', .event = .{ .key = .{ .key = .tab, .mods = .{ .shift = true } } } },
+        .{ .final = 'I', .event = .focus_in },
+        .{ .final = 'O', .event = .focus_out },
+    };
+    for (cases) |case| {
+        var storage: [KeyParser.min_buffer]u8 = @splat(0xa5);
+        var parser = KeyParser.init(&storage);
+        var prefix = parser.feed("\x1b[");
+        try std.testing.expectEqual(@as(?Event, null), prefix.next());
+        const before = storage;
+        var events = parser.feed(&.{case.final});
+        try std.testing.expectEqualDeep(case.event, events.next().?);
+        try std.testing.expectEqualSlices(u8, &before, &storage);
+        try std.testing.expectEqual(@as(?Event, null), events.next());
+        try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
+    }
+}
+
+test "a held prefix survives empty feeds and an iterator stopped after its key" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    var parser = KeyParser.init(&storage);
+    var first = parser.feed("\x1b[");
+    try std.testing.expectEqual(@as(?Event, null), first.next());
+    for (0..3) |_| {
+        var empty = parser.feed("");
+        try std.testing.expectEqual(@as(?Event, null), empty.next());
+        try std.testing.expectEqualStrings("\x1b[", parser.pending());
+    }
+    var second = parser.feed("Ab");
+    try std.testing.expectEqual(Key.up, second.next().?.key.key);
+    var resumed = parser.feed(second.remainder());
+    try std.testing.expectEqual(Key{ .char = 'b' }, resumed.next().?.key.key);
+    try std.testing.expectEqual(@as(?Event, null), resumed.next());
+}
+
 test "a lone escape is held, never guessed at" {
     var storage: [KeyParser.min_buffer]u8 = undefined;
     var parser: KeyParser = .init(&storage);
@@ -2064,6 +2201,41 @@ test "flush resolves the two other sequences that are also keys" {
     var second = letter.feed("\x1bO");
     try std.testing.expectEqual(@as(?Event, null), second.next());
     try std.testing.expectEqual(Key{ .char = 'O' }, letter.flush().?.key.key);
+}
+
+test "undecided is true exactly when flush would settle a key" {
+    var storage: [KeyParser.min_buffer]u8 = undefined;
+    const inputs = [_][]const u8{
+        "",       "\x1b",          "\x1b[",    "\x1bO",    "\x1b[1", "\x1b[1;5", "\x1b]0;t",
+        "a",      "\x1bP",         "\x1b\x1b", "\x1b[A",   "\x1bOA", "x\x1b",    "\x1b[<0;1",
+        "\x1b[?", "\x1b]8;;u\x1b", "\xe2\x82", "\x1b\xe2", "\x1b_G",
+    };
+    for (inputs) |input| {
+        var parser: KeyParser = .init(&storage);
+        var events = parser.feed(input);
+        while (events.next()) |_| {}
+        const undecided = parser.undecided();
+        const settled = parser.flush();
+        const key = if (settled) |event| event == .key else false;
+        std.testing.expectEqual(key, undecided) catch |err| {
+            std.debug.print("pending {f}\n", .{std.ascii.hexEscape(input, .lower)});
+            return err;
+        };
+    }
+
+    // The tail of an over-long sequence is not a key, though it ends on one
+    // of the bytes that would be.
+    var parser: KeyParser = .init(&storage);
+    var long: [KeyParser.min_buffer + 8]u8 = undefined;
+    long[0] = 0x1b;
+    long[1] = ']';
+    @memset(long[2..], 'x');
+    var events = parser.feed(&long);
+    while (events.next()) |_| {}
+    var tail = parser.feed("\x1b");
+    while (tail.next()) |_| {}
+    try std.testing.expect(!parser.undecided());
+    try std.testing.expect(parser.flush().? == .overflow);
 }
 
 test "flush throws away a sequence the terminal began and did not finish" {
