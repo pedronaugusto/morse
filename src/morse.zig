@@ -916,6 +916,7 @@ test "the root module re-exports what the README promises" {
         .press = true,
         .pixels = true,
     }, 8, 16).x);
+    try std.testing.expectEqualStrings("\u{e9}", KeyEvent.typed("\u{e9}", .{}).text());
     try std.testing.expectEqual(@as(u32, 80), toCellsAt(.{
         .button = .left,
         .x = 1001,

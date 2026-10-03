@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `KeyEvent.typed` builds the keypress that types a cluster with given modifiers, carrying its text on the parser's terms.
+
 - `toCellsAt` converts a mouse report into its cell and the position inside that cell for a fractional cell size, agreeing with `toCells` for whole-number sizes.
 
 - `KeyParser.undecided` says whether what is pending is the lone `ESC`, `ESC [` or `ESC O` that only a timeout settles; `flush` settles exactly those.
