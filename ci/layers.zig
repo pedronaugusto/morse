@@ -64,3 +64,16 @@ pub const required = blk: {
     };
     break :blk paths;
 };
+
+/// Tokens only their owners may spell. morse spells and reads bytes; the
+/// terminal device, its modes and the console are conduit's.
+pub const owned: []const gantry.rules.TokenRule = &.{
+    .{ .name = "console owner", .token = "CreateFileW" },
+    .{ .name = "console owner", .token = "ReadConsoleInputW" },
+    .{ .name = "console owner", .token = "GetConsoleMode" },
+    .{ .name = "console owner", .token = "SetConsoleMode" },
+    .{ .name = "console owner", .kind = .string, .token = "kernel32" },
+    .{ .name = "terminal mode owner", .token = "tcgetattr" },
+    .{ .name = "terminal mode owner", .token = "tcsetattr" },
+    .{ .name = "terminal mode owner", .token = "ioctl" },
+};
