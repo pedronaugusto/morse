@@ -24,6 +24,7 @@
 const clipboard = @import("clipboard.zig");
 const cursor = @import("cursor.zig");
 const device = @import("device.zig");
+const framing = @import("framing.zig");
 const graphics = @import("graphics.zig");
 const key = @import("key.zig");
 const mode = @import("mode.zig");
@@ -346,6 +347,25 @@ pub const resetStyle = style.resetStyle;
 pub const setStyle = style.setStyle;
 /// Writes only what differs between two styles.
 pub const diffStyle = style.diffStyle;
+/// Applies the parameters of one `CSI ... m` to a style: what `diffStyle`
+/// wrote, read back.
+pub const applySgr = style.applySgr;
+
+//=========================================================================
+// Reading sequences back.
+//=========================================================================
+
+/// One control sequence, `CSI ... final`, framed.
+pub const Csi = framing.Csi;
+/// Frames the control sequence at the front of a byte stream, or null when
+/// it is not all there.
+pub const parseCsi = framing.parseCsi;
+/// One control string, `OSC`, `DCS`, `SOS`, `PM` or `APC` to its
+/// terminator, framed.
+pub const ControlString = framing.ControlString;
+/// Frames the control string at the front of a byte stream, or null when it
+/// is not all there.
+pub const parseControlString = framing.parseControlString;
 
 //=========================================================================
 // Lengths, counted without writing.
@@ -677,6 +697,7 @@ test {
     _ = @import("clipboard.zig");
     _ = @import("cursor.zig");
     _ = @import("device.zig");
+    _ = @import("framing.zig");
     _ = @import("graphics.zig");
     _ = @import("key.zig");
     _ = @import("mode.zig");
@@ -820,6 +841,11 @@ test "the root module re-exports what the README promises" {
     try resetStyle(w);
     try setStyle(w, .{ .bold = true, .fg = .ansi(.red) });
     try diffStyle(w, .{ .bold = true }, .{ .italic = true });
+    var read_back: Style = .{};
+    applySgr(&read_back, "1;73");
+    try std.testing.expectEqual(Style{ .bold = true, .script = .superscript }, read_back);
+    try std.testing.expectEqual(@as(u8, 'm'), parseCsi("\x1b[1m").?.final);
+    try std.testing.expect(parseControlString("\x1b]8;;\x1b\\").?.terminated);
 
     // Every length in `cost` is named for a writer the root exports.
     inline for (@typeInfo(cost).@"struct".decls) |decl| {

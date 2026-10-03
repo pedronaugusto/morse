@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
+const framing = @import("framing.zig");
 const seq = @import("seq.zig");
 const strings = @import("strings.zig");
 
@@ -684,4 +685,20 @@ test "every hyperlink and text-size cost is the length its writer writes" {
         try textSize(&w, size, text);
         try std.testing.expectEqual(w.buffered().len, cost.textSize(size, text));
     }
+}
+
+test "every string this package writes frames whole, terminator and all" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try hyperlinkStart(&out.writer, "https://ziglang.org", "id=z");
+    try textSize(&out.writer, .{ .scale = 2, .width = 1 }, "Z");
+    try title(&out.writer, "a title");
+    var rest = out.written();
+    var framed: usize = 0;
+    while (rest.len != 0) : (framed += 1) {
+        const s = framing.parseControlString(rest).?;
+        try std.testing.expect(s.terminated);
+        rest = rest[s.len..];
+    }
+    try std.testing.expectEqual(@as(usize, 3), framed);
 }

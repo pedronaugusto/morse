@@ -37,6 +37,7 @@
 
 const std = @import("std");
 const corpus = @import("corpus.zig");
+const framing = @import("framing.zig");
 const mouse = @import("mouse.zig");
 const query = @import("query.zig");
 const replies = @import("reply.zig");
@@ -750,23 +751,15 @@ fn decodeShortEscape(bytes: []const u8) Decoded {
 }
 
 /// Frames a control string: `OSC`, `DCS`, `SOS`, `PM` or `APC` up to its
-/// terminator.
+/// terminator, `ST` or `BEL`, with `framing.parseControlString`.
 ///
-/// `ST` is the terminator the standard names and `BEL` the one xterm has
-/// always accepted, so both end a string here. An `ESC` that is not the start
-/// of an `ST` abandons the string, which is how a terminal that was
-/// interrupted mid-reply does not eat the sequence that follows.
+/// An `ESC` that is not the start of an `ST` abandons the string, which is
+/// how a terminal that was interrupted mid-reply does not eat the sequence
+/// that follows: what there is goes back, and reading starts again at the
+/// `ESC`.
 fn decodeString(bytes: []const u8) Decoded {
-    var i: usize = 2;
-    while (i < bytes.len) : (i += 1) {
-        if (bytes[i] == seq.bel) return ready(.{ .unhandled = bytes[0 .. i + 1] }, i + 1);
-        if (bytes[i] != seq.esc) continue;
-        if (i + 1 >= bytes.len) return .incomplete;
-        if (bytes[i + 1] == '\\') return ready(.{ .unhandled = bytes[0 .. i + 2] }, i + 2);
-        // Abandoned: give back what there is and start again at the ESC.
-        return ready(.{ .unhandled = bytes[0..i] }, i);
-    }
-    return .incomplete;
+    const string = framing.parseControlString(bytes) orelse return .incomplete;
+    return ready(.{ .unhandled = bytes[0..string.len] }, string.len);
 }
 
 /// Reads `SS3`: `ESC O` and one final byte, with the modifier parameter some

@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `applySgr` applies the parameters of a `CSI ... m` to a `Style`, reading back everything `diffStyle` writes, superscript and subscript included; `parseCsi` and `parseControlString` frame control sequences and control strings in a byte stream, and `KeyParser` frames its control strings with the latter.
+
 - `cost` counts the bytes the style, cursor, erase, repeat, mode, hyperlink and text-size writers write for given arguments, running the same spelling code into a counter.
 
 - Spell style changes once into a stack buffer with a decimal table, pricing the reset spelling by counting instead of formatting it; the bytes written are unchanged.

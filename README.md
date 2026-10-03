@@ -58,6 +58,8 @@ replies independent of the read buffer.
 default state; `diffStyle` writes the changes between two known styles. Cursor and erase
 commands use typed parameters. `cost` counts what the style, cursor, erase, repeat, mode,
 hyperlink and text-size writers would write, through the code that writes it.
+`applySgr` reads a style change back into a `Style`, and `parseCsi` and
+`parseControlString` frame sequences, for a program that reads what was written.
 Text-bearing control sequences reject C0 controls and DEL before writing; `printable`
 explicitly strips them into a supplied buffer.
 

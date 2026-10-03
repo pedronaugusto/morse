@@ -5,6 +5,7 @@ pub const layers: []const gantry.rules.Layer = &.{
     .{ .name = "values", .patterns = &.{
         "src/base64.zig",
         "src/corpus.zig",
+        "src/framing.zig",
         "src/key_types.zig",
         "src/seq.zig",
         "src/strings.zig",

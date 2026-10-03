@@ -610,6 +610,146 @@ pub const cost = struct {
     }
 };
 
+/// Applies the parameters of one `CSI ... m` to `style`, the way a terminal
+/// does: the bytes between the `CSI` and the `m`, read as `diffStyle` writes
+/// them and as terminals take them.
+///
+/// The inverse of `diffStyle`. Whatever `diffStyle(w, from, to)` writes,
+/// applied here to `from`, gives `to` -- with one exception that is in the
+/// bytes, not the reading: SGR 58 spells an `.ansi` underline colour and a
+/// `.palette` one of the same index alike, so that colour comes back as
+/// `.palette`. The suite holds the two to that over random pairs of styles.
+///
+/// Read beyond what this package writes, as a terminal reads it: parameters
+/// are separated by `;` and a parameter's sub-parameters by `:`, an empty
+/// parameter is `0`, and an empty list is `0` too, so `CSI m` resets.
+/// Extended colours are read in both spellings, `38;5;n` and `38:5:n`,
+/// `38;2;r;g;b`, `38:2:r:g:b` and `38:2::r:g:b`, for all three of `38`, `48`
+/// and `58`; an extended colour cut short or out of range changes nothing
+/// and takes the fields it had. A code this package does not know is passed
+/// over.
+pub fn applySgr(style: *Style, params: []const u8) void {
+    var fields = std.mem.splitScalar(u8, params, ';');
+    while (fields.next()) |field| {
+        var subs = std.mem.splitScalar(u8, field, ':');
+        const code = sgrNumber(subs.first()) orelse continue;
+        switch (code) {
+            38, 48, 58 => {
+                const color = if (subs.peek() != null) colonColor(&subs) else semicolonColor(&fields);
+                if (color) |c| switch (code) {
+                    38 => style.fg = c,
+                    48 => style.bg = c,
+                    else => style.underline_color = c,
+                };
+            },
+            4 => style.underline = if (subs.next()) |sub| underlineOf(sub) else .single,
+            else => applyCode(style, code),
+        }
+    }
+}
+
+/// Every SGR code that is one attribute or one named colour on its own.
+fn applyCode(style: *Style, code: u32) void {
+    switch (code) {
+        0 => style.* = .{},
+        1 => style.bold = true,
+        2 => style.dim = true,
+        3 => style.italic = true,
+        5 => style.blink = true,
+        7 => style.reverse = true,
+        8 => style.hidden = true,
+        9 => style.strikethrough = true,
+        22 => {
+            style.bold = false;
+            style.dim = false;
+        },
+        23 => style.italic = false,
+        24 => style.underline = .none,
+        25 => style.blink = false,
+        27 => style.reverse = false,
+        28 => style.hidden = false,
+        29 => style.strikethrough = false,
+        30...37 => style.fg = .ansi(@enumFromInt(code - 30)),
+        39 => style.fg = .default,
+        40...47 => style.bg = .ansi(@enumFromInt(code - 40)),
+        49 => style.bg = .default,
+        53 => style.overline = true,
+        55 => style.overline = false,
+        59 => style.underline_color = .default,
+        73 => style.script = .superscript,
+        74 => style.script = .subscript,
+        75 => style.script = .none,
+        90...97 => style.fg = .ansi(@enumFromInt(code - 90 + 8)),
+        100...107 => style.bg = .ansi(@enumFromInt(code - 100 + 8)),
+        else => {},
+    }
+}
+
+/// A parameter as SGR reads it: digits, or nothing, which is zero. Null for
+/// anything else, and for a number too large to be a code.
+fn sgrNumber(field: []const u8) ?u32 {
+    if (field.len == 0) return 0;
+    const scanned = seq.scanInt(u32, field) orelse return null;
+    return if (scanned.len == field.len) scanned.value else null;
+}
+
+/// The same, for a value that has to fit in a byte: a channel or an index.
+fn sgrByte(field: []const u8) ?u8 {
+    return std.math.cast(u8, sgrNumber(field) orelse return null);
+}
+
+/// The underline a `4:n` names. A style past the five SGR numbers is drawn
+/// by terminals as the plain one, so it reads as that.
+fn underlineOf(sub: []const u8) Underline {
+    const n = sgrNumber(sub) orelse return .single;
+    return if (n <= 5) @enumFromInt(n) else .single;
+}
+
+/// The colon spelling of an extended colour, from the sub-parameters after
+/// the `38`, `48` or `58`: `5:n`, `2:r:g:b`, or `2::r:g:b` with the colour
+/// space left empty.
+fn colonColor(subs: *std.mem.SplitIterator(u8, .scalar)) ?Color {
+    switch (sgrNumber(subs.next() orelse return null) orelse return null) {
+        5 => return .palette(sgrByte(subs.next() orelse return null) orelse return null),
+        2 => {
+            var channels: [4][]const u8 = undefined;
+            var count: usize = 0;
+            while (subs.next()) |sub| : (count += 1) {
+                if (count == channels.len) return null;
+                channels[count] = sub;
+            }
+            // Four fields are the colour space and the three channels; three
+            // are the channels alone.
+            const rgb = switch (count) {
+                3 => channels[0..3],
+                4 => channels[1..4],
+                else => return null,
+            };
+            return .rgb(
+                sgrByte(rgb[0]) orelse return null,
+                sgrByte(rgb[1]) orelse return null,
+                sgrByte(rgb[2]) orelse return null,
+            );
+        },
+        else => return null,
+    }
+}
+
+/// The semicolon spelling, from the parameters after the `38`, `48` or `58`:
+/// `5;n` or `2;r;g;b`. Takes the fields it reads, as terminals do.
+fn semicolonColor(fields: *std.mem.SplitIterator(u8, .scalar)) ?Color {
+    switch (sgrNumber(fields.next() orelse return null) orelse return null) {
+        5 => return .palette(sgrByte(fields.next() orelse return null) orelse return null),
+        2 => {
+            const r = sgrByte(fields.next() orelse return null);
+            const g = sgrByte(fields.next() orelse return null);
+            const b = sgrByte(fields.next() orelse return null);
+            return .rgb(r orelse return null, g orelse return null, b orelse return null);
+        },
+        else => return null,
+    }
+}
+
 /// The length of the reset spelling of `from` to `to` when it is strictly
 /// shorter than a difference of `difference` bytes, and null when the
 /// difference is what goes out. The one place `diffStyle` and `cost.diffStyle`
@@ -1723,4 +1863,95 @@ test "the counting encoder spells every byte value on every side as the formatti
             }
         }
     }
+}
+
+/// A style with an `.ansi` underline colour as the `.palette` entry SGR 58
+/// spells it as: the one difference the bytes cannot carry, so styles that
+/// differ only there are the same style to anything reading them back.
+fn asSpelled(style: Style) Style {
+    var out = style;
+    if (out.underline_color.kind == .ansi) out.underline_color = .palette(out.underline_color.index());
+    return out;
+}
+
+/// Applies what `diffStyle(from, to)` writes to `from`: the parameters
+/// between the `CSI` and the `m`, or nothing when it writes nothing.
+fn readBack(from: Style, to: Style) !Style {
+    var buffer: [max_sequence]u8 = undefined;
+    var out: Writer = .fixed(&buffer);
+    try diffStyle(&out, from, to);
+    var got = from;
+    const written = out.buffered();
+    if (written.len == 0) return got;
+    try std.testing.expect(std.mem.startsWith(u8, written, seq.csi) and std.mem.endsWith(u8, written, "m"));
+    applySgr(&got, written[seq.csi.len .. written.len - 1]);
+    return got;
+}
+
+test "applySgr undoes what diffStyle writes, on random pairs of styles" {
+    var prng: std.Random.DefaultPrng = .init(0x5a5a);
+    const random = prng.random();
+    for (0..20_000) |_| {
+        const from = randomStyle(random);
+        const to = randomStyle(random);
+        try std.testing.expectEqual(asSpelled(to), asSpelled(try readBack(from, to)));
+        try std.testing.expectEqual(asSpelled(to), asSpelled(try readBack(.{}, to)));
+        try std.testing.expectEqual(Style{}, try readBack(to, .{}));
+    }
+}
+
+test "applySgr reads every script and overline move back" {
+    const styles = [_]Style{
+        .{},
+        .{ .script = .superscript },
+        .{ .script = .subscript },
+        .{ .overline = true, .script = .subscript, .bold = true },
+        .{ .overline = true },
+    };
+    for (styles) |from| for (styles) |to| {
+        try std.testing.expectEqual(to, try readBack(from, to));
+    };
+}
+
+test "applySgr reads both spellings of every extended colour on all three sides" {
+    const cases = [_]struct { params: []const u8, want: Style }{
+        .{ .params = "38;5;196", .want = .{ .fg = .palette(196) } },
+        .{ .params = "38:5:196", .want = .{ .fg = .palette(196) } },
+        .{ .params = "48;2;1;2;3", .want = .{ .bg = .rgb(1, 2, 3) } },
+        .{ .params = "48:2:1:2:3", .want = .{ .bg = .rgb(1, 2, 3) } },
+        .{ .params = "48:2::1:2:3", .want = .{ .bg = .rgb(1, 2, 3) } },
+        .{ .params = "58:5:9", .want = .{ .underline_color = .palette(9) } },
+        .{ .params = "58;2;9;8;7", .want = .{ .underline_color = .rgb(9, 8, 7) } },
+        .{ .params = "58:2::9:8:7", .want = .{ .underline_color = .rgb(9, 8, 7) } },
+        .{ .params = "31;38;5;2;1", .want = .{ .fg = .palette(2), .bold = true } },
+    };
+    for (cases) |case| {
+        var got: Style = .{};
+        applySgr(&got, case.params);
+        try std.testing.expectEqual(case.want, got);
+    }
+}
+
+test "applySgr reads an empty list and an empty parameter as a reset" {
+    const on: Style = .{ .bold = true, .fg = .ansi(.red), .script = .superscript };
+    var got = on;
+    applySgr(&got, "");
+    try std.testing.expectEqual(Style{}, got);
+    got = on;
+    applySgr(&got, "3;;9");
+    try std.testing.expectEqual(Style{ .strikethrough = true }, got);
+}
+
+test "applySgr passes over what it does not know and what does not fit" {
+    var got: Style = .{};
+    applySgr(&got, "1;6;21;60;x;99999999999;38;5;300;3");
+    try std.testing.expectEqual(Style{ .bold = true, .italic = true }, got);
+    got = .{ .fg = .ansi(.green) };
+    applySgr(&got, "38;2;1;2");
+    try std.testing.expectEqual(Style{ .fg = .ansi(.green) }, got);
+    got = .{};
+    applySgr(&got, "4:9;48:7:1");
+    try std.testing.expectEqual(Style{ .underline = .single }, got);
+    applySgr(&got, "4:0");
+    try std.testing.expectEqual(Style{}, got);
 }
