@@ -26,6 +26,7 @@ const cursor = @import("cursor.zig");
 const device = @import("device.zig");
 const framing = @import("framing.zig");
 const graphics = @import("graphics.zig");
+const iterm = @import("iterm.zig");
 const key = @import("key.zig");
 const key_encode = @import("key_encode.zig");
 const mode = @import("mode.zig");
@@ -36,6 +37,7 @@ const osc = @import("osc.zig");
 const probing = @import("probe.zig");
 const query = @import("query.zig");
 const replies = @import("reply.zig");
+const sixels = @import("sixel.zig");
 const status = @import("status.zig");
 const strings = @import("strings.zig");
 const stripping = @import("strip.zig");
@@ -474,6 +476,13 @@ pub const cost = struct {
 
     /// `encodeKey`.
     pub const encodeKey = key_encode.cost;
+
+    /// `sixel`: the header, every register and every band.
+    pub const sixel = sixels.cost;
+    /// `itermImage`.
+    pub const itermImage = iterm.cost.itermImage;
+    /// `itermImageMultipart`.
+    pub const itermImageMultipart = iterm.cost.itermImageMultipart;
 };
 
 //=========================================================================
@@ -679,6 +688,33 @@ pub const graphics_placeholder = graphics.placeholder;
 pub const graphics_placeholder_max = graphics.placeholder_max;
 
 //=========================================================================
+// Sixel images and iTerm2 inline files.
+//=========================================================================
+
+/// The pixels of a sixel image: palette indices, or RGBA drawn in the
+/// nearest palette colour.
+pub const SixelPixels = sixels.SixelPixels;
+/// What the terminal does with the pixels an image does not draw.
+pub const SixelBackground = sixels.SixelBackground;
+/// One sixel image: its size, pixels, palette and DECSIXEL parameters.
+pub const Sixel = sixels.Sixel;
+/// Writes an image as one sixel string, a band at a time.
+pub const sixel = sixels.sixel;
+/// The most colour registers one sixel image may define.
+pub const sixel_palette_max = sixels.sixel_palette_max;
+/// How big to draw an iTerm2 inline image in one direction.
+pub const ItermSize = iterm.ItermSize;
+/// The keys that travel with an iTerm2 inline file.
+pub const ItermFile = iterm.ItermFile;
+/// Sends a file to draw inline in one `OSC 1337 ; File` sequence.
+pub const itermImage = iterm.itermImage;
+/// Sends a file to draw inline as `MultipartFile`, `FilePart`s and
+/// `FileEnd`.
+pub const itermImageMultipart = iterm.itermImageMultipart;
+/// The file bytes one `FilePart` carries by default.
+pub const iterm_part_bytes = iterm.iterm_part_bytes;
+
+//=========================================================================
 // The multiple cursors protocol.
 //=========================================================================
 
@@ -731,6 +767,7 @@ test {
     _ = @import("device.zig");
     _ = @import("framing.zig");
     _ = @import("graphics.zig");
+    _ = @import("iterm.zig");
     _ = @import("key.zig");
     _ = @import("key_encode.zig");
     _ = @import("mode.zig");
@@ -742,6 +779,7 @@ test {
     _ = @import("query.zig");
     _ = @import("reply.zig");
     _ = @import("seq.zig");
+    _ = @import("sixel.zig");
     _ = @import("status.zig");
     _ = @import("strip.zig");
     _ = @import("style.zig");
@@ -862,6 +900,13 @@ test "the root module re-exports what the README promises" {
     try requestCursorPosition(w);
     try requestExtendedCursorPosition(w);
     try encodeMouse(w, .{ .button = .left, .x = 1, .y = 1, .press = true });
+    try encodeKey(w, .{ .key = .up }, .{});
+    try sixel(w, .{ .width = 1, .height = 1, .pixels = .{ .indexed = &.{0} }, .palette = &.{.{ .r = 1, .g = 2, .b = 3 }} });
+    try itermImage(w, .{}, "x");
+    try itermImageMultipart(w, .{}, "x", iterm_part_bytes);
+    var stripper: Stripper = .{};
+    try stripper.feed(w, "\x1b[1mx");
+    try stripper.finish(w);
 
     try titlePush(w);
     try titlePop(w);

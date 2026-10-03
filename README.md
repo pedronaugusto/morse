@@ -57,8 +57,8 @@ replies independent of the read buffer.
 `Style` describes SGR attributes and colours. `setStyle` writes from the terminal's
 default state; `diffStyle` writes the changes between two known styles. Cursor and erase
 commands use typed parameters. `cost` counts what the style, cursor, erase, repeat, mode,
-hyperlink, text-size and key writers would write, through the code that
-writes it.
+hyperlink, text-size, key, sixel and iTerm2 writers would write, through
+the code that writes it.
 `applySgr` reads a style change back into a `Style`, `parseHyperlink` and
 `parseTextSize` read the bodies of OSC 8 and OSC 66, and `parseCsi` and
 `parseControlString` frame sequences, for a program that reads what was written.
@@ -86,7 +86,12 @@ key it was written from.
 maintains keyboard and mouse state, including held Ctrl records and UTF-16 surrogate
 pairs. Release events are available when the input protocol reports them.
 
-Graphics commands cover kitty image transmission, placement and deletion. Clipboard and
+Graphics commands cover kitty image transmission, placement and deletion.
+`sixel` writes an image as a sixel string from palette indices or RGBA and
+a caller's palette of up to 256 colours, a band at a time from a fixed block
+of stack; `itermImage` and `itermImageMultipart` send a file as iTerm2's
+`OSC 1337` inline image, whole or in pieces. Both are bytes only: choosing
+a palette, decoding and scaling are the caller's. Clipboard and
 capability replies borrow their encoded payloads and decode into supplied buffers.
 `Probe` writes startup questions; `probeAnswered` routes replies to those questions. The
 caller supplies deadlines because a terminal need not answer.
@@ -97,6 +102,7 @@ caller supplies deadlines because a terminal need not answer.
 - It does not hold a screen grid, lay out text or measure grapheme widths.
 - It does not provide widgets or an event loop.
 - It does not track image placement or assign image identifiers.
+- It does not decode or scale an image, or choose a palette for one.
 - It does not maintain a terminal capability database.
 
 <!-- performance: quiet pass -->
