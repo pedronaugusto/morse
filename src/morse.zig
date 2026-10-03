@@ -68,6 +68,10 @@ pub const hyperlinkStart = osc.hyperlinkStart;
 pub const hyperlinkEnd = osc.hyperlinkEnd;
 /// Writes one piece of text as a hyperlink.
 pub const hyperlink = osc.hyperlink;
+/// One OSC 8 read back: its params and its URI.
+pub const Hyperlink = osc.Hyperlink;
+/// Reads the body of an OSC 8, the inverse of `hyperlinkStart`.
+pub const parseHyperlink = osc.parseHyperlink;
 
 //=========================================================================
 // Text sizing, OSC 66.
@@ -83,6 +87,10 @@ pub const TextSize = osc.TextSize;
 pub const textSize = osc.textSize;
 /// The most text one OSC 66 sequence may carry.
 pub const text_size_max = osc.text_size_max;
+/// One OSC 66 read back: its size and its text.
+pub const SizedText = osc.SizedText;
+/// Reads the body of an OSC 66, the inverse of `textSize`.
+pub const parseTextSize = osc.parseTextSize;
 
 //=========================================================================
 // Semantic prompt marks, OSC 133.

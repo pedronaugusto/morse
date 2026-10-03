@@ -97,7 +97,8 @@ pub fn workingDirectory(w: *Writer, uri: []const u8) strings.Error!void {
 /// before the URI; `id=<name>` is the one terminals act on, joining runs that
 /// share an id into a single link for hover and click. Pass null for none.
 /// C0 controls and DEL in either field are refused before writing.
-/// Percent-encode the URI as the spec requires; params must use its grammar.
+/// Percent-encode the URI as the spec requires; params must use its grammar,
+/// which has no `;`, or `parseHyperlink` reads them back cut at it.
 pub fn hyperlinkStart(w: *Writer, uri: []const u8, params: ?[]const u8) strings.Error!void {
     try strings.checkText(uri);
     if (params) |p| try strings.checkText(p);
@@ -278,82 +279,104 @@ pub const cost = struct {
 };
 
 //=========================================================================
-// Reading an OSC 66 back.
+// Reading OSC 8 and OSC 66 back.
 //
-// Test support, as in `graphics.zig`: there is no reply to this sequence and
-// a program never reads one, so this is here only so the round trip proves
-// the grammar rather than repeating the writer's own bytes.
+// The inverses of the writers above, for a program that reads what a
+// terminal is sent: an emulator, a recorder, a test that checks a renderer's
+// output. Each takes the body `parseControlString` frames, the bytes between
+// `ESC ]` and the terminator, and borrows from it.
 //=========================================================================
 
-/// One OSC 66 sequence, read back.
-const SizedText = struct {
-    /// The colon-separated `key=value` list, still as bytes.
-    metadata: []const u8,
-    /// The text, exactly as it was written.
-    text: []const u8,
-
-    /// The value of one key, or null when the sequence has no such key.
-    fn get(s: SizedText, name: u8) ?[]const u8 {
-        var rest = s.metadata;
-        while (rest.len != 0) {
-            const end = std.mem.indexOfScalar(u8, rest, ':') orelse rest.len;
-            const pair = rest[0..end];
-            if (pair[0] == name) return pair[2..];
-            rest = if (end == rest.len) rest[end..] else rest[end + 1 ..];
-        }
-        return null;
-    }
-
-    /// How many keys the list holds.
-    fn count(s: SizedText) usize {
-        if (s.metadata.len == 0) return 0;
-        var n: usize = 1;
-        for (s.metadata) |b| {
-            if (b == ':') n += 1;
-        }
-        return n;
-    }
+/// One OSC 8 read back: `8 ; params ; uri`.
+pub const Hyperlink = struct {
+    /// The `key=value:key=value` list before the URI, as bytes; empty when
+    /// there is none. `hyperlinkStart` with null params writes it empty.
+    params: []const u8,
+    /// The URI. Empty is the end of a link, which is what `hyperlinkEnd`
+    /// writes.
+    uri: []const u8,
 };
 
-/// Reads `OSC 66 ; metadata ; text ST`, or null.
+/// Reads the body of an OSC 8, or null when it is not one.
 ///
-/// Every key must be one ASCII letter with a run of digits after it, no
-/// letter may appear twice, and the text may hold anything but the
-/// terminator.
-fn readTextSize(bytes: []const u8) ?SizedText {
-    const prefix = seq.osc ++ "66;";
-    if (!std.mem.startsWith(u8, bytes, prefix)) return null;
-    const body = seq.stripStringTerminator(bytes[prefix.len..]) orelse return null;
-
-    const separator = std.mem.indexOfScalar(u8, body, ';') orelse return null;
-    const metadata = body[0..separator];
-    if (!validMetadata(metadata)) return null;
-    return .{ .metadata = metadata, .text = body[separator + 1 ..] };
+/// The params end at the first `;` after the `8`, which the spec does not
+/// allow in them, and the URI is everything after it, `;` included. Neither
+/// field is checked further: a link is acted on as given or not at all, and
+/// that is the reader's choice.
+pub fn parseHyperlink(body: []const u8) ?Hyperlink {
+    const prefix = "8;";
+    if (!std.mem.startsWith(u8, body, prefix)) return null;
+    const rest = body[prefix.len..];
+    const split = std.mem.indexOfScalar(u8, rest, ';') orelse return null;
+    return .{ .params = rest[0..split], .uri = rest[split + 1 ..] };
 }
 
-/// Whether `metadata` is a well-formed, repetition-free `key=value` list.
-fn validMetadata(metadata: []const u8) bool {
-    if (metadata.len == 0) return true;
+/// One OSC 66 read back: `66 ; metadata ; text`.
+pub const SizedText = struct {
+    /// The size the metadata spells, every key it leaves out at its default.
+    size: TextSize,
+    /// The text, exactly as it was written, `;` included.
+    text: []const u8,
+};
+
+/// Reads the body of an OSC 66, or null when it is not one.
+///
+/// The metadata is a `:`-separated list of `key=value` pairs, each key one
+/// lowercase letter and each value a run of decimal digits, no key twice. A
+/// key this package does not write is read and ignored, so a key the
+/// protocol adds later does not lose the text. A key it does write with a
+/// value out of the range `TextSize` holds makes the whole sequence null,
+/// as does any metadata outside that grammar: a reader has no size to draw
+/// it at. `numerator` above `denominator` is read as written, as
+/// `textSize` writes it.
+pub fn parseTextSize(body: []const u8) ?SizedText {
+    const prefix = "66;";
+    if (!std.mem.startsWith(u8, body, prefix)) return null;
+    const rest = body[prefix.len..];
+    const split = std.mem.indexOfScalar(u8, rest, ';') orelse return null;
+    const metadata = rest[0..split];
+
+    var size: TextSize = .{};
     var seen: u32 = 0;
-    var rest = metadata;
-    while (true) {
-        const end = std.mem.indexOfScalar(u8, rest, ':') orelse rest.len;
-        const pair = rest[0..end];
-        if (pair.len < 3 or pair[1] != '=') return false;
-        if (pair[0] < 'a' or pair[0] > 'z') return false;
-
+    var pairs = std.mem.splitScalar(u8, metadata, ':');
+    while (metadata.len != 0) {
+        const pair = pairs.next() orelse break;
+        if (pair.len < 3 or pair[1] != '=') return null;
+        if (pair[0] < 'a' or pair[0] > 'z') return null;
         const bit = @as(u32, 1) << @intCast(pair[0] - 'a');
-        if (seen & bit != 0) return false;
+        if (seen & bit != 0) return null;
         seen |= bit;
-
         for (pair[2..]) |b| {
-            if (b < '0' or b > '9') return false;
+            if (b < '0' or b > '9') return null;
         }
-
-        if (end == rest.len) return true;
-        rest = rest[end + 1 ..];
-        if (rest.len == 0) return false;
+        // Digits only, so the one error left is a value past a byte.
+        const value = std.fmt.parseInt(u8, pair[2..], 10) catch return null;
+        switch (pair[0]) {
+            's' => size.scale = std.math.cast(u3, value) orelse return null,
+            'w' => size.width = std.math.cast(u3, value) orelse return null,
+            'n' => size.numerator = std.math.cast(u4, value) orelse return null,
+            'd' => size.denominator = std.math.cast(u4, value) orelse return null,
+            'v' => size.vertical = std.enums.fromInt(VerticalAlign, value) orelse return null,
+            'h' => size.horizontal = std.enums.fromInt(HorizontalAlign, value) orelse return null,
+            else => {},
+        }
     }
+    return .{ .size = size, .text = rest[split + 1 ..] };
+}
+
+/// Frames `bytes` as one whole OSC and reads it as an OSC 66: the round
+/// trips below go through the framing a reader uses.
+fn readTextSize(bytes: []const u8) ?SizedText {
+    const string = framing.parseControlString(bytes) orelse return null;
+    if (string.introducer != ']' or !string.terminated or string.len != bytes.len) return null;
+    return parseTextSize(string.body);
+}
+
+/// The same for an OSC 8.
+fn readHyperlink(bytes: []const u8) ?Hyperlink {
+    const string = framing.parseControlString(bytes) orelse return null;
+    if (string.introducer != ']' or !string.terminated or string.len != bytes.len) return null;
+    return parseHyperlink(string.body);
 }
 
 test "a default size writes an empty metadata field" {
@@ -364,7 +387,7 @@ test "a default size writes an empty metadata field" {
     try std.testing.expectEqualStrings("\x1b]66;;hi\x1b\\", out.written());
 
     const read = readTextSize(out.written()).?;
-    try std.testing.expectEqual(@as(usize, 0), read.count());
+    try std.testing.expectEqual(TextSize{}, read.size);
     try std.testing.expectEqualStrings("hi", read.text);
 }
 
@@ -381,7 +404,9 @@ test "textSize writes the protocol's own examples" {
         defer out.deinit();
         try textSize(&out.writer, case.size, case.text);
         try std.testing.expectEqualStrings(case.bytes, out.written());
-        try std.testing.expectEqualStrings(case.text, readTextSize(out.written()).?.text);
+        const read = readTextSize(out.written()).?;
+        try std.testing.expectEqual(case.size, read.size);
+        try std.testing.expectEqualStrings(case.text, read.text);
     }
 }
 
@@ -407,14 +432,14 @@ test "every key is written in the order the protocol tabulates them" {
     }, "x");
     try std.testing.expectEqualStrings("\x1b]66;s=7:w=3:n=5:d=15:v=2:h=1;x\x1b\\", out.written());
 
-    const read = readTextSize(out.written()).?;
-    try std.testing.expectEqual(@as(usize, 6), read.count());
-    try std.testing.expectEqualStrings("7", read.get('s').?);
-    try std.testing.expectEqualStrings("3", read.get('w').?);
-    try std.testing.expectEqualStrings("5", read.get('n').?);
-    try std.testing.expectEqualStrings("15", read.get('d').?);
-    try std.testing.expectEqualStrings("2", read.get('v').?);
-    try std.testing.expectEqualStrings("1", read.get('h').?);
+    try std.testing.expectEqual(TextSize{
+        .scale = 7,
+        .width = 3,
+        .numerator = 5,
+        .denominator = 15,
+        .vertical = .center,
+        .horizontal = .right,
+    }, readTextSize(out.written()).?.size);
 }
 
 test "a scale of zero and a scale of one both mean the base size" {
@@ -454,14 +479,13 @@ test "every size the keys can spell round trips through the grammar" {
 
                 const read = readTextSize(out.written()).?;
                 try std.testing.expectEqualStrings("ab", read.text);
-                try std.testing.expectEqual(scale > 1, read.get('s') != null);
-                try std.testing.expectEqual(width != 0, read.get('w') != null);
-                try std.testing.expectEqualStrings("1", read.get('n').?);
-                try std.testing.expectEqualStrings("15", read.get('d').?);
-                try std.testing.expectEqual(
-                    vertical != .top,
-                    read.get('v') != null,
-                );
+                var want = size;
+                // Zero and one are both the base size, written as neither.
+                if (want.scale == 0) want.scale = 1;
+                try std.testing.expectEqual(want, read.size);
+                try std.testing.expectEqual(scale > 1, std.mem.indexOf(u8, out.written(), "s=") != null);
+                try std.testing.expectEqual(width != 0, std.mem.indexOf(u8, out.written(), "w=") != null);
+                try std.testing.expectEqual(vertical != .top, std.mem.indexOf(u8, out.written(), "v=") != null);
             }
             if (width == 7) break;
         }
@@ -469,7 +493,7 @@ test "every size the keys can spell round trips through the grammar" {
     }
 }
 
-test "readTextSize returns null on anything it does not recognise" {
+test "parseTextSize returns null on anything it does not recognise" {
     const rejected = [_][]const u8{
         "", // nothing at all
         "\x1b]66;s=2;x", // no terminator
@@ -483,29 +507,122 @@ test "readTextSize returns null on anything it does not recognise" {
         "\x1b]66;s=2:s=3;x\x1b\\", // the same key twice
         "\x1b]66;S=2;x\x1b\\", // a capital, which this protocol has none of
         "\x1b]66;s=2x;y\x1b\\", // digits with a letter after them
+        "\x1b]66;s=8;x\x1b\\", // a scale past seven
+        "\x1b]66;w=8;x\x1b\\", // a width past seven
+        "\x1b]66;n=16;x\x1b\\", // a numerator past fifteen
+        "\x1b]66;d=99;x\x1b\\", // a denominator past fifteen
+        "\x1b]66;v=3;x\x1b\\", // no such vertical alignment
+        "\x1b]66;h=3;x\x1b\\", // no such horizontal alignment
+        "\x1b]66;s=256;x\x1b\\", // a value past a byte
+        "\x1b]66;s=99999999999999999999;x\x1b\\", // a value past any integer
+        ":s=2;x", // not an OSC 66 body
     };
     for (rejected) |bytes| try std.testing.expect(readTextSize(bytes) == null);
+    for ([_][]const u8{ "", "66", "66;", "6;;x", "66;s=2", " 66;;x" }) |body| {
+        try std.testing.expect(parseTextSize(body) == null);
+    }
 }
 
-test "fuzz readTextSize" {
+test "parseTextSize reads a key it does not write and ignores it" {
+    const read = parseTextSize("66;s=2:x=40:w=1;a;b").?;
+    try std.testing.expectEqual(TextSize{ .scale = 2, .width = 1 }, read.size);
+    try std.testing.expectEqualStrings("a;b", read.text);
+    try std.testing.expectEqual(@as(u3, 0), parseTextSize("66;s=0;a").?.size.scale);
+    try std.testing.expectEqual(@as(u3, 2), parseTextSize("66;s=0002;a").?.size.scale);
+}
+
+test "parseHyperlink reads params before the first semicolon and the URI after it" {
+    const cases = [_]struct { body: []const u8, params: []const u8, uri: []const u8 }{
+        .{ .body = "8;;https://ziglang.org", .params = "", .uri = "https://ziglang.org" },
+        .{ .body = "8;id=log;file:///tmp/log", .params = "id=log", .uri = "file:///tmp/log" },
+        .{ .body = "8;;", .params = "", .uri = "" },
+        .{ .body = "8;id=a:x=b;https://h/a;b?c=d", .params = "id=a:x=b", .uri = "https://h/a;b?c=d" },
+    };
+    for (cases) |case| {
+        const read = parseHyperlink(case.body).?;
+        try std.testing.expectEqualStrings(case.params, read.params);
+        try std.testing.expectEqualStrings(case.uri, read.uri);
+    }
+    for ([_][]const u8{ "", "8", "8;", "8;id=x", "88;;u", "66;;x", "2;title", " 8;;u" }) |body| {
+        try std.testing.expect(parseHyperlink(body) == null);
+    }
+}
+
+test "every hyperlink and sized text the writers write reads back as written" {
+    var prng: std.Random.DefaultPrng = .init(0x05c8_66);
+    const random = prng.random();
+    var buffers: [3][48]u8 = undefined;
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    for (0..20_000) |_| {
+        // Every byte a writer accepts: no C0 control and no DEL. A params
+        // list holds no `;`, which is what ends it.
+        var fields: [3][]const u8 = undefined;
+        for (&buffers, &fields, 0..) |*buffer, *field, n| {
+            field.* = buffer[0..random.uintLessThan(usize, buffer.len + 1)];
+            for (@constCast(field.*)) |*b| {
+                b.* = while (true) {
+                    const c = random.intRangeAtMost(u8, 0x20, 0xff);
+                    if (c == 0x7f or (n == 1 and c == ';')) continue;
+                    break c;
+                };
+            }
+        }
+        const text, const params, const uri = fields;
+        const size: TextSize = .{
+            .scale = random.int(u3),
+            .width = random.int(u3),
+            .numerator = random.int(u4),
+            .denominator = random.int(u4),
+            .vertical = @enumFromInt(random.uintLessThan(u8, 3)),
+            .horizontal = @enumFromInt(random.uintLessThan(u8, 3)),
+        };
+
+        out.clearRetainingCapacity();
+        try textSize(&out.writer, size, text);
+        const sized = readTextSize(out.written()).?;
+        var want = size;
+        if (want.scale == 0) want.scale = 1;
+        try std.testing.expectEqual(want, sized.size);
+        try std.testing.expectEqualStrings(text, sized.text);
+
+        out.clearRetainingCapacity();
+        const given: ?[]const u8 = if (params.len == 0 and random.boolean()) null else params;
+        try hyperlinkStart(&out.writer, uri, given);
+        const link = readHyperlink(out.written()).?;
+        try std.testing.expectEqualStrings(params, link.params);
+        try std.testing.expectEqualStrings(uri, link.uri);
+
+        out.clearRetainingCapacity();
+        try hyperlinkEnd(&out.writer);
+        const end = readHyperlink(out.written()).?;
+        try std.testing.expectEqualStrings("", end.params);
+        try std.testing.expectEqualStrings("", end.uri);
+    }
+}
+
+test "fuzz parseTextSize and parseHyperlink" {
     // The property: no input panics, what it returns borrows from the bytes
-    // it was given, and the same bytes read the same way twice. There is no
-    // reply to this sequence, so the round trip is against the writer in the
+    // it was given, and the same bytes read the same way twice. Neither
+    // sequence has a reply, so the round trip is against the writers in the
     // test above rather than against a terminal.
     try std.testing.fuzz({}, struct {
         fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var input: [96]u8 = undefined;
             const bytes = input[0..smith.sliceWithHash(&input, 0)];
 
-            const read = readTextSize(bytes) orelse return;
             const start = @intFromPtr(bytes.ptr);
+            if (parseHyperlink(bytes)) |link| {
+                for ([_][]const u8{ link.params, link.uri }) |field| {
+                    try std.testing.expect(@intFromPtr(field.ptr) >= start);
+                    try std.testing.expect(@intFromPtr(field.ptr) + field.len <= start + bytes.len);
+                }
+                try std.testing.expectEqual(link, parseHyperlink(bytes).?);
+            }
+            const read = readTextSize(bytes) orelse return;
             try std.testing.expect(@intFromPtr(read.text.ptr) >= start);
             try std.testing.expect(@intFromPtr(read.text.ptr) + read.text.len <= start + bytes.len);
-
-            const again = readTextSize(bytes).?;
-            try std.testing.expectEqualStrings(read.metadata, again.metadata);
-            try std.testing.expectEqualStrings(read.text, again.text);
-            try std.testing.expectEqual(read.count(), again.count());
+            try std.testing.expectEqual(read, readTextSize(bytes).?);
         }
     }.one, .{ .corpus = &.{
         corpus.seed("\x1b]66;;hi\x1b\\"),
@@ -514,6 +631,8 @@ test "fuzz readTextSize" {
         corpus.seed("\x1b]66;s=7:w=3:n=5:d=15:v=2:h=1;x\x07"),
         corpus.seed("\x1b]66;s=2:s=3;x\x1b\\"),
         corpus.seed("\x1b]66;s=2\x1b\\"),
+        corpus.seed("8;id=log;file:///tmp/log"),
+        corpus.seed("8;;"),
     } });
 }
 
