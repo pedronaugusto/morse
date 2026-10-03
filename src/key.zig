@@ -459,12 +459,9 @@ pub const Events = struct {
                 return event;
             }
         }
-        return it.nextBuffered();
-    }
-
-    // Keep framing and reply decoding out of the single-key read loop.
-    noinline fn nextBuffered(it: *Events) ?Event {
-        const p = it.parser;
+        // Everything below stays in this function. Split into a function of
+        // its own, the event it returns lands in a temporary and is copied
+        // again on the way out, once for every buffered event.
 
         // A repeat owed from a win32 sequence comes before any new bytes, so
         // that a held key arrives in the order it was typed.
