@@ -40,6 +40,23 @@ pub const cost = struct {
     }
 };
 
+/// What `setMode` writes for a mode and state known at compile time.
+fn modeSequence(comptime mode: u16, comptime on: bool) []const u8 {
+    const sequence = comptime blk: {
+        var digits: [5]u8 = undefined;
+        var i: usize = digits.len;
+        var rest = mode;
+        while (true) {
+            i -= 1;
+            digits[i] = '0' + rest % 10;
+            rest /= 10;
+            if (rest == 0) break;
+        }
+        break :blk (seq.csi ++ "?") ++ digits[i..].* ++ (if (on) "h" else "l");
+    };
+    return sequence;
+}
+
 /// One DEC private mode, named and reduced to a single `set` call.
 fn PrivateMode(comptime mode_number: u16) type {
     return struct {
@@ -47,8 +64,11 @@ fn PrivateMode(comptime mode_number: u16) type {
         pub const number: u16 = mode_number;
 
         /// Turns the mode on when `on`, and off otherwise.
+        ///
+        /// The number is known here, so both sequences are spelled at
+        /// compile time: what `setMode` writes, as one copy.
         pub fn set(w: *Writer, on: bool) Writer.Error!void {
-            try setMode(w, mode_number, on);
+            try w.writeAll(if (on) modeSequence(mode_number, true) else modeSequence(mode_number, false));
         }
     };
 }
@@ -269,11 +289,27 @@ const encoding_modes = [_]u16{ 1005, 1006, 1015, 1016 };
 ///
 /// Focus reporting is not the mouse and is not touched here: `focusEvents`
 /// switches it.
+///
+/// There are nine of these, so each is spelled at compile time and written
+/// as one copy.
 pub fn mouse(w: *Writer, m: Mouse) Writer.Error!void {
-    for (motion_modes) |mode| if (mode != m.motion.number()) try setMode(w, mode, false);
-    for (encoding_modes) |mode| if (mode != m.encoding.number()) try setMode(w, mode, false);
-    try setMode(w, m.motion.number(), true);
-    try setMode(w, m.encoding.number(), true);
+    switch (m.motion) {
+        inline else => |motion| switch (m.encoding) {
+            inline else => |encoding| try w.writeAll(comptime mouseSequence(.{ .motion = motion, .encoding = encoding })),
+        },
+    }
+}
+
+/// What `mouse` writes for `m`.
+fn mouseSequence(comptime m: Mouse) []const u8 {
+    var sequence: []const u8 = "";
+    for (motion_modes) |mode| if (mode != m.motion.number()) {
+        sequence = sequence ++ modeSequence(mode, false);
+    };
+    for (encoding_modes) |mode| if (mode != m.encoding.number()) {
+        sequence = sequence ++ modeSequence(mode, false);
+    };
+    return sequence ++ modeSequence(m.motion.number(), true) ++ modeSequence(m.encoding.number(), true);
 }
 
 /// Turns mouse reporting off: every mode of the motion setting and of the
@@ -282,8 +318,12 @@ pub fn mouse(w: *Writer, m: Mouse) Writer.Error!void {
 /// way out when it does not know what it turned on; one that does can turn
 /// off the motion and the encoding it asked for and nothing else.
 pub fn mouseOff(w: *Writer) Writer.Error!void {
-    for (motion_modes) |mode| try setMode(w, mode, false);
-    for (encoding_modes) |mode| try setMode(w, mode, false);
+    const sequence = comptime blk: {
+        var sequence: []const u8 = "";
+        for (motion_modes ++ encoding_modes) |mode| sequence = sequence ++ modeSequence(mode, false);
+        break :blk sequence;
+    };
+    try w.writeAll(sequence);
 }
 
 /// The five flags of the kitty keyboard protocol, in the bit order the
@@ -601,6 +641,43 @@ test "the named modes write the sequences they document" {
         "\x1b[?2004h\x1b[?2026h\x1b[?1004h\x1b[?25l\x1b[?2027h\x1b[?2031h\x1b[?2031l",
         out.written(),
     );
+}
+
+test "every named mode writes what setMode writes with its number" {
+    const named = .{ altScreen, bracketedPaste, syncOutput, focusEvents, cursorVisible, unicodeCore, inBandResize, win32Input, colorScheme, autoWrap };
+    inline for (named) |mode| for ([_]bool{ true, false }) |on| {
+        var spelled: [16]u8 = undefined;
+        var by_name: Writer = .fixed(&spelled);
+        try mode.set(&by_name, on);
+        var formatted: [16]u8 = undefined;
+        var by_number: Writer = .fixed(&formatted);
+        try setMode(&by_number, mode.number, on);
+        try std.testing.expectEqualStrings(by_number.buffered(), by_name.buffered());
+        try std.testing.expectEqual(cost.setMode(mode.number, on), by_name.buffered().len);
+    };
+}
+
+test "mouse and mouseOff write what setMode writes, mode by mode, for every setting" {
+    for (std.enums.values(Mouse.Motion)) |motion| for (std.enums.values(Mouse.Encoding)) |encoding| {
+        const m: Mouse = .{ .motion = motion, .encoding = encoding };
+        var spelled: [128]u8 = undefined;
+        var by_table: Writer = .fixed(&spelled);
+        try mouse(&by_table, m);
+        var formatted: [128]u8 = undefined;
+        var by_number: Writer = .fixed(&formatted);
+        for (motion_modes) |mode| if (mode != motion.number()) try setMode(&by_number, mode, false);
+        for (encoding_modes) |mode| if (mode != encoding.number()) try setMode(&by_number, mode, false);
+        try setMode(&by_number, motion.number(), true);
+        try setMode(&by_number, encoding.number(), true);
+        try std.testing.expectEqualStrings(by_number.buffered(), by_table.buffered());
+    };
+    var spelled: [128]u8 = undefined;
+    var by_table: Writer = .fixed(&spelled);
+    try mouseOff(&by_table);
+    var formatted: [128]u8 = undefined;
+    var by_number: Writer = .fixed(&formatted);
+    for (motion_modes ++ encoding_modes) |mode| try setMode(&by_number, mode, false);
+    try std.testing.expectEqualStrings(by_number.buffered(), by_table.buffered());
 }
 
 test "setMode reaches a mode morse does not name" {
