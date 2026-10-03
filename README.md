@@ -91,7 +91,11 @@ Graphics commands cover kitty image transmission, placement and deletion.
 a caller's palette of up to 256 colours, a band at a time from a fixed block
 of stack; `itermImage` and `itermImageMultipart` send a file as iTerm2's
 `OSC 1337` inline image, whole or in pieces. Both are bytes only: choosing
-a palette, decoding and scaling are the caller's. Clipboard and
+a palette, decoding and scaling are the caller's. `querySixelGraphics`
+asks how many colour registers a sixel image may use and how big it may be
+(XTSMGRAPHICS), `parseSixelGraphics` reads the answer, and
+`sixelCursorRight` is mode 8452, which leaves the cursor beside an image
+rather than below it; `Probe` asks all three. Clipboard and
 capability replies borrow their encoded payloads and decode into supplied buffers.
 `Probe` writes startup questions; `probeAnswered` routes replies to those questions. The
 caller supplies deadlines because a terminal need not answer.

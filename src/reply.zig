@@ -23,6 +23,7 @@ const graphics = @import("graphics.zig");
 const mode = @import("mode.zig");
 const multicursor = @import("multicursor.zig");
 const query = @import("query.zig");
+const sixels = @import("sixel.zig");
 const tcap = @import("tcap.zig");
 
 /// An answer the terminal sent, read.
@@ -48,6 +49,9 @@ pub const Reply = union(enum) {
     /// A size: the text area or the screen in cells or pixels, or one cell
     /// in pixels (`CSI 4`, `5`, `6`, `8`, `9 ; height ; width t`).
     window_size: device.WindowSize,
+    /// How many colour registers a sixel image may use, or how big it may
+    /// be (XTSMGRAPHICS).
+    sixel_graphics: sixels.SixelGraphicsReport,
     /// What the terminal said about a graphics command. Its message is
     /// borrowed; whether it was accepted is `ok()`.
     graphics: graphics.GraphicsResponse,
@@ -117,6 +121,7 @@ pub const Reply = union(enum) {
         if (device.parseColorReply(bytes)) |r| return .{ .color = r };
         if (device.parsePaletteReply(bytes)) |r| return .{ .palette = r };
         if (device.parseWindowSize(bytes)) |r| return .{ .window_size = r };
+        if (sixels.parseSixelGraphics(bytes)) |r| return .{ .sixel_graphics = r };
         if (graphics.parseGraphicsResponse(bytes)) |r| return .{ .graphics = r };
         if (query.parseCursorPosition(bytes)) |r| return .{ .cursor_position = r };
         if (query.parseExtendedCursorPosition(bytes)) |r| return .{ .extended_cursor_position = r };
@@ -142,6 +147,7 @@ test "every answer this package asks for reads as the one reply it is" {
         .{ .bytes = "\x1b]11;rgb:1e1e/1e1e/2e2e\x07", .tag = .color },
         .{ .bytes = "\x1b]4;1;rgb:f3/8b/a8\x1b\\", .tag = .palette },
         .{ .bytes = "\x1b[6;20;9t", .tag = .window_size },
+        .{ .bytes = "\x1b[?1;0;256S", .tag = .sixel_graphics },
         .{ .bytes = "\x1b_Gi=7;OK\x1b\\", .tag = .graphics },
         .{ .bytes = "\x1b[12;40R", .tag = .cursor_position },
         .{ .bytes = "\x1b[?12;40;1R", .tag = .extended_cursor_position },

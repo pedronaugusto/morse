@@ -41,6 +41,7 @@ const key = @import("key.zig");
 const mode = @import("mode.zig");
 const multicursor = @import("multicursor.zig");
 const query = @import("query.zig");
+const sixels = @import("sixel.zig");
 const tcap = @import("tcap.zig");
 
 const Writer = std.Io.Writer;
@@ -77,12 +78,19 @@ pub const Probe = struct {
         in_band_resize,
         /// Whether a mouse report can count pixels (mode 1016).
         mouse_pixels,
+        /// Whether the cursor can be left right of a sixel image rather than
+        /// below it (mode 8452).
+        sixel_cursor_right,
         /// Which kitty keyboard flags are in effect.
         kitty_keyboard,
         /// What `modifyOtherKeys` is set to.
         modify_other_keys,
         /// Whether the graphics protocol is implemented at all.
         graphics,
+        /// How many colour registers a sixel image may use (XTSMGRAPHICS).
+        sixel_registers,
+        /// How big a sixel image may be (XTSMGRAPHICS).
+        sixel_geometry,
         /// What the terminal can do with extra cursors.
         extra_cursors,
         /// Whether it takes 24-bit colour: the `Tc` and `RGB` capabilities
@@ -120,6 +128,8 @@ pub const Probe = struct {
     in_band_resize: bool = true,
     /// Ask whether a mouse report can count pixels.
     mouse_pixels: bool = true,
+    /// Ask whether the cursor can stay right of a sixel image.
+    sixel_cursor_right: bool = true,
     /// Ask which kitty keyboard flags are in effect.
     kitty_keyboard: bool = true,
     /// Ask what `modifyOtherKeys` is set to.
@@ -127,6 +137,10 @@ pub const Probe = struct {
     /// Ask whether the graphics protocol is there. An `APC`, which a console
     /// host that does not know it will echo rather than swallow.
     graphics: bool = true,
+    /// Ask how many colour registers a sixel image may use.
+    sixel_registers: bool = true,
+    /// Ask how big a sixel image may be.
+    sixel_geometry: bool = true,
     /// Ask what the terminal can do with extra cursors.
     extra_cursors: bool = true,
     /// Ask whether the terminal takes 24-bit colour.
@@ -168,10 +182,13 @@ pub const Probe = struct {
         if (p.unicode_core) try query.queryMode(w, mode.unicodeCore.number);
         if (p.in_band_resize) try query.queryMode(w, mode.inBandResize.number);
         if (p.mouse_pixels) try query.queryMode(w, mode.Mouse.Encoding.sgr_pixels.number());
+        if (p.sixel_cursor_right) try query.queryMode(w, mode.sixelCursorRight.number);
 
         if (p.kitty_keyboard) try mode.kittyKeyboardQuery(w);
         if (p.modify_other_keys) try mode.queryModifyKeys(w, .other_keys);
         if (p.graphics) try graphics.queryGraphics(w, p.graphics_id);
+        if (p.sixel_registers) try sixels.querySixelGraphics(w, .color_registers, .current);
+        if (p.sixel_geometry) try sixels.querySixelGraphics(w, .geometry, .current);
         if (p.extra_cursors) try multicursor.queryExtraCursorSupport(w);
         if (p.truecolor) {
             try tcap.queryCapability(w, "Tc");
@@ -200,9 +217,12 @@ pub const Probe = struct {
             .unicode_core => p.unicode_core,
             .in_band_resize => p.in_band_resize,
             .mouse_pixels => p.mouse_pixels,
+            .sixel_cursor_right => p.sixel_cursor_right,
             .kitty_keyboard => p.kitty_keyboard,
             .modify_other_keys => p.modify_other_keys,
             .graphics => p.graphics,
+            .sixel_registers => p.sixel_registers,
+            .sixel_geometry => p.sixel_geometry,
             .extra_cursors => p.extra_cursors,
             .truecolor => p.truecolor,
             .version => p.version,
@@ -239,12 +259,15 @@ pub fn matches(reply: []const u8, question: Probe.Question) bool {
         .unicode_core => modeReplyFor(reply, mode.unicodeCore.number),
         .in_band_resize => modeReplyFor(reply, mode.inBandResize.number),
         .mouse_pixels => modeReplyFor(reply, mode.Mouse.Encoding.sgr_pixels.number()),
+        .sixel_cursor_right => modeReplyFor(reply, mode.sixelCursorRight.number),
         .kitty_keyboard => device.parseKittyKeyboardReply(reply) != null,
         .modify_other_keys => if (device.parseModifyKeysReply(reply)) |r|
             r.resource == .other_keys
         else
             false,
         .graphics => graphics.parseGraphicsResponse(reply) != null,
+        .sixel_registers => sixelGraphicsFor(reply, .color_registers),
+        .sixel_geometry => sixelGraphicsFor(reply, .geometry),
         .extra_cursors => multicursor.parseExtraCursorSupport(reply) != null,
         .truecolor => if (tcap.parseCapabilityReply(reply)) |c| namesTruecolor(c) else false,
         .version => device.parseVersion(reply) != null,
@@ -281,11 +304,17 @@ pub fn answered(event: key.Event) ?Probe.Question {
                 .in_band_resize
             else if (m.mode == mode.Mouse.Encoding.sgr_pixels.number())
                 .mouse_pixels
+            else if (m.mode == mode.sixelCursorRight.number)
+                .sixel_cursor_right
             else
                 null,
             .kitty_keyboard => .kitty_keyboard,
             .modify_keys => |m| if (m.resource == .other_keys) .modify_other_keys else null,
             .graphics => .graphics,
+            .sixel_graphics => |g| switch (g.item) {
+                .color_registers => .sixel_registers,
+                .geometry => .sixel_geometry,
+            },
             .extra_cursor_support => .extra_cursors,
             .capability => |c| if (namesTruecolor(c)) .truecolor else null,
             .version => .version,
@@ -326,6 +355,12 @@ fn modeReplyFor(reply: []const u8, number: u16) bool {
     return report.mode == number;
 }
 
+/// Whether `reply` is an XTSMGRAPHICS report about `item`.
+fn sixelGraphicsFor(reply: []const u8, item: sixels.SixelGraphicsItem) bool {
+    const report = sixels.parseSixelGraphics(reply) orelse return false;
+    return report.item == item;
+}
+
 /// Whether `reply` is a window size report about `what`.
 fn windowSizeFor(reply: []const u8, what: device.WindowSize.What) bool {
     const report = device.parseWindowSize(reply) orelse return false;
@@ -344,15 +379,16 @@ test "a whole probe is one write, with DA1 last" {
     const bytes = out.written();
 
     // Pinned exactly, because the point of the thing is that it is one
-    // write of a known size rather than nineteen round trips.
+    // write of a known size rather than twenty-two round trips.
     try std.testing.expectEqualStrings(
         "\x1b[6n" ++
             "\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\" ++
             "\x1b[?996n" ++
-            "\x1b[?2026$p\x1b[?2027$p\x1b[?2048$p\x1b[?1016$p" ++
+            "\x1b[?2026$p\x1b[?2027$p\x1b[?2048$p\x1b[?1016$p\x1b[?8452$p" ++
             "\x1b[?u" ++
             "\x1b[?4m" ++
             "\x1b_Ga=q,i=31,f=24,s=1,v=1;AAAA\x1b\\" ++
+            "\x1b[?1;1;0S\x1b[?2;1;0S" ++
             "\x1b[> q" ++
             "\x1bP+q5463\x1b\\\x1bP+q524742\x1b\\" ++
             "\x1b[>0q" ++
@@ -361,8 +397,8 @@ test "a whole probe is one write, with DA1 last" {
             "\x1b[c",
         bytes,
     );
-    try std.testing.expectEqual(@as(usize, 160), bytes.len);
-    try std.testing.expectEqual(@as(usize, 19), every_question.len);
+    try std.testing.expectEqual(@as(usize, 187), bytes.len);
+    try std.testing.expectEqual(@as(usize, 22), every_question.len);
 
     // DA1 is last in the write, though a multiplexer need not reply in order.
     try std.testing.expect(std.mem.endsWith(u8, bytes, "\x1b[c"));
@@ -410,9 +446,12 @@ fn writeOne(w: *Writer, question: Probe.Question, graphics_id: u32) Writer.Error
         .unicode_core => try query.queryMode(w, mode.unicodeCore.number),
         .in_band_resize => try query.queryMode(w, mode.inBandResize.number),
         .mouse_pixels => try query.queryMode(w, mode.Mouse.Encoding.sgr_pixels.number()),
+        .sixel_cursor_right => try query.queryMode(w, mode.sixelCursorRight.number),
         .kitty_keyboard => try mode.kittyKeyboardQuery(w),
         .modify_other_keys => try mode.queryModifyKeys(w, .other_keys),
         .graphics => try graphics.queryGraphics(w, graphics_id),
+        .sixel_registers => try sixels.querySixelGraphics(w, .color_registers, .current),
+        .sixel_geometry => try sixels.querySixelGraphics(w, .geometry, .current),
         .extra_cursors => try multicursor.queryExtraCursorSupport(w),
         .truecolor => {
             try tcap.queryCapability(w, "Tc");
@@ -441,9 +480,12 @@ test "a probe that asks nothing still asks for the device attributes" {
         .unicode_core = false,
         .in_band_resize = false,
         .mouse_pixels = false,
+        .sixel_cursor_right = false,
         .kitty_keyboard = false,
         .modify_other_keys = false,
         .graphics = false,
+        .sixel_registers = false,
+        .sixel_geometry = false,
         .extra_cursors = false,
         .truecolor = false,
         .version = false,
@@ -490,9 +532,12 @@ test "matches routes every answer to the question that asked it" {
         .{ .reply = "\x1b[?2027;4$y", .question = .unicode_core },
         .{ .reply = "\x1b[?2048;2$y", .question = .in_band_resize },
         .{ .reply = "\x1b[?1016;2$y", .question = .mouse_pixels },
+        .{ .reply = "\x1b[?8452;2$y", .question = .sixel_cursor_right },
         .{ .reply = "\x1b[?29u", .question = .kitty_keyboard },
         .{ .reply = "\x1b[>4;2m", .question = .modify_other_keys },
         .{ .reply = "\x1b_Gi=31;OK\x1b\\", .question = .graphics },
+        .{ .reply = "\x1b[?1;0;256S", .question = .sixel_registers },
+        .{ .reply = "\x1b[?2;0;1000;1000S", .question = .sixel_geometry },
         .{ .reply = "\x1b[>1;2;3;29;30;40;100;101 q", .question = .extra_cursors },
         .{ .reply = "\x1bP0+r5463\x1b\\", .question = .truecolor },
         .{ .reply = "\x1bP>|name(390)\x1b\\", .question = .version },
@@ -589,7 +634,8 @@ test "the question an event answers is the question its bytes match" {
         "\x1b[>4;2m",               "\x1b_Gi=31;OK\x1b\\",     "\x1b[>1;29 q",
         "\x1bP>|name(390)\x1b\\",   "\x1b[8;24;80t",           "\x1b[6;16;8t",
         "\x1b[>1;4000;48c",         "\x1b[?62;52;c",           "\x1b[<0;4;5M",
-        "\x1b[?1049;1$y",           "\x1b[4;480;720t",
+        "\x1b[?1049;1$y",           "\x1b[4;480;720t",         "\x1b[?8452;1$y",
+        "\x1b[?1;0;16S",            "\x1b[?2;3;0S",
     };
     for (samples) |bytes| {
         var storage: [128]u8 = undefined;

@@ -1407,6 +1407,8 @@ test "the startup probe is one write and a stream of answers" {
         .sync_output,
         .unicode_core,
         .in_band_resize,
+        // Not a mode it has, which it says: a sixel question answered.
+        .sixel_cursor_right,
         .kitty_keyboard,
         .graphics,
         .truecolor,
@@ -2022,6 +2024,6 @@ test "strip leaves what the emulator prints" {
 //=========================================================================
 
 test "how many claims this file made" {
-    try std.testing.expectEqual(@as(usize, 3791), checks);
+    try std.testing.expectEqual(@as(usize, 3793), checks);
     std.debug.print("conformance: {d} assertions against the emulator\n", .{checks});
 }

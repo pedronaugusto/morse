@@ -135,6 +135,13 @@ pub const cursorVisible = PrivateMode(25);
 /// there is no capability test.
 pub const unicodeCore = PrivateMode(2027);
 
+/// Sixel scrolls right (mode 8452). On, the cursor is left on the last row
+/// of a sixel image, just right of it, rather than on the row below it
+/// -- the difference between an image on the bottom row and a screen that
+/// scrolls under it. `queryMode` with this number asks whether the terminal
+/// has it.
+pub const sixelCursorRight = PrivateMode(8452);
+
 /// In-band resize reporting (mode 2048). On, the terminal sends
 /// `CSI 48 ; rows ; cols ; ypixels ; xpixels t` whenever it changes size, and
 /// `KeyParser` hands it back as `Event.resize`.

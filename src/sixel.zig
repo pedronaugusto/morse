@@ -22,6 +22,7 @@
 //! Read against the VT330/VT340 programmer reference, chapter 14.
 
 const std = @import("std");
+const corpus = @import("corpus.zig");
 const seq = @import("seq.zig");
 const style = @import("style.zig");
 
@@ -266,6 +267,113 @@ const Nearest = struct {
 };
 
 //=========================================================================
+// XTSMGRAPHICS: how many colours an image may use, and how big it may be.
+//=========================================================================
+
+/// What `querySixelGraphics` asks about, XTSMGRAPHICS's first parameter.
+pub const SixelGraphicsItem = enum(u8) {
+    /// How many colour registers an image may define: one value.
+    color_registers = 1,
+    /// The largest image the terminal draws, in pixels: a width and a
+    /// height.
+    geometry = 2,
+};
+
+/// Which value `querySixelGraphics` asks for, XTSMGRAPHICS's action.
+pub const SixelGraphicsQuery = enum(u8) {
+    /// The value in effect.
+    current = 1,
+    /// The most it could be set to.
+    maximum = 4,
+};
+
+/// Asks how many colour registers a sixel image may use, or how big it may
+/// be: `CSI ? item ; action ; 0 S`, xterm's XTSMGRAPHICS.
+///
+/// The answer is `parseSixelGraphics`'s. A terminal without sixels, or
+/// without the question, says nothing.
+pub fn querySixelGraphics(w: *Writer, item: SixelGraphicsItem, which: SixelGraphicsQuery) Writer.Error!void {
+    try w.writeAll(seq.csi ++ "?");
+    try seq.writeInt(w, @intFromEnum(item));
+    try w.writeByte(';');
+    try seq.writeInt(w, @intFromEnum(which));
+    try w.writeAll(";0S");
+}
+
+/// A terminal's answer to `querySixelGraphics`.
+pub const SixelGraphicsReport = struct {
+    /// What the answer is about.
+    item: SixelGraphicsItem,
+    /// Whether the terminal could answer.
+    status: Status,
+    /// The number of registers, or the width in pixels. Zero when the
+    /// terminal sent none.
+    value: u32 = 0,
+    /// The height in pixels, for `.geometry`. Zero otherwise.
+    height: u32 = 0,
+
+    /// XTSMGRAPHICS's status, the reply's second parameter.
+    pub const Status = enum(u8) {
+        /// The value follows.
+        success = 0,
+        /// The terminal does not know the item.
+        unknown_item = 1,
+        /// The terminal does not know the action.
+        unknown_action = 2,
+        /// The terminal knows both and could not answer.
+        failure = 3,
+    };
+
+    /// Whether the report carries a value.
+    pub fn ok(r: SixelGraphicsReport) bool {
+        return r.status == .success;
+    }
+};
+
+/// Reads an XTSMGRAPHICS answer: `CSI ? item ; status ; values S`, one
+/// value for the registers and a width and height for the geometry.
+///
+/// A refusal may carry no value, or a zero, and reads with its status. An
+/// item this package does not ask about, a status outside the four, or
+/// more values than the item has, is null. `bytes` must be exactly the
+/// sequence, with nothing before or after it.
+pub fn parseSixelGraphics(bytes: []const u8) ?SixelGraphicsReport {
+    if (!std.mem.startsWith(u8, bytes, seq.csi ++ "?")) return null;
+    var rest = bytes[seq.csi.len + 1 ..];
+
+    const item_scan = seq.scanInt(u8, rest) orelse return null;
+    rest = rest[item_scan.len..];
+    const item: SixelGraphicsItem = switch (item_scan.value) {
+        1 => .color_registers,
+        2 => .geometry,
+        else => return null,
+    };
+    if (rest.len == 0 or rest[0] != ';') return null;
+    rest = rest[1..];
+
+    const status_scan = seq.scanInt(u8, rest) orelse return null;
+    rest = rest[status_scan.len..];
+    if (status_scan.value > 3) return null;
+    var report: SixelGraphicsReport = .{ .item = item, .status = @enumFromInt(status_scan.value) };
+
+    const most: usize = if (item == .geometry) 2 else 1;
+    var values: [2]u32 = .{ 0, 0 };
+    var count: usize = 0;
+    while (rest.len != 0 and rest[0] == ';') {
+        if (count == most) return null;
+        rest = rest[1..];
+        const value = seq.scanParam(u32, rest, 0) orelse return null;
+        rest = rest[value.len..];
+        values[count] = value.value;
+        count += 1;
+    }
+    if (!std.mem.eql(u8, rest, "S")) return null;
+    report.value = values[0];
+    report.height = values[1];
+    return report;
+}
+
+//=========================================================================
 // Tests.
 //=========================================================================
 
@@ -448,4 +556,69 @@ test "a picture of any width is written from a fixed block of stack" {
     var buffer: [128]u8 = undefined;
     const bytes = try written(&buffer, .{ .width = pixels.len, .height = 1, .pixels = .{ .indexed = &pixels }, .palette = &palette });
     try testing.expect(std.mem.endsWith(u8, bytes, "#0!256@$#0!256?@$#1!257?@\x1b\\"));
+}
+
+test "querySixelGraphics asks for the registers and the geometry" {
+    var buffer: [64]u8 = undefined;
+    var w: Writer = .fixed(&buffer);
+    try querySixelGraphics(&w, .color_registers, .current);
+    try querySixelGraphics(&w, .geometry, .maximum);
+    try testing.expectEqualStrings("\x1b[?1;1;0S\x1b[?2;4;0S", w.buffered());
+}
+
+test "parseSixelGraphics reads xterm's answers and its refusals" {
+    const registers = parseSixelGraphics("\x1b[?1;0;256S").?;
+    try testing.expectEqual(SixelGraphicsItem.color_registers, registers.item);
+    try testing.expect(registers.ok());
+    try testing.expectEqual(@as(u32, 256), registers.value);
+
+    const geometry = parseSixelGraphics("\x1b[?2;0;1000;1000S").?;
+    try testing.expectEqual(SixelGraphicsItem.geometry, geometry.item);
+    try testing.expectEqual(@as(u32, 1000), geometry.value);
+    try testing.expectEqual(@as(u32, 1000), geometry.height);
+
+    // A refusal, with and without a value.
+    try testing.expectEqual(SixelGraphicsReport.Status.failure, parseSixelGraphics("\x1b[?2;3;0S").?.status);
+    try testing.expectEqual(SixelGraphicsReport.Status.unknown_item, parseSixelGraphics("\x1b[?1;1S").?.status);
+    try testing.expect(!parseSixelGraphics("\x1b[?1;1S").?.ok());
+
+    for ([_][]const u8{
+        "\x1b[?3;0;640;480S", // ReGIS, not asked about
+        "\x1b[?1;4;256S", // no such status
+        "\x1b[?1;0;256;1S", // a second value for the registers
+        "\x1b[?2;0;1;2;3S", // a third for the geometry
+        "\x1b[1;0;256S", // no private marker
+        "\x1b[?1;0;256", // no final byte
+        "\x1b[?1;0;256Sx", // something after it
+        "\x1b[?2026;1$y", // a mode report
+        "",
+    }) |bytes| try testing.expect(parseSixelGraphics(bytes) == null);
+}
+
+test "fuzz parseSixelGraphics" {
+    // The property: no input panics or overflows, and every report that
+    // parses writes back, values and all, to a report that parses the same.
+    try std.testing.fuzz({}, struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var input: [64]u8 = undefined;
+            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+
+            const report = parseSixelGraphics(bytes) orelse return;
+
+            var output: [64]u8 = undefined;
+            var w: Writer = .fixed(&output);
+            try w.print("\x1b[?{d};{d};{d}", .{ @intFromEnum(report.item), @intFromEnum(report.status), report.value });
+            if (report.item == .geometry) try w.print(";{d}", .{report.height});
+            try w.writeByte('S');
+            try testing.expectEqual(report, parseSixelGraphics(w.buffered()).?);
+        }
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b[?1;0;256S"),
+        corpus.seed("\x1b[?2;0;1000;1000S"),
+        corpus.seed("\x1b[?2;3;0S"),
+        corpus.seed("\x1b[?1;1S"),
+        corpus.seed("\x1b[?2;0;4294967296;1S"),
+        corpus.seed("\x1b[?1;0;256;1S"),
+        corpus.seed("\x1b[?3;0;640;480S"),
+    } });
 }

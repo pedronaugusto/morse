@@ -164,6 +164,8 @@ pub const cursorVisible = mode.cursorVisible;
 pub const unicodeCore = mode.unicodeCore;
 /// Resize reports on the input stream rather than by signal (mode 2048).
 pub const inBandResize = mode.inBandResize;
+/// The cursor right of a sixel image rather than below it (mode 8452).
+pub const sixelCursorRight = mode.sixelCursorRight;
 /// Windows console keys as sequences rather than as bytes (mode 9001).
 pub const win32Input = mode.win32Input;
 /// Auto-wrap at the last column, DECAWM (mode 7).
@@ -702,6 +704,17 @@ pub const Sixel = sixels.Sixel;
 pub const sixel = sixels.sixel;
 /// The most colour registers one sixel image may define.
 pub const sixel_palette_max = sixels.sixel_palette_max;
+/// What `querySixelGraphics` asks about: the registers or the geometry.
+pub const SixelGraphicsItem = sixels.SixelGraphicsItem;
+/// Whether `querySixelGraphics` asks for the value in effect or the most.
+pub const SixelGraphicsQuery = sixels.SixelGraphicsQuery;
+/// Asks how many colour registers a sixel image may use, or how big it may
+/// be, XTSMGRAPHICS.
+pub const querySixelGraphics = sixels.querySixelGraphics;
+/// A terminal's answer to `querySixelGraphics`.
+pub const SixelGraphicsReport = sixels.SixelGraphicsReport;
+/// Reads an XTSMGRAPHICS answer, or null.
+pub const parseSixelGraphics = sixels.parseSixelGraphics;
 /// How big to draw an iTerm2 inline image in one direction.
 pub const ItermSize = iterm.ItermSize;
 /// The keys that travel with an iTerm2 inline file.
@@ -903,6 +916,8 @@ test "the root module re-exports what the README promises" {
     try encodeKey(w, .{ .key = .up }, .{});
     try sixel(w, .{ .width = 1, .height = 1, .pixels = .{ .indexed = &.{0} }, .palette = &.{.{ .r = 1, .g = 2, .b = 3 }} });
     try itermImage(w, .{}, "x");
+    try querySixelGraphics(w, .color_registers, .current);
+    try sixelCursorRight.set(w, true);
     try itermImageMultipart(w, .{}, "x", iterm_part_bytes);
     var stripper: Stripper = .{};
     try stripper.feed(w, "\x1b[1mx");
@@ -1050,6 +1065,7 @@ test "the root module re-exports what the README promises" {
         WindowSize.What.text_area_cells,
         parseWindowSize("\x1b[8;24;80t").?.what,
     );
+    try std.testing.expectEqual(@as(u32, 256), parseSixelGraphics("\x1b[?1;0;256S").?.value);
     try std.testing.expectEqual(SizeQuery.cell_pixels, SizeQuery.cell_pixels);
 
     const caps: CapabilityReply = parseCapabilityReply("\x1bP1+r436f=323536\x1b\\").?;
