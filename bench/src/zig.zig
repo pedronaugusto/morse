@@ -2,6 +2,7 @@ const std = @import("std");
 const m = @import("morse");
 const v = @import("vaxis");
 const comparison = @import("options").comparison;
+const ops = @import("ops.zig");
 extern "c" fn read(c_int, [*]u8, usize) isize;
 extern "c" fn write(c_int, [*]const u8, usize) isize;
 fn emit(comptime fmt: []const u8, args: anytype) void {
@@ -33,7 +34,15 @@ fn cp(key: m.Key) u21 {
 }
 fn morseEvent(e: m.Event, check: bool) void {
     std.mem.doNotOptimizeAway(e);
-    if (!check) return;
+    if (!check) {
+        // The other parsers hand over one decoded codepoint per key; a run of
+        // text is the same keys, so the consumer walks it the same way.
+        if (e == .text) {
+            var iter = std.unicode.Utf8View.initUnchecked(e.text).iterator();
+            while (iter.nextCodepoint()) |c| std.mem.doNotOptimizeAway(c);
+        }
+        return;
+    }
     switch (e) {
         .key => |k| emit("key:{d}:{d}:{s}\n", .{ cp(k.key), k.mods.bits(), @tagName(k.kind) }),
         .text => |text| {
@@ -97,6 +106,8 @@ fn decode(data: []const u8, chunk: usize, burst: usize, check: bool, pixels: boo
         }
     } else {
         var parser: v.Parser = .{};
+        // OSC 52 text is allocated: libc malloc, as the Rust parsers' Strings
+        // are, not one page mapping per paste.
         // Standalone vaxis parses a complete prefix. Retain incomplete bytes
         // exactly as its event loop does, without copying the read buffer.
         var pos: usize = 0;
@@ -107,7 +118,7 @@ fn decode(data: []const u8, chunk: usize, burst: usize, check: bool, pixels: boo
             while (pos < end) {
                 // A read boundary is not an Escape timeout or UTF-8 EOF.
                 if (end < burst_end and end - pos == 1 and data[pos] == 27) break;
-                const result = parser.parse(data[pos..end], std.heap.page_allocator) catch {
+                const result = parser.parse(data[pos..end], std.heap.c_allocator) catch {
                     // InvalidUTF8 may mean a split UTF-8 character.
                     if (end < burst_end) break;
                     if (check) emit("error\n", .{});
@@ -120,7 +131,7 @@ fn decode(data: []const u8, chunk: usize, burst: usize, check: bool, pixels: boo
                 if (result.event) |e| {
                     count += 1;
                     vaxisEvent(e, check);
-                    if (e == .paste) std.heap.page_allocator.free(e.paste);
+                    if (e == .paste) std.heap.c_allocator.free(e.paste);
                 }
             }
         }
@@ -177,6 +188,48 @@ fn encode(task: []const u8, data: []const u8, check: bool) !usize {
     }
     return count;
 }
+// Records are `u32 little-endian length, bytes`, one call each, loaded
+// before the clock. Check mode prints each call's output in hex.
+fn runOp(init: std.process.Init, name: []const u8, data: []const u8, check: bool, timed: bool) !void {
+    const op = (if (comparison) ops.find(ops.vaxis_ops, name) else ops.find(ops.morse_ops, name)) orelse return error.UnknownOperation;
+    ops.io = init.io;
+    var records: std.ArrayList([]const u8) = .empty;
+    var pos: usize = 0;
+    var longest: usize = 0;
+    while (pos < data.len) {
+        const len = std.mem.readInt(u32, data[pos..][0..4], .little);
+        try records.append(init.gpa, data[pos + 4 ..][0..len]);
+        longest = @max(longest, len);
+        pos += 4 + len;
+    }
+    const out = try init.gpa.alloc(u8, 2 * longest + 65536);
+    const scratch = try init.gpa.alloc(u8, 2 * longest + 65536);
+    var count: usize = 0;
+    const start = if (timed) std.Io.Clock.now(.awake, init.io).toNanoseconds() else 0;
+    for (records.items) |rec| {
+        var w: std.Io.Writer = .fixed(out);
+        count += op(&w, rec, check, scratch) catch |err| switch (err) {
+            error.Unavailable => {
+                emit("unavailable\n", .{});
+                return;
+            },
+            else => return err,
+        };
+        count += w.end;
+        std.mem.doNotOptimizeAway(out.ptr);
+        if (check) {
+            var rest = w.buffered();
+            while (rest.len > 0) {
+                const part = rest[0..@min(rest.len, 1024)];
+                emit("{x}", .{part});
+                rest = rest[part.len..];
+            }
+            emit("\n", .{});
+        }
+    }
+    const elapsed = if (timed) std.Io.Clock.now(.awake, init.io).toNanoseconds() - start else 0;
+    if (check) emit("count:{d}\n", .{count}) else emit("{d}\t{d}\t{d}\n", .{ data.len, count, elapsed });
+}
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len != 4 and args.len != 5) return error.Arguments;
@@ -194,6 +247,7 @@ pub fn main(init: std.process.Init) !void {
         len += @intCast(got);
     }
     if (len == buf.len) return error.InputTooLarge;
+    if (std.mem.startsWith(u8, args[1], "op:")) return runOp(init, args[1][3..], buf[0..len], check, timed);
     const burst = if (args.len == 5) try std.fmt.parseInt(usize, args[4], 10) else @max(len, 1);
     if (burst == 0) return error.ZeroBurst;
     const start = if (timed) std.Io.Clock.now(.awake, init.io).toNanoseconds() else 0;

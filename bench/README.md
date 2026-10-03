@@ -7,7 +7,7 @@ machine, `./bench/quiet.sh` runs the complete timed pass. `bench/run.sh` is a
 compatibility alias. On macOS the entry point prevents sleep during the pass.
 
 Allow **15 minutes per package** in the quiet window; the expected warm-cache
-pass is about **1–5 minutes** after smoke preparation, an estimate rather than a measured duration.
+pass is about **3–8 minutes** after smoke preparation, an estimate rather than a measured duration.
 Dependency downloads and first compilation can add several minutes. All
 builds and correctness checks finish before their timed workload groups.
 Results go to `bench/results/<UTC-date>/smoke-<time>.md` + `.json` or
@@ -65,6 +65,22 @@ Zig uses ReleaseFast, Rust uses cargo release, and compilation uses one job.
   2-stream × 3-buffer × 4-read-size grid. The private encoder is compiled
   from the selected revision, not from the bench branch's current source.
 
+- Every public operation: one workload each (198 with sizes), listed in
+  `src/ops.py` with its records and, for crossterm, termwiz and libvaxis,
+  either the call that does the same job or one line saying why there is
+  none. Writers (cursor, erase, scroll, modes, keyboard, colours, queries,
+  titles, OSC 8/66/133/9/777/52, kitty graphics, extra cursors, mouse
+  encoding), readers (every `parse*`, `Reply.parse`, `applySgr` after
+  `parseCsi`, OSC 52 decoded), the `cost.*` counters, `checkText`,
+  `printable`, `Event.copy`, `KeyEvent.typed`, `ConsoleDecoder` and
+  `Probe.write`. Sizes where size matters: text 16/256 bytes, scans
+  16 B/1 KiB/64 KiB, clipboard 16 B/4 KiB/1 MiB, pixels 1 KiB/64 KiB/1 MiB,
+  1/8/64 capability names, 1/16/256 cursor cells. Full passes run up to
+  100,000 calls per workload (fewer for large records); smoke runs one. An
+  operation the `before` revision lacks reports unavailable for that side
+  only. Constants, field packing and tiny getters are not timed; the list
+  and reasons are `SKIPPED` in `src/ops.py`.
+
 Native allocation policies remain part of the job. Zig protocol output uses
 fixed caller-owned buffers; Rust reuses reserved strings. Processes load inputs
 before starting the benchmark clock; parser setup and allocations within a
@@ -79,7 +95,32 @@ An independent protocol oracle checks both morse revisions against expected
 events, for isolated inputs and a shared stream, whole and one-byte chunks.
 The encoder subset decoder compares intended terminal state rather than byte
 spelling. Smoke currently covers **290 input checks**, encoder checks at each
-implementation, and **six speed-budget tests at each package revision**.
+implementation, **198 operation workloads** (150 identical at both
+revisions, 48 new since `before`), and **six speed-budget tests at each
+package revision**.
+Each operation is checked on 20 records (2 for the largest sizes) before it
+is timed: `morse-before` must write exactly what `morse` writes, and each
+comparison must mean the same thing. Written bytes go through an independent
+decoder (ECMA-48 defaults, BEL/ST, colour specs by value, kitty keys
+unordered); read results compare as one reduced line per record. Where a
+comparison reports less (termwiz mouse state, crossterm/libvaxis presence of
+a DA1 or keyboard reply, termwiz typing a CSI where morse frames it) both
+sides are reduced to what it reports and the row says so. The remaining
+reviewed differences are in `KNOWN`: termwiz's unchunked kitty APCs and its
+extra push parameter, crossterm's unbiased rxvt coordinates and one-digit
+keyboard flags. A new or changed difference fails the run. termwiz takes
+owned values, so its commands are built before the clock, as a caller
+holding them would; crossterm commands and libvaxis format strings are
+spelled inside it.
+
+Same work on both sides: morse hands a run of typed text over as one
+`.text` slice where the others hand one decoded key per codepoint, so the
+decode consumer walks every codepoint of a run (the check mode always did).
+libvaxis allocates OSC 52 text with libc malloc, as the Rust Strings are,
+not a page mapping per paste. The termwiz link workload builds its
+`Hyperlink` once. Earlier passes did none of these three; their decode,
+link and libvaxis numbers are not a baseline for this harness.
+
 `known-differences.json` is the reviewed baseline for comparison libraries;
 new, changed, or missing differences fail, as does a morse/oracle mismatch.
 No unsupported reports are dropped from the throughput stream. The corpus

@@ -32,6 +32,21 @@ pub fn bench_parse_event(bytes: &[u8], more: bool) -> std::io::Result<Option<Eve
     }))
 }
 ''')
+if 'bench_parse_reply' not in (path / 'src/event.rs').read_text():
+    (path / 'src/event.rs').open('a').write('''
+// Harness-only visibility shim for the replies crossterm reads internally:
+// (0, col, row) for a cursor position, (1, flags, 0) for kitty keyboard
+// flags, (2, 0, 0) for primary device attributes. Parser unchanged.
+#[cfg(unix)]
+pub fn bench_parse_reply(bytes: &[u8]) -> Option<(u8, u16, u16)> {
+    match sys::unix::parse::parse_event(bytes, false) {
+        Ok(Some(InternalEvent::CursorPosition(col, row))) => Some((0, col, row)),
+        Ok(Some(InternalEvent::KeyboardEnhancementFlags(f))) => Some((1, f.bits() as u16, 0)),
+        Ok(Some(InternalEvent::PrimaryDeviceAttributes)) => Some((2, 0, 0)),
+        _ => None,
+    }
+}
+''')
 vaxis = DEPS / 'libvaxis'
 if not vaxis.exists():
     subprocess.run(['git', 'clone', '--quiet', 'https://github.com/rockorager/libvaxis.git', str(vaxis)], check=True)

@@ -4,6 +4,8 @@ use std::io::{self, Read, Write};
 use std::time::Instant;
 use termwiz::input::{InputEvent, InputParser, KeyCode as TwKey, Modifiers as TwMods};
 
+mod ops;
+
 fn ct_mod(m: KeyModifiers) -> u8 {
     [
         (KeyModifiers::SHIFT, 1),
@@ -233,6 +235,10 @@ fn encode(side: &str, task: &str, data: &[u8], check: bool) -> usize {
     };
     let mut count = 0;
     let mut out = String::with_capacity(2048);
+    // termwiz takes an owned Hyperlink; build it once, as a caller holding
+    // the link would, so the loop times spelling it, not allocating it.
+    let link_open = OperatingSystemCommand::SetHyperlink(Some(Hyperlink::new("https://example.org/bench")));
+    let link_close = OperatingSystemCommand::SetHyperlink(None);
     for value in data {
         out.clear();
         if side == "crossterm" {
@@ -274,15 +280,7 @@ fn encode(side: &str, task: &str, data: &[u8], check: bool) -> usize {
                     })
                 )
                 .unwrap(),
-                "link" => write!(
-                    out,
-                    "{}{}",
-                    OperatingSystemCommand::SetHyperlink(Some(Hyperlink::new(
-                        "https://example.org/bench"
-                    ))),
-                    OperatingSystemCommand::SetHyperlink(None)
-                )
-                .unwrap(),
+                "link" => write!(out, "{link_open}{link_close}").unwrap(),
                 "graphics" => {
                     write!(
                         out,
@@ -338,6 +336,11 @@ fn main() {
         .unwrap_or(data.len().max(1));
     assert!(burst > 0);
     crossterm::style::force_color_output(true);
+    if let Some(name) = task.strip_prefix("op:") {
+        ops::run(side, name, &data, mode == "check", mode == "full");
+        io::stdout().flush().unwrap();
+        return;
+    }
     let start = if mode == "full" {
         Some(Instant::now())
     } else {

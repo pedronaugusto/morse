@@ -8,6 +8,7 @@ import pathlib
 import random
 import subprocess
 from generate import generate
+import ops
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build'
@@ -85,6 +86,54 @@ def output_state(task, hex_line):
     assert re.sub(r'\x1b\[[0-9;:]*m', '', s) == ''
     return [saw, state]
 
+def lines_of(records):
+    return [bytes.fromhex(x) for x in records[:-1]]
+
+def operation_checks():
+    """Every public operation: morse-before == morse, then each comparison."""
+    coverage, failures, checks = [], [], []
+    for name, size in ops.workloads():
+        kind, _, _, alts = ops.OPS[name]
+        workload = name + (f'/{size}' if size else '')
+        data = ops.records(name, size, SMOKE, True)
+        after = invoke('morse', 'op:' + name, 'check', 64, data)
+        assert after != ['unavailable'], name
+        ours = lines_of(after)
+        row = dict(workload=workload, kind=kind, records=len(ours), alternatives={})
+        before = invoke('morse-before', 'op:' + name, 'check', 64, data)
+        if before == ['unavailable']:
+            row['before'] = 'unavailable: not in the before revision'
+        elif lines_of(before) != ours:
+            failures.append(dict(workload=workload, side='morse-before', expected=after, actual=before))
+            row['before'] = 'differs'
+        else:
+            row['before'] = 'identical'
+        for side in ops.ALTS:
+            how = alts[side]
+            if how is not True and how != 'presence':
+                row['alternatives'][side] = 'unavailable: ' + how
+                continue
+            theirs = lines_of(invoke(side, 'op:' + name, 'check', 64, data))
+            label = None
+            if kind == 'write':
+                mine, other = [ops.semantic(x) for x in ours], [ops.semantic(x) for x in theirs]
+            elif how == 'presence':
+                mine, other, label = [b'present' for _ in ours], theirs, ops.PRESENCE_LABEL
+            elif (name, side) in ops.PROJECTIONS:
+                project, label = ops.PROJECTIONS[name, side]
+                mine, other = [project(x.decode()).encode() for x in ours], theirs
+            else:
+                mine, other = ours, theirs
+            if mine == other:
+                row['alternatives'][side] = 'equivalent' + (f' ({label})' if label else '')
+            elif (workload, side) in ops.KNOWN or (name, side) in ops.KNOWN:
+                row['alternatives'][side] = 'documented difference: ' + ops.KNOWN.get((workload, side), ops.KNOWN.get((name, side)))
+            else:
+                failures.append(dict(workload=workload, side=side, expected=[x.hex() for x in ours], actual=[x.hex() for x in theirs]))
+                row['alternatives'][side] = 'differs'
+        coverage.append(row)
+    return coverage, failures
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check-only', action='store_true', help='Run the protocol oracle without workload loops')
@@ -154,7 +203,10 @@ def main():
             expected = {'cursor': [43, 12], 'link': ['https://example.org/bench', 'closed'], 'graphics': {'a':'p','i':'43','C':'1','q':'0'}, 'style': [{'bold': True, 'fg': [42,100,50]}, {'bold':False,'fg':None}]}[task]
             assert state == expected, (side, task, encoded, state, expected)
             output_checks.append(dict(side=side, task=task, hex=encoded, status='equivalent', state=state))
-    (BUILD / 'correctness.json').write_text(json.dumps(dict(checks=checks, differences=differences, output=output_checks), indent=2)+'\n')
+    coverage, op_failures = operation_checks()
+    (BUILD / 'correctness.json').write_text(json.dumps(dict(checks=checks, differences=differences, output=output_checks, operations=coverage), indent=2)+'\n')
+    if op_failures:
+        raise SystemExit(f'{len(op_failures)} operation outputs differ; see operations in build/correctness.json: ' + ', '.join(f"{f['workload']}/{f['side']}" for f in op_failures))
     baseline = json.loads((ROOT / 'known-differences.json').read_text())
     observed = {(d['side'], d['case'], d['chunk']): d['actual'] for d in differences if d['side'] != 'morse-before'}
     known = {(d['side'], d['case'], d['chunk']): d['actual'] for d in baseline}
@@ -163,7 +215,7 @@ def main():
     if failures:
         raise SystemExit('morse differs from protocol oracle; see build/correctness.json')
     if args.check_only:
-        print(f'Correctness passed: {len(checks)} input checks; encoder semantics agree; no workloads run')
+        print(f'Correctness passed: {len(checks)} input checks; encoder semantics agree; {len(coverage)} operations checked; no workloads run')
         return
     r = random.Random(0x4D4F5253)
     output = bytes([42]) if SMOKE else r.randbytes(100_000)
@@ -186,11 +238,24 @@ def main():
                     if SMOKE: assert ns == 0
                     rate = '' if SMOKE else f'{size * 1e9 / ns:.3f}'
                     results.append([side,task,chunk,rep,'smoke' if SMOKE else 'measured',size,count,'' if SMOKE else ns,rate])
+    # One workload per public operation, the same A, B, comparisons order.
+    for row in coverage:
+        name, _, size = row['workload'].partition('/')
+        data = ops.records(name, size or None, SMOKE, False)
+        sides = ([] if row['before'].startswith('unavailable') else ['morse-before']) + ['morse']
+        comparisons = [side for side, status in row['alternatives'].items() if not status.startswith('unavailable')]
+        for rep in range(1, reps+1):
+            r.shuffle(comparisons)
+            for side in sides + comparisons:
+                size_, count, ns = map(int, invoke(side, 'op:' + name, 'smoke' if SMOKE else 'full', 64, data)[0].split('\t'))
+                assert size_ == len(data) and count > 0, (side, row['workload'])
+                if SMOKE: assert ns == 0
+                results.append([side, 'op/' + row['workload'], 0, rep, 'smoke' if SMOKE else 'measured', size_, count, '' if SMOKE else ns, '' if SMOKE else f'{size_ * 1e9 / max(ns, 1):.3f}'])
     with (BUILD / 'results.tsv').open('w') as f:
         writer = csv.writer(f,delimiter='\t',lineterminator='\n')
         writer.writerow(['library','workload','chunk_bytes','iteration','status','input_bytes_or_operations','native_events_or_output_bytes','ns','bytes_or_ops_per_second'])
         writer.writerows(results)
-    print(f'{"SMOKE" if SMOKE else "FULL"}: {len(checks)} input cross-checks; {len(differences)} documented comparison differences; output semantics agree; {len(results)} workload rows')
+    print(f'{"SMOKE" if SMOKE else "FULL"}: {len(checks)} input cross-checks; {len(differences)} documented comparison differences; output semantics agree; {len(coverage)} operations checked; {len(results)} workload rows')
     if SMOKE: print('No clocks sampled; timing columns empty. See build/correctness.json and build/results.tsv.')
 
 if __name__ == '__main__': main()

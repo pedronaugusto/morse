@@ -74,6 +74,6 @@ for rep in range(1, 2 if args.smoke else 6):
 correctness = json.loads((BUILD / 'correctness.json').read_text())
 correctness['speed_ceilings'] = 'Six tests passed at each revision; smoke loops once without clocks' if args.smoke else 'Six tests and original ceilings passed at each revision'
 finish('morse', args.smoke, info, rows, correctness,
-       json.loads((ROOT / 'versions.json').read_text()), '1–5 minutes quiet-only; see bench/QUIET-PREP.md for counts and assumptions')
+       json.loads((ROOT / 'versions.json').read_text()), '3–8 minutes quiet-only; see bench/QUIET-PREP.md for counts and assumptions')
 
 if args.smoke: prepared.write()
