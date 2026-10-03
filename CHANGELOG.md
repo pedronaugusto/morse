@@ -6,7 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-- `diffStyleLen` counts the bytes `diffStyle` writes between two styles, through the same encoder and the same choice of spelling.
+- `cost` counts the bytes the style, cursor, erase, repeat, mode, hyperlink and text-size writers write for given arguments, running the same spelling code into a counter.
 
 - Spell style changes once into a stack buffer with a decimal table, pricing the reset spelling by counting instead of formatting it; the bytes written are unchanged.
 

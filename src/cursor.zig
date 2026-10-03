@@ -24,18 +24,34 @@ const seq = @import("seq.zig");
 const Writer = std.Io.Writer;
 
 /// Writes `CSI n final`, the shape every one-argument sequence here takes.
-fn csi1(w: *Writer, n: u32, final: u8) Writer.Error!void {
+///
+/// This and the three below take a `*Writer` or a `*seq.Count`: the writers
+/// hand them the caller's writer and `cost` hands them a count, so the two
+/// run the same body.
+fn csi1(w: anytype, n: u32, final: u8) !void {
     try w.writeAll(seq.csi);
     try seq.writeInt(w, n);
     try w.writeByte(final);
 }
 
 /// Writes `CSI a ; b final`, the shape every two-argument sequence here takes.
-fn csi2(w: *Writer, a: u32, b: u32, final: u8) Writer.Error!void {
+fn csi2(w: anytype, a: u32, b: u32, final: u8) !void {
     try w.writeAll(seq.csi);
     try seq.writeInt(w, a);
     try w.writeByte(';');
     try seq.writeInt(w, b);
+    try w.writeByte(final);
+}
+
+/// Writes `CSI final`, a sequence with no parameter at all.
+fn csi0(w: anytype, final: u8) !void {
+    try w.writeAll(seq.csi);
+    try w.writeByte(final);
+}
+
+/// Writes `ESC final`, the two-byte escapes that predate CSI.
+fn escape(w: anytype, final: u8) !void {
+    try w.writeByte(seq.esc);
     try w.writeByte(final);
 }
 
@@ -138,16 +154,14 @@ pub fn cursorRow(w: *Writer, row: u32) Writer.Error!void {
 /// position. `altScreen` (mode 1049) saves and restores a cursor of its own,
 /// which is a different one and does not interact with this.
 pub fn cursorSave(w: *Writer) Writer.Error!void {
-    try w.writeByte(seq.esc);
-    try w.writeByte('7');
+    try escape(w, '7');
 }
 
 /// Restores the cursor saved by `cursorSave`, DECRC: `ESC 8`. Restores the
 /// attributes and character set along with the position. With nothing saved, a
 /// terminal moves the cursor to the top-left.
 pub fn cursorRestore(w: *Writer) Writer.Error!void {
-    try w.writeByte(seq.esc);
-    try w.writeByte('8');
+    try escape(w, '8');
 }
 
 /// How much of the cursor's row `clearLine` erases. The values are the
@@ -214,7 +228,7 @@ pub fn scrollRegion(w: *Writer, top: u32, bottom: u32) Writer.Error!void {
 /// parameters. What a program that set a region runs before it gives the
 /// screen back.
 pub fn scrollRegionReset(w: *Writer) Writer.Error!void {
-    try w.writeAll(seq.csi ++ "r");
+    try csi0(w, 'r');
 }
 
 /// Scrolls the contents of the scrolling region up by `n` rows: `CSI n S`. The
@@ -277,6 +291,131 @@ pub fn eraseChars(w: *Writer, n: u32) Writer.Error!void {
 pub fn deleteLines(w: *Writer, n: u32) Writer.Error!void {
     try csi1(w, n, 'M');
 }
+
+/// How many bytes each writer in this file writes, given the same arguments
+/// less the writer, without writing them.
+///
+/// Each runs the body its writer spells with into a `seq.Count`, so a count
+/// is exactly the length of what the writer writes, for every argument, and
+/// a change to a spelling moves both. That is the figure a renderer weighing
+/// one way of moving the cursor against another wants: the length of the
+/// sequence it would actually send.
+pub const cost = struct {
+    /// `repeatChar`.
+    pub fn repeatChar(count: u32) usize {
+        return seq.count(csi1, .{ count, 'b' });
+    }
+
+    /// `cursorTo`.
+    pub fn cursorTo(row: u32, col: u32) usize {
+        return seq.count(csi2, .{ row, col, 'H' });
+    }
+
+    /// `cursorUp`.
+    pub fn cursorUp(n: u32) usize {
+        return seq.count(csi1, .{ n, 'A' });
+    }
+
+    /// `cursorDown`.
+    pub fn cursorDown(n: u32) usize {
+        return seq.count(csi1, .{ n, 'B' });
+    }
+
+    /// `cursorRight`.
+    pub fn cursorRight(n: u32) usize {
+        return seq.count(csi1, .{ n, 'C' });
+    }
+
+    /// `cursorLeft`.
+    pub fn cursorLeft(n: u32) usize {
+        return seq.count(csi1, .{ n, 'D' });
+    }
+
+    /// `cursorNextLine`.
+    pub fn cursorNextLine(n: u32) usize {
+        return seq.count(csi1, .{ n, 'E' });
+    }
+
+    /// `cursorPrevLine`.
+    pub fn cursorPrevLine(n: u32) usize {
+        return seq.count(csi1, .{ n, 'F' });
+    }
+
+    /// `cursorColumn`.
+    pub fn cursorColumn(col: u32) usize {
+        return seq.count(csi1, .{ col, 'G' });
+    }
+
+    /// `cursorRow`.
+    pub fn cursorRow(row: u32) usize {
+        return seq.count(csi1, .{ row, 'd' });
+    }
+
+    /// `cursorSave`.
+    pub fn cursorSave() usize {
+        return seq.count(escape, .{'7'});
+    }
+
+    /// `cursorRestore`.
+    pub fn cursorRestore() usize {
+        return seq.count(escape, .{'8'});
+    }
+
+    /// `clearLine`.
+    pub fn clearLine(what: ClearLine) usize {
+        return seq.count(csi1, .{ @intFromEnum(what), 'K' });
+    }
+
+    /// `clearScreen`.
+    pub fn clearScreen(what: ClearScreen) usize {
+        return seq.count(csi1, .{ @intFromEnum(what), 'J' });
+    }
+
+    /// `scrollRegion`.
+    pub fn scrollRegion(top: u32, bottom: u32) usize {
+        return seq.count(csi2, .{ top, bottom, 'r' });
+    }
+
+    /// `scrollRegionReset`.
+    pub fn scrollRegionReset() usize {
+        return seq.count(csi0, .{'r'});
+    }
+
+    /// `scrollUp`.
+    pub fn scrollUp(n: u32) usize {
+        return seq.count(csi1, .{ n, 'S' });
+    }
+
+    /// `scrollDown`.
+    pub fn scrollDown(n: u32) usize {
+        return seq.count(csi1, .{ n, 'T' });
+    }
+
+    /// `insertLines`.
+    pub fn insertLines(n: u32) usize {
+        return seq.count(csi1, .{ n, 'L' });
+    }
+
+    /// `insertChars`.
+    pub fn insertChars(n: u32) usize {
+        return seq.count(csi1, .{ n, '@' });
+    }
+
+    /// `deleteChars`.
+    pub fn deleteChars(n: u32) usize {
+        return seq.count(csi1, .{ n, 'P' });
+    }
+
+    /// `eraseChars`.
+    pub fn eraseChars(n: u32) usize {
+        return seq.count(csi1, .{ n, 'X' });
+    }
+
+    /// `deleteLines`.
+    pub fn deleteLines(n: u32) usize {
+        return seq.count(csi1, .{ n, 'M' });
+    }
+};
 
 test "cursorTo counts rows and columns from 1 at the top-left" {
     var out: Writer.Allocating = .init(std.testing.allocator);
@@ -451,4 +590,88 @@ test "a run written as REP is shorter than the glyphs it stands for" {
     try out.writer.writeByte(' ');
     try repeatChar(&out.writer, 79);
     try std.testing.expectEqual(@as(usize, 6), out.written().len);
+}
+
+/// A count that exercises every width: each digit count from one to ten,
+/// and both ends of the range.
+fn randomCount(random: std.Random) u32 {
+    return switch (random.uintLessThan(u8, 4)) {
+        0 => random.uintLessThan(u32, 10),
+        1 => random.int(u32) >> random.uintLessThan(u5, 31),
+        2 => std.math.maxInt(u32) - random.uintLessThan(u32, 3),
+        else => random.int(u32),
+    };
+}
+
+test "every cost is the length its writer writes, on random arguments" {
+    const one = [_]struct {
+        write: *const fn (*Writer, u32) Writer.Error!void,
+        count: *const fn (u32) usize,
+    }{
+        .{ .write = repeatChar, .count = cost.repeatChar },
+        .{ .write = cursorUp, .count = cost.cursorUp },
+        .{ .write = cursorDown, .count = cost.cursorDown },
+        .{ .write = cursorRight, .count = cost.cursorRight },
+        .{ .write = cursorLeft, .count = cost.cursorLeft },
+        .{ .write = cursorNextLine, .count = cost.cursorNextLine },
+        .{ .write = cursorPrevLine, .count = cost.cursorPrevLine },
+        .{ .write = cursorColumn, .count = cost.cursorColumn },
+        .{ .write = cursorRow, .count = cost.cursorRow },
+        .{ .write = scrollUp, .count = cost.scrollUp },
+        .{ .write = scrollDown, .count = cost.scrollDown },
+        .{ .write = insertLines, .count = cost.insertLines },
+        .{ .write = insertChars, .count = cost.insertChars },
+        .{ .write = deleteChars, .count = cost.deleteChars },
+        .{ .write = eraseChars, .count = cost.eraseChars },
+        .{ .write = deleteLines, .count = cost.deleteLines },
+    };
+    const two = [_]struct {
+        write: *const fn (*Writer, u32, u32) Writer.Error!void,
+        count: *const fn (u32, u32) usize,
+    }{
+        .{ .write = cursorTo, .count = cost.cursorTo },
+        .{ .write = scrollRegion, .count = cost.scrollRegion },
+    };
+
+    var buffer: [64]u8 = undefined;
+    var prng: std.Random.DefaultPrng = .init(0xc0575);
+    const random = prng.random();
+    for (0..20_000) |_| {
+        const a = randomCount(random);
+        const b = randomCount(random);
+        for (one) |case| {
+            var w: Writer = .fixed(&buffer);
+            try case.write(&w, a);
+            try std.testing.expectEqual(w.buffered().len, case.count(a));
+        }
+        for (two) |case| {
+            var w: Writer = .fixed(&buffer);
+            try case.write(&w, a, b);
+            try std.testing.expectEqual(w.buffered().len, case.count(a, b));
+        }
+    }
+
+    const none = [_]struct {
+        write: *const fn (*Writer) Writer.Error!void,
+        count: *const fn () usize,
+    }{
+        .{ .write = cursorSave, .count = cost.cursorSave },
+        .{ .write = cursorRestore, .count = cost.cursorRestore },
+        .{ .write = scrollRegionReset, .count = cost.scrollRegionReset },
+    };
+    for (none) |case| {
+        var w: Writer = .fixed(&buffer);
+        try case.write(&w);
+        try std.testing.expectEqual(w.buffered().len, case.count());
+    }
+    for (std.enums.values(ClearLine)) |what| {
+        var w: Writer = .fixed(&buffer);
+        try clearLine(&w, what);
+        try std.testing.expectEqual(w.buffered().len, cost.clearLine(what));
+    }
+    for (std.enums.values(ClearScreen)) |what| {
+        var w: Writer = .fixed(&buffer);
+        try clearScreen(&w, what);
+        try std.testing.expectEqual(w.buffered().len, cost.clearScreen(what));
+    }
 }

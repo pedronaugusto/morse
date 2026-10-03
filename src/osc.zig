@@ -100,6 +100,12 @@ pub fn workingDirectory(w: *Writer, uri: []const u8) strings.Error!void {
 pub fn hyperlinkStart(w: *Writer, uri: []const u8, params: ?[]const u8) strings.Error!void {
     try strings.checkText(uri);
     if (params) |p| try strings.checkText(p);
+    try spellHyperlinkStart(w, uri, params);
+}
+
+/// The bytes of `hyperlinkStart`, once its fields are known to be clean, into
+/// a `*Writer` or a `*seq.Count`.
+fn spellHyperlinkStart(w: anytype, uri: []const u8, params: ?[]const u8) !void {
     try w.writeAll(seq.osc ++ "8;");
     if (params) |p| try w.writeAll(p);
     try w.writeByte(';');
@@ -110,6 +116,11 @@ pub fn hyperlinkStart(w: *Writer, uri: []const u8, params: ?[]const u8) strings.
 /// Closes the hyperlink opened by `hyperlinkStart`: `OSC 8 ; ; ST`. Cells
 /// written after this one carry no link.
 pub fn hyperlinkEnd(w: *Writer) Writer.Error!void {
+    try spellHyperlinkEnd(w);
+}
+
+/// The bytes of `hyperlinkEnd`, into a `*Writer` or a `*seq.Count`.
+fn spellHyperlinkEnd(w: anytype) !void {
     try w.writeAll(seq.osc ++ "8;;" ++ seq.st);
 }
 
@@ -119,9 +130,14 @@ pub fn hyperlinkEnd(w: *Writer) Writer.Error!void {
 pub fn hyperlink(w: *Writer, text: []const u8, uri: []const u8) strings.Error!void {
     try strings.checkText(text);
     try strings.checkText(uri);
-    try hyperlinkStart(w, uri, null);
+    try spellHyperlink(w, text, uri);
+}
+
+/// The bytes of `hyperlink`, into a `*Writer` or a `*seq.Count`.
+fn spellHyperlink(w: anytype, text: []const u8, uri: []const u8) !void {
+    try spellHyperlinkStart(w, uri, null);
     try w.writeAll(text);
-    try hyperlinkEnd(w);
+    try spellHyperlinkEnd(w);
 }
 
 /// Where fractionally scaled text sits inside the cells it was given,
@@ -200,6 +216,12 @@ pub const text_size_max: usize = 4096;
 /// Read against the protocol text of 2026-09-18.
 pub fn textSize(w: *Writer, size: TextSize, text: []const u8) strings.Error!void {
     try strings.checkText(text);
+    try spellTextSize(w, size, text);
+}
+
+/// The bytes of `textSize`, once the text is known to be clean, into a
+/// `*Writer` or a `*seq.Count`.
+fn spellTextSize(w: anytype, size: TextSize, text: []const u8) !void {
     try w.writeAll(seq.osc ++ "66;");
 
     var any = false;
@@ -217,13 +239,42 @@ pub fn textSize(w: *Writer, size: TextSize, text: []const u8) strings.Error!void
 
 /// Writes one metadata key, with the `:` that separates it from the one
 /// before.
-fn writeSizeKey(w: *Writer, any: *bool, name: u8, value: u8) Writer.Error!void {
+fn writeSizeKey(w: anytype, any: *bool, name: u8, value: u8) !void {
     if (any.*) try w.writeByte(':');
     any.* = true;
     try w.writeByte(name);
     try w.writeByte('=');
     try seq.writeInt(w, value);
 }
+
+/// How many bytes the hyperlink and text-size writers write, given the same
+/// arguments less the writer, without writing them.
+///
+/// Each runs the body its writer spells with into a `seq.Count`, so a count
+/// is exactly the length of what the writer writes when it writes at all:
+/// the text is counted, not checked, and a writer that refuses text with a
+/// control in it writes nothing.
+pub const cost = struct {
+    /// `hyperlinkStart`: the URI, the params and seven bytes of framing.
+    pub fn hyperlinkStart(uri: []const u8, params: ?[]const u8) usize {
+        return seq.count(spellHyperlinkStart, .{ uri, params });
+    }
+
+    /// `hyperlinkEnd`.
+    pub fn hyperlinkEnd() usize {
+        return seq.count(spellHyperlinkEnd, .{});
+    }
+
+    /// `hyperlink`.
+    pub fn hyperlink(text: []const u8, uri: []const u8) usize {
+        return seq.count(spellHyperlink, .{ text, uri });
+    }
+
+    /// `textSize`.
+    pub fn textSize(size: TextSize, text: []const u8) usize {
+        return seq.count(spellTextSize, .{ size, text });
+    }
+};
 
 //=========================================================================
 // Reading an OSC 66 back.
@@ -595,4 +646,42 @@ test "OSC caller text refuses every control before writing and preserves UTF-8" 
             "\x1b]66;;" ++ good ++ "\x1b\\",
         out.written(),
     );
+}
+
+test "every hyperlink and text-size cost is the length its writer writes" {
+    var prng: std.Random.DefaultPrng = .init(0x05c66);
+    const random = prng.random();
+    var source: [64]u8 = undefined;
+    for (&source) |*b| b.* = 'a' + random.uintLessThan(u8, 26);
+
+    var buffer: [256]u8 = undefined;
+    for (0..20_000) |_| {
+        const uri = source[0..random.uintLessThan(usize, source.len)];
+        const text = source[random.uintLessThan(usize, source.len)..];
+        const params: ?[]const u8 = if (random.boolean()) null else source[0..random.uintLessThan(usize, 16)];
+        const size: TextSize = .{
+            .scale = random.int(u3),
+            .width = random.int(u3),
+            .numerator = random.int(u4),
+            .denominator = random.int(u4),
+            .vertical = @enumFromInt(random.uintLessThan(u8, 3)),
+            .horizontal = @enumFromInt(random.uintLessThan(u8, 3)),
+        };
+
+        var w: Writer = .fixed(&buffer);
+        try hyperlinkStart(&w, uri, params);
+        try std.testing.expectEqual(w.buffered().len, cost.hyperlinkStart(uri, params));
+
+        w = .fixed(&buffer);
+        try hyperlinkEnd(&w);
+        try std.testing.expectEqual(w.buffered().len, cost.hyperlinkEnd());
+
+        w = .fixed(&buffer);
+        try hyperlink(&w, text, uri);
+        try std.testing.expectEqual(w.buffered().len, cost.hyperlink(text, uri));
+
+        w = .fixed(&buffer);
+        try textSize(&w, size, text);
+        try std.testing.expectEqual(w.buffered().len, cost.textSize(size, text));
+    }
 }
