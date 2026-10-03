@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Spell style changes once into a stack buffer with a decimal table, pricing the reset spelling by counting instead of formatting it; the bytes written are unchanged.
+
 - Read single-byte ASCII and plain CSI values without copying them, and resume incomplete sequences after appending new input.
 
 - Reject undeclared dependencies, duplicate layer membership and imports of source executables.

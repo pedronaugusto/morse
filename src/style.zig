@@ -295,75 +295,154 @@ pub const Style = extern struct {
 /// `CSI`, the twelve off codes or a `0`, every on code, three colours in
 /// their widest forms, and the `m`.
 ///
-/// Used to size the buffer `diffStyle` prices a sequence into, so the
-/// pricing never has to drain. A sequence that outran it would still be
-/// priced correctly, only more slowly, and the suite pins the real worst
-/// case well under it.
+/// Sizes the buffer `diffStyle` spells into, which takes the difference
+/// before it is known to win. The suite pins the longest difference and the
+/// longest reset under this with room to spare for the three-byte copy
+/// `Spelling` makes of every number.
 const max_sequence = 96;
 
-/// One `CSI ... m` being built up, parameter by parameter.
+/// One parameter value's decimal digits, so a colour channel or a palette
+/// index is copied out of a table rather than divided out a digit at a time.
+const Decimal = struct {
+    /// The digits, left-aligned. Bytes past `len` are zero and never reach
+    /// the output: whatever follows a number overwrites them.
+    digits: [3]u8,
+    /// How many of them are the number: 1 to 3.
+    len: u8,
+};
+
+/// Every value a parameter of this file can take, 0 to 255, spelled.
+const decimal: [256]Decimal = blk: {
+    var table: [256]Decimal = undefined;
+    for (&table, 0..) |*entry, value| {
+        entry.* = if (value < 10)
+            .{ .digits = .{ '0' + value, 0, 0 }, .len = 1 }
+        else if (value < 100)
+            .{ .digits = .{ '0' + value / 10, '0' + value % 10, 0 }, .len = 2 }
+        else
+            .{ .digits = .{ '0' + value / 100, '0' + value / 10 % 10, '0' + value % 10 }, .len = 3 };
+    }
+    break :blk table;
+};
+
+/// Where a spelling goes when only its length is wanted: every byte is
+/// counted and none is written.
+///
+/// `diffStyle` prices the reset spelling through this, with the same body
+/// that spells it into a `Spelling` -- so the count is of exactly the bytes
+/// that would be written, and there is no second encoder to keep in step
+/// with the first.
+const Price = struct {
+    len: usize = 0,
+
+    fn bytes(p: *Price, comptime text: []const u8) void {
+        p.len += text.len;
+    }
+
+    fn number(p: *Price, value: u8) void {
+        p.len += decimal[value].len;
+    }
+};
+
+/// Where a spelling is written: a buffer on the stack, handed to the
+/// caller's writer in one piece once it has won.
+const Spelling = struct {
+    buffer: [max_sequence]u8 = undefined,
+    len: usize = 0,
+
+    fn bytes(s: *Spelling, comptime text: []const u8) void {
+        s.buffer[s.len..][0..text.len].* = text[0..text.len].*;
+        s.len += text.len;
+    }
+
+    /// All three bytes of the table entry, then the length advanced by the
+    /// digits only. A number is always followed by at least the `m`, so the
+    /// spare bytes land inside the sequence and are overwritten there.
+    fn number(s: *Spelling, value: u8) void {
+        const entry = decimal[value];
+        s.buffer[s.len..][0..3].* = entry.digits;
+        s.len += entry.len;
+    }
+
+    fn written(s: *const Spelling) []const u8 {
+        return s.buffer[0..s.len];
+    }
+};
+
+/// One `CSI ... m` being built up, parameter by parameter, into a `Price` or
+/// a `Spelling`.
 ///
 /// The `CSI` is written with the first parameter rather than up front,
 /// because a diff of two equal styles must write no bytes at all.
-const Params = struct {
-    w: *Writer,
-    /// Whether a parameter has been written, which is also whether the `CSI`
-    /// has been.
-    any: bool = false,
-    /// Whether a code that turns something off has been written. Read by
-    /// `diffStyle`, which needs it to know whether the other spelling is
-    /// worth pricing, and set here rather than worked out again from the
-    /// fields so the two cannot drift apart.
-    turned_off: bool = false,
+fn Params(comptime Out: type) type {
+    return struct {
+        const Self = @This();
 
-    /// Opens the sequence on the first parameter and separates every one
-    /// after it.
-    fn open(p: *Params) Writer.Error!void {
-        if (p.any) return p.w.writeByte(';');
-        try p.w.writeAll(seq.csi);
-        p.any = true;
-    }
+        out: *Out,
+        /// Whether a parameter has been written, which is also whether the
+        /// `CSI` has been.
+        any: bool = false,
+        /// Whether a code that turns something off has been written. Read by
+        /// `diffStyle`, which needs it to know whether the other spelling is
+        /// worth pricing, and set here rather than worked out again from the
+        /// fields so the two cannot drift apart.
+        turned_off: bool = false,
 
-    /// Writes one plain numeric parameter.
-    fn code(p: *Params, value: u8) Writer.Error!void {
-        try p.open();
-        try seq.writeInt(p.w, value);
-    }
+        /// Opens the sequence on the first parameter and separates every one
+        /// after it.
+        fn open(p: *Self) void {
+            if (p.any) return p.out.bytes(";");
+            p.out.bytes(seq.csi);
+            p.any = true;
+        }
 
-    /// The same, for a code that turns something off.
-    fn offCode(p: *Params, value: u8) Writer.Error!void {
-        p.turned_off = true;
-        return p.code(value);
-    }
+        /// Writes one plain numeric parameter.
+        fn code(p: *Self, value: u8) void {
+            p.open();
+            p.out.number(value);
+        }
 
-    /// Opens a parameter that has fields of its own and writes its first
-    /// piece; the caller writes the rest straight to `p.w`.
-    fn compound(p: *Params, bytes: []const u8) Writer.Error!void {
-        try p.open();
-        try p.w.writeAll(bytes);
-    }
+        /// The same, for a code that turns something off.
+        fn offCode(p: *Self, value: u8) void {
+            p.turned_off = true;
+            p.code(value);
+        }
 
-    /// Writes `;` and a number, the tail every compound parameter is made of.
-    fn field(p: *Params, value: u8) Writer.Error!void {
-        try p.w.writeByte(';');
-        try seq.writeInt(p.w, value);
-    }
+        /// Opens a parameter that has fields of its own and writes its first
+        /// piece; the caller writes the rest with `number`, `field` and
+        /// `subfield`.
+        fn compound(p: *Self, comptime text: []const u8) void {
+            p.open();
+            p.out.bytes(text);
+        }
 
-    /// Writes `:` and a number, the same for the colon-separated forms.
-    fn subfield(p: *Params, value: u8) Writer.Error!void {
-        try p.w.writeByte(':');
-        try seq.writeInt(p.w, value);
-    }
+        /// Writes a bare number, the piece after a compound's opening.
+        fn number(p: *Self, value: u8) void {
+            p.out.number(value);
+        }
 
-    /// Ends the sequence, or writes nothing when no parameter was produced.
-    ///
-    /// Nothing, rather than `CSI m`: a terminal reads an empty parameter list
-    /// as `0`, so the tidy-looking empty sequence would reset the very
-    /// attributes the diff found no reason to touch.
-    fn finish(p: *Params) Writer.Error!void {
-        if (p.any) try p.w.writeByte('m');
-    }
-};
+        /// Writes `;` and a number, the tail every compound parameter is made of.
+        fn field(p: *Self, value: u8) void {
+            p.out.bytes(";");
+            p.out.number(value);
+        }
+
+        /// Writes `:` and a number, the same for the colon-separated forms.
+        fn subfield(p: *Self, value: u8) void {
+            p.out.bytes(":");
+            p.out.number(value);
+        }
+
+        /// Ends the sequence, or writes nothing when no parameter was produced.
+        ///
+        /// Nothing, rather than `CSI m`: a terminal reads an empty parameter
+        /// list as `0`, so the tidy-looking empty sequence would reset the
+        /// very attributes the diff found no reason to touch.
+        fn finish(p: *Self) void {
+            if (p.any) p.out.bytes("m");
+        }
+    };
+}
 
 /// Writes a foreground or background colour as one parameter.
 ///
@@ -377,30 +456,30 @@ const Params = struct {
 /// two is understood by few enough that writing it would lose the colour on
 /// most terminals.
 fn writeFgBg(
-    p: *Params,
+    p: anytype,
     color: Color,
     default_code: u8,
     base: u8,
     bright_base: u8,
     extended: u8,
-) Writer.Error!void {
+) void {
     switch (color.kind) {
-        .default => try p.offCode(default_code),
+        .default => p.offCode(default_code),
         .ansi => {
             const slot = color.index();
-            try p.code(if (slot < 8) base + slot else bright_base + (slot - 8));
+            p.code(if (slot < 8) base + slot else bright_base + (slot - 8));
         },
         .palette => {
-            try p.code(extended);
-            try p.w.writeAll(";5;");
-            try seq.writeInt(p.w, color.index());
+            p.code(extended);
+            p.field(5);
+            p.field(color.index());
         },
         .rgb => {
-            try p.code(extended);
-            try p.w.writeAll(";2;");
-            try seq.writeInt(p.w, color.r);
-            try p.field(color.g);
-            try p.field(color.b);
+            p.code(extended);
+            p.field(2);
+            p.field(color.r);
+            p.field(color.g);
+            p.field(color.b);
         },
     }
 }
@@ -416,18 +495,18 @@ fn writeFgBg(
 /// `.ansi` and `.palette` write the same bytes here, because SGR 58 has no
 /// short codes for the sixteen — the palette index is its only spelling for
 /// them.
-fn writeUnderlineColor(p: *Params, color: Color) Writer.Error!void {
+fn writeUnderlineColor(p: anytype, color: Color) void {
     switch (color.kind) {
-        .default => try p.offCode(59),
+        .default => p.offCode(59),
         .ansi, .palette => {
-            try p.compound("58:5:");
-            try seq.writeInt(p.w, color.index());
+            p.compound("58:5:");
+            p.number(color.index());
         },
         .rgb => {
-            try p.compound("58:2::");
-            try seq.writeInt(p.w, color.r);
-            try p.subfield(color.g);
-            try p.subfield(color.b);
+            p.compound("58:2::");
+            p.number(color.r);
+            p.subfield(color.g);
+            p.subfield(color.b);
         },
     }
 }
@@ -477,39 +556,36 @@ pub fn setStyle(w: *Writer, style: Style) Writer.Error!void {
 /// them. The difference is short when little changed; when much changed, a
 /// leading `0` costs two bytes and buys every off code at once, so coming
 /// back from an everything-on style is `CSI 0 m`, four bytes, where the
-/// difference is thirty-eight. Both spellings leave the terminal in `to`;
-/// they are priced with `Writer.Discarding`, which runs the same code that
-/// writes the bytes, so there is no second encoder to keep in step. Ties go
-/// to the difference, which touches least.
+/// difference is thirty-eight. Both spellings leave the terminal in `to`.
+/// The difference is spelled once, into a buffer on the stack; the reset is
+/// priced by counting, through the same code that spells, so there is no
+/// second encoder to keep in step, and spelled only when it wins. Ties go to
+/// the difference, which touches least.
 pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
-    // A buffer as wide as the longest sequence either spelling can produce,
-    // so pricing one is a memcpy rather than a call per parameter.
-    var scratch: [max_sequence]u8 = undefined;
-
-    var delta: Writer.Discarding = .init(&scratch);
-    const turned_off = writeSgr(&delta.writer, from, to, false) catch unreachable;
-    const difference = delta.fullCount();
+    var spelling: Spelling = .{};
+    const turned_off = spell(&spelling, from, to, false);
 
     // Nothing changed, which is the case a renderer meets most: no bytes,
     // and nothing to price.
-    if (difference == 0) return;
+    if (spelling.len == 0) return;
 
     // Nothing was turned off, so the reset spelling would have to write
     // every attribute `to` carries -- a superset of the difference -- and
     // pay for the `0` besides. It cannot win, so it is not priced.
-    if (!turned_off) {
-        _ = try writeSgr(w, from, to, false);
-        return;
+    if (turned_off) {
+        var whole: Price = .{};
+        _ = spell(&whole, from, to, true);
+        if (whole.len < spelling.len) {
+            spelling.len = 0;
+            _ = spell(&spelling, from, to, true);
+        }
     }
 
-    var whole: Writer.Discarding = .init(&scratch);
-    _ = writeSgr(&whole.writer, from, to, true) catch unreachable;
-
-    _ = try writeSgr(w, from, to, whole.fullCount() < difference);
+    try w.writeAll(spelling.written());
 }
 
-/// Writes one `CSI ... m`, either as the difference from `from` or as `0`
-/// and then the whole of `to`.
+/// Spells one `CSI ... m` into `out`, a `*Price` or a `*Spelling`, either as
+/// the difference from `from` or as `0` and then the whole of `to`.
 ///
 /// One body, because the two spellings differ only in where they start: a
 /// reset puts the terminal in the default style, so the codes that follow
@@ -517,56 +593,56 @@ pub fn diffStyle(w: *Writer, from: Style, to: Style) Writer.Error!void {
 ///
 /// Says whether it wrote a code that turns something off, which is what
 /// `diffStyle` needs to know before it is worth pricing the other spelling.
-fn writeSgr(w: *Writer, from: Style, to: Style, reset: bool) Writer.Error!bool {
-    var params: Params = .{ .w = w };
-    if (reset) try params.code(0);
+fn spell(out: anytype, from: Style, to: Style, reset: bool) bool {
+    var params: Params(@TypeOf(out.*)) = .{ .out = out };
+    if (reset) params.code(0);
     const base: Style = if (reset) .{} else from;
 
     // The off codes come first so that SGR 22, which turns off bold and dim
     // together, cannot undo an on code written in the same sequence.
     const off_bold_dim = (base.bold and !to.bold) or (base.dim and !to.dim);
-    if (off_bold_dim) try params.offCode(22);
-    if (base.italic and !to.italic) try params.offCode(23);
-    if (base.underline != .none and to.underline == .none) try params.offCode(24);
-    if (base.blink and !to.blink) try params.offCode(25);
-    if (base.reverse and !to.reverse) try params.offCode(27);
-    if (base.hidden and !to.hidden) try params.offCode(28);
-    if (base.strikethrough and !to.strikethrough) try params.offCode(29);
-    if (base.overline and !to.overline) try params.offCode(55);
-    if (base.script != to.script and to.script == .none) try params.offCode(75);
+    if (off_bold_dim) params.offCode(22);
+    if (base.italic and !to.italic) params.offCode(23);
+    if (base.underline != .none and to.underline == .none) params.offCode(24);
+    if (base.blink and !to.blink) params.offCode(25);
+    if (base.reverse and !to.reverse) params.offCode(27);
+    if (base.hidden and !to.hidden) params.offCode(28);
+    if (base.strikethrough and !to.strikethrough) params.offCode(29);
+    if (base.overline and !to.overline) params.offCode(55);
+    if (base.script != to.script and to.script == .none) params.offCode(75);
 
     // Hence the `or off_bold_dim`: turning one of the pair off has just
     // turned the other off too, so the survivor is stated again.
-    if (to.bold and (!base.bold or off_bold_dim)) try params.code(1);
-    if (to.dim and (!base.dim or off_bold_dim)) try params.code(2);
-    if (to.italic and !base.italic) try params.code(3);
+    if (to.bold and (!base.bold or off_bold_dim)) params.code(1);
+    if (to.dim and (!base.dim or off_bold_dim)) params.code(2);
+    if (to.italic and !base.italic) params.code(3);
     if (to.underline != base.underline and to.underline != .none) {
         if (to.underline == .single) {
             // Bare `4`, not `4:1`. The plain underline predates the
             // sub-parameter form by decades and terminals that have never
             // heard of `4:1` still draw it.
-            try params.code(4);
+            params.code(4);
         } else {
-            try params.compound("4:");
-            try seq.writeInt(w, @intFromEnum(to.underline));
+            params.compound("4:");
+            params.number(@intFromEnum(to.underline));
         }
     }
-    if (to.blink and !base.blink) try params.code(5);
-    if (to.reverse and !base.reverse) try params.code(7);
-    if (to.hidden and !base.hidden) try params.code(8);
-    if (to.strikethrough and !base.strikethrough) try params.code(9);
-    if (to.overline and !base.overline) try params.code(53);
+    if (to.blink and !base.blink) params.code(5);
+    if (to.reverse and !base.reverse) params.code(7);
+    if (to.hidden and !base.hidden) params.code(8);
+    if (to.strikethrough and !base.strikethrough) params.code(9);
+    if (to.overline and !base.overline) params.code(53);
     if (to.script != base.script and to.script != .none) {
-        try params.code(@intFromEnum(to.script));
+        params.code(@intFromEnum(to.script));
     }
 
-    if (!base.fg.eql(to.fg)) try writeFgBg(&params, to.fg, 39, 30, 90, 38);
-    if (!base.bg.eql(to.bg)) try writeFgBg(&params, to.bg, 49, 40, 100, 48);
+    if (!base.fg.eql(to.fg)) writeFgBg(&params, to.fg, 39, 30, 90, 38);
+    if (!base.bg.eql(to.bg)) writeFgBg(&params, to.bg, 49, 40, 100, 48);
     if (!base.underline_color.eql(to.underline_color)) {
-        try writeUnderlineColor(&params, to.underline_color);
+        writeUnderlineColor(&params, to.underline_color);
     }
 
-    try params.finish();
+    params.finish();
     return params.turned_off;
 }
 
@@ -906,10 +982,12 @@ test "what goes out is the shorter of the two spellings, on every pair" {
     var buffer: [max_sequence]u8 = undefined;
     for (styles) |from| {
         for (styles) |to| {
+            // Priced by the encoder `diffStyle` used to write with, which
+            // formatted both spellings to count them.
             var delta: Writer.Discarding = .init(&.{});
-            _ = try writeSgr(&delta.writer, from, to, false);
+            _ = try oracle.writeSgr(&delta.writer, from, to, false);
             var whole: Writer.Discarding = .init(&.{});
-            _ = try writeSgr(&whole.writer, from, to, true);
+            _ = try oracle.writeSgr(&whole.writer, from, to, true);
 
             var w: Writer = .fixed(&buffer);
             try diffStyle(&w, from, to);
@@ -926,12 +1004,10 @@ test "what goes out is the shorter of the two spellings, on every pair" {
     }
 }
 
-test "the longest sequence either spelling writes fits the pricing buffer" {
+test "the longest sequence either spelling writes fits the spelling buffer" {
     // What `max_sequence` is sized against. Every attribute on at once from
     // a default terminal, three direct colours: the longest body there is.
-    var buffer: [max_sequence]u8 = undefined;
-    var w: Writer = .fixed(&buffer);
-    try setStyle(&w, .{
+    const widest: Style = .{
         .bold = true,
         .dim = true,
         .italic = true,
@@ -945,8 +1021,46 @@ test "the longest sequence either spelling writes fits the pricing buffer" {
         .fg = .rgb(255, 255, 255),
         .bg = .rgb(255, 255, 255),
         .underline_color = .rgb(255, 255, 255),
-    });
+    };
+    var buffer: [max_sequence]u8 = undefined;
+    var w: Writer = .fixed(&buffer);
+    try setStyle(&w, widest);
     try std.testing.expect(w.buffered().len < max_sequence);
+
+    // The winner is never longer than the reset spelling, and the reset
+    // spelling of the widest style is its body and `0;`. `Spelling` copies
+    // three bytes for every number, up to two past the digits, so that much
+    // room is kept beyond it as well.
+    var whole: Price = .{};
+    _ = spell(&whole, .{ .bold = true }, widest, true);
+    try std.testing.expectEqual(w.buffered().len + 2, whole.len);
+    try std.testing.expect(whole.len + 2 <= max_sequence);
+
+    // The difference is spelled before it is known to win, so the longest
+    // of those has to fit too. Every attribute takes whichever of its on and
+    // off codes is longer, bold goes off beside a dim that is stated again,
+    // and all three colours change to their widest spelling: 84 bytes.
+    const lit: Style = .{
+        .bold = true,
+        .italic = true,
+        .blink = true,
+        .reverse = true,
+        .hidden = true,
+        .strikethrough = true,
+        .overline = true,
+        .script = .subscript,
+    };
+    const longest: Style = .{
+        .dim = true,
+        .underline = .dashed,
+        .fg = .rgb(255, 255, 255),
+        .bg = .rgb(255, 255, 255),
+        .underline_color = .rgb(255, 255, 255),
+    };
+    var difference: Price = .{};
+    _ = spell(&difference, lit, longest, false);
+    try std.testing.expectEqual(@as(usize, 84), difference.len);
+    try std.testing.expect(difference.len + 2 <= max_sequence);
 }
 
 test "a style diffed against itself writes nothing" {
@@ -1263,4 +1377,259 @@ test "a row of cells holding a style compares with memcmp" {
 
     a[40].style.fg = .ansi(.cyan);
     try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(&a), std.mem.sliceAsBytes(&b));
+}
+
+/// The encoder `diffStyle` used before it priced by counting: every
+/// parameter formatted through a `Writer`, a `Writer.Discarding` to price
+/// each spelling, and the winner formatted a third time. Kept as the oracle
+/// the differential tests hold the counting encoder to, byte for byte.
+const oracle = struct {
+    const FormattedParams = struct {
+        w: *Writer,
+        any: bool = false,
+        turned_off: bool = false,
+
+        fn open(p: *FormattedParams) Writer.Error!void {
+            if (p.any) return p.w.writeByte(';');
+            try p.w.writeAll(seq.csi);
+            p.any = true;
+        }
+
+        fn code(p: *FormattedParams, value: u8) Writer.Error!void {
+            try p.open();
+            try seq.writeInt(p.w, value);
+        }
+
+        fn offCode(p: *FormattedParams, value: u8) Writer.Error!void {
+            p.turned_off = true;
+            return p.code(value);
+        }
+
+        fn compound(p: *FormattedParams, bytes: []const u8) Writer.Error!void {
+            try p.open();
+            try p.w.writeAll(bytes);
+        }
+
+        fn field(p: *FormattedParams, value: u8) Writer.Error!void {
+            try p.w.writeByte(';');
+            try seq.writeInt(p.w, value);
+        }
+
+        fn subfield(p: *FormattedParams, value: u8) Writer.Error!void {
+            try p.w.writeByte(':');
+            try seq.writeInt(p.w, value);
+        }
+
+        fn finish(p: *FormattedParams) Writer.Error!void {
+            if (p.any) try p.w.writeByte('m');
+        }
+    };
+
+    fn formatFgBg(p: *FormattedParams, color: Color, default_code: u8, base: u8, bright_base: u8, extended: u8) Writer.Error!void {
+        switch (color.kind) {
+            .default => try p.offCode(default_code),
+            .ansi => {
+                const slot = color.index();
+                try p.code(if (slot < 8) base + slot else bright_base + (slot - 8));
+            },
+            .palette => {
+                try p.code(extended);
+                try p.w.writeAll(";5;");
+                try seq.writeInt(p.w, color.index());
+            },
+            .rgb => {
+                try p.code(extended);
+                try p.w.writeAll(";2;");
+                try seq.writeInt(p.w, color.r);
+                try p.field(color.g);
+                try p.field(color.b);
+            },
+        }
+    }
+
+    fn formatUnderlineColor(p: *FormattedParams, color: Color) Writer.Error!void {
+        switch (color.kind) {
+            .default => try p.offCode(59),
+            .ansi, .palette => {
+                try p.compound("58:5:");
+                try seq.writeInt(p.w, color.index());
+            },
+            .rgb => {
+                try p.compound("58:2::");
+                try seq.writeInt(p.w, color.r);
+                try p.subfield(color.g);
+                try p.subfield(color.b);
+            },
+        }
+    }
+
+    fn diff(w: *Writer, from: Style, to: Style) Writer.Error!void {
+        var scratch: [max_sequence]u8 = undefined;
+        var delta: Writer.Discarding = .init(&scratch);
+        const turned_off = writeSgr(&delta.writer, from, to, false) catch unreachable;
+        const difference = delta.fullCount();
+        if (difference == 0) return;
+        if (!turned_off) {
+            _ = try writeSgr(w, from, to, false);
+            return;
+        }
+        var whole: Writer.Discarding = .init(&scratch);
+        _ = writeSgr(&whole.writer, from, to, true) catch unreachable;
+        _ = try writeSgr(w, from, to, whole.fullCount() < difference);
+    }
+
+    fn writeSgr(w: *Writer, from: Style, to: Style, reset: bool) Writer.Error!bool {
+        var params: FormattedParams = .{ .w = w };
+        if (reset) try params.code(0);
+        const base: Style = if (reset) .{} else from;
+
+        const off_bold_dim = (base.bold and !to.bold) or (base.dim and !to.dim);
+        if (off_bold_dim) try params.offCode(22);
+        if (base.italic and !to.italic) try params.offCode(23);
+        if (base.underline != .none and to.underline == .none) try params.offCode(24);
+        if (base.blink and !to.blink) try params.offCode(25);
+        if (base.reverse and !to.reverse) try params.offCode(27);
+        if (base.hidden and !to.hidden) try params.offCode(28);
+        if (base.strikethrough and !to.strikethrough) try params.offCode(29);
+        if (base.overline and !to.overline) try params.offCode(55);
+        if (base.script != to.script and to.script == .none) try params.offCode(75);
+
+        if (to.bold and (!base.bold or off_bold_dim)) try params.code(1);
+        if (to.dim and (!base.dim or off_bold_dim)) try params.code(2);
+        if (to.italic and !base.italic) try params.code(3);
+        if (to.underline != base.underline and to.underline != .none) {
+            if (to.underline == .single) {
+                try params.code(4);
+            } else {
+                try params.compound("4:");
+                try seq.writeInt(w, @intFromEnum(to.underline));
+            }
+        }
+        if (to.blink and !base.blink) try params.code(5);
+        if (to.reverse and !base.reverse) try params.code(7);
+        if (to.hidden and !base.hidden) try params.code(8);
+        if (to.strikethrough and !base.strikethrough) try params.code(9);
+        if (to.overline and !base.overline) try params.code(53);
+        if (to.script != base.script and to.script != .none) {
+            try params.code(@intFromEnum(to.script));
+        }
+
+        if (!base.fg.eql(to.fg)) try formatFgBg(&params, to.fg, 39, 30, 90, 38);
+        if (!base.bg.eql(to.bg)) try formatFgBg(&params, to.bg, 49, 40, 100, 48);
+        if (!base.underline_color.eql(to.underline_color)) {
+            try formatUnderlineColor(&params, to.underline_color);
+        }
+
+        try params.finish();
+        return params.turned_off;
+    }
+};
+
+/// A colour of any form, its channels drawn from the whole byte range.
+fn randomColor(random: std.Random) Color {
+    return switch (random.uintLessThan(u8, 4)) {
+        0 => .default,
+        1 => .ansi(@enumFromInt(random.uintLessThan(u8, 16))),
+        2 => .palette(random.int(u8)),
+        else => .rgb(random.int(u8), random.int(u8), random.int(u8)),
+    };
+}
+
+/// A style with every field drawn independently, so pairs of them turn
+/// things on, off, and both at once.
+fn randomStyle(random: std.Random) Style {
+    return .{
+        .fg = randomColor(random),
+        .bg = randomColor(random),
+        .underline_color = randomColor(random),
+        .bold = random.boolean(),
+        .dim = random.boolean(),
+        .italic = random.boolean(),
+        .underline = @enumFromInt(random.uintLessThan(u8, 6)),
+        .blink = random.boolean(),
+        .reverse = random.boolean(),
+        .hidden = random.boolean(),
+        .strikethrough = random.boolean(),
+        .overline = random.boolean(),
+        .script = switch (random.uintLessThan(u8, 3)) {
+            0 => .none,
+            1 => .superscript,
+            else => .subscript,
+        },
+    };
+}
+
+/// Holds one pair to the oracle: the same bytes out, each spelling priced at
+/// what the oracle's formatting of it counts, and what went out the shorter
+/// of the two.
+fn expectSameAsOracle(from: Style, to: Style) !void {
+    var expected_buffer: [max_sequence]u8 = undefined;
+    var expected: Writer = .fixed(&expected_buffer);
+    try oracle.diff(&expected, from, to);
+
+    var actual_buffer: [max_sequence]u8 = undefined;
+    var actual: Writer = .fixed(&actual_buffer);
+    try diffStyle(&actual, from, to);
+    try std.testing.expectEqualStrings(expected.buffered(), actual.buffered());
+
+    for ([_]bool{ false, true }) |reset| {
+        var formatted: Writer.Discarding = .init(&.{});
+        const oracle_off = try oracle.writeSgr(&formatted.writer, from, to, reset);
+        var counted: Price = .{};
+        const counted_off = spell(&counted, from, to, reset);
+        try std.testing.expectEqual(formatted.fullCount(), @as(u64, counted.len));
+        try std.testing.expectEqual(oracle_off, counted_off);
+
+        var spelled: Spelling = .{};
+        _ = spell(&spelled, from, to, reset);
+        var written_buffer: [2 * max_sequence]u8 = undefined;
+        var written: Writer = .fixed(&written_buffer);
+        _ = try oracle.writeSgr(&written, from, to, reset);
+        try std.testing.expectEqualStrings(written.buffered(), spelled.written());
+    }
+
+    var delta: Writer.Discarding = .init(&.{});
+    _ = try oracle.writeSgr(&delta.writer, from, to, false);
+    var whole: Writer.Discarding = .init(&.{});
+    _ = try oracle.writeSgr(&whole.writer, from, to, true);
+    const shortest = if (delta.fullCount() == 0) 0 else @min(delta.fullCount(), whole.fullCount());
+    try std.testing.expectEqual(shortest, @as(u64, actual.buffered().len));
+}
+
+test "the counting encoder writes what the formatting one did, on random pairs" {
+    var prng: std.Random.DefaultPrng = .init(0x5e1ec7ed);
+    const random = prng.random();
+    for (0..20_000) |_| {
+        const from = randomStyle(random);
+        const to = randomStyle(random);
+        try expectSameAsOracle(from, to);
+        try expectSameAsOracle(.{}, to);
+        try expectSameAsOracle(from, .{});
+        try expectSameAsOracle(to, to);
+    }
+}
+
+test "the counting encoder spells every byte value on every side as the formatting one did" {
+    // Every entry of the decimal table, as a palette index and as each
+    // channel of a direct colour, on all three sides, from the default and
+    // from a style that makes the reset spelling worth pricing.
+    const lit: Style = .{ .bold = true, .italic = true, .fg = .ansi(.red) };
+    for (0..256) |i| {
+        const v: u8 = @intCast(i);
+        const colors = [_]Color{
+            .palette(v),
+            .rgb(v, 0, 0),
+            .rgb(0, v, 0),
+            .rgb(0, 0, v),
+            .rgb(v, v, v),
+            .rgb(v, 255 - v, v / 2),
+        };
+        for (colors) |c| {
+            for ([_]Style{ .{ .fg = c }, .{ .bg = c }, .{ .underline_color = c } }) |to| {
+                try expectSameAsOracle(.{}, to);
+                try expectSameAsOracle(lit, to);
+                try expectSameAsOracle(to, lit);
+            }
+        }
+    }
 }
