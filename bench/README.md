@@ -18,7 +18,7 @@ Results go to `bench/results/<UTC-date>/smoke-<time>.md` + `.json` or
 `revisions.json` fixes A (before) at
 `ebe7020141cb2b0be92fe692521cc477d7d13ca3`, the last first-parent main commit
 before **2026-09-30 00:00:00 +01:00**, and B (after) at
-`ca5cebf4ea5064943917f7bbfa5a6a6f31e8011d`, the final main. The midnight cutoff is explicit because Git's
+`a874436b1e1b1e512f2505b37e2a2fc7e6a5ebcc`, the final main. The midnight cutoff is explicit because Git's
 bare `--before=2026-09-30` can inherit the time of day. Refresh the pins and
 merge main into bench when main advances. `after_ref` names the source branch
 (default `main`); the runner refuses a silently changed head on that branch. `git archive` extracts exact source snapshots inside

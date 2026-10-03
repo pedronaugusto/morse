@@ -6,8 +6,8 @@
     .dependencies = .{
         .vaxis = .{ .path = "build/deps/libvaxis" },
         .after = .{
-            .url = "https://github.com/pedronaugusto/morse/archive/bf3950b9e29d2092a491c5639f5bff866235fec7.tar.gz",
-            .hash = "morse-0.7.0-OKnGofEMEAC6vr8prQ3ExY7ic1qvfKpLuDdabdk-dlXp",
+            .url = "https://github.com/pedronaugusto/morse/archive/a874436b1e1b1e512f2505b37e2a2fc7e6a5ebcc.tar.gz",
+            .hash = "morse-0.7.0-OKnGoQkNEABQgha-1SZ4jj11MPSF-a82ZVsJKUV6odsb",
         },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src" },
