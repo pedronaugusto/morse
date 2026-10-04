@@ -22,7 +22,7 @@
 //! Read against the VT330/VT340 programmer reference, chapter 14.
 
 const std = @import("std");
-const corpus = @import("corpus.zig");
+const corpus = @import("testing/corpus.zig");
 const seq = @import("seq.zig");
 const style = @import("style.zig");
 

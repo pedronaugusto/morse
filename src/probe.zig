@@ -34,7 +34,7 @@
 //! because only the caller owns its timeout or quiescence timer.
 
 const std = @import("std");
-const corpus = @import("corpus.zig");
+const corpus = @import("testing/corpus.zig");
 const device = @import("device.zig");
 const graphics = @import("graphics.zig");
 const key = @import("key.zig");

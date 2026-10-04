@@ -9,7 +9,7 @@
 //! and that silence is also an answer, is the caller's to arrange.
 
 const std = @import("std");
-const corpus = @import("corpus.zig");
+const corpus = @import("testing/corpus.zig");
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;

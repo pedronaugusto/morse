@@ -4,9 +4,9 @@ const gantry = @import("gantry");
 pub const layers: []const gantry.rules.Layer = &.{
     .{ .name = "values", .patterns = &.{
         "src/base64.zig",
-        "src/corpus.zig",
+        "src/testing/**",
         "src/framing.zig",
-        "src/key_types.zig",
+        "src/key/key_types.zig",
         "src/seq.zig",
         "src/strings.zig",
         "src/strip.zig",
@@ -28,7 +28,7 @@ pub const layers: []const gantry.rules.Layer = &.{
     } },
     .{ .name = "protocols", .patterns = &.{
         "src/device.zig",
-        "src/key_encode.zig",
+        "src/key/key_encode.zig",
         "src/multicursor.zig",
         "src/win32.zig",
     } },
@@ -57,16 +57,36 @@ pub const references: []const gantry.rules.ReferenceRule = &.{
     .{ .name = "source siblings", .suffix = ".zig", .relative = true, .except_targets = &.{"src/**"} },
 };
 
-pub const required = blk: {
-    var count: usize = 0;
-    for (layers) |layer| count += layer.patterns.len;
-    var paths: [count][]const u8 = undefined;
-    var i: usize = 0;
-    for (layers) |layer| for (layer.patterns) |path| {
-        paths[i] = path;
-        i += 1;
-    };
-    break :blk paths;
+pub const required = [_][]const u8{
+    "src/base64.zig",
+    "src/testing/corpus.zig",
+    "src/framing.zig",
+    "src/key/key_types.zig",
+    "src/seq.zig",
+    "src/strings.zig",
+    "src/strip.zig",
+    "src/clipboard.zig",
+    "src/cursor.zig",
+    "src/graphics.zig",
+    "src/iterm.zig",
+    "src/mode.zig",
+    "src/mouse.zig",
+    "src/notify.zig",
+    "src/osc.zig",
+    "src/query.zig",
+    "src/sixel.zig",
+    "src/status.zig",
+    "src/style.zig",
+    "src/tcap.zig",
+    "src/device.zig",
+    "src/key/key_encode.zig",
+    "src/multicursor.zig",
+    "src/win32.zig",
+    "src/reply.zig",
+    "src/key.zig",
+    "src/probe.zig",
+    "src/work_test.zig",
+    "src/morse.zig",
 };
 
 /// Tokens only their owners may spell. morse spells and reads bytes; the

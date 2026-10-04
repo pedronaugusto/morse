@@ -15,7 +15,7 @@
 
 const std = @import("std");
 const base64 = @import("base64.zig");
-const corpus = @import("corpus.zig");
+const corpus = @import("testing/corpus.zig");
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;

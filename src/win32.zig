@@ -20,8 +20,8 @@
 //! asks for the other shape, and the rest is the caller's.
 
 const std = @import("std");
-const corpus = @import("corpus.zig");
-const key = @import("key_types.zig");
+const corpus = @import("testing/corpus.zig");
+const key = @import("key/key_types.zig");
 const mouse = @import("mouse.zig");
 
 const Key = key.Key;

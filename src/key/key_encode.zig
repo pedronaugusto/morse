@@ -37,8 +37,8 @@
 
 const std = @import("std");
 const key_types = @import("key_types.zig");
-const mode = @import("mode.zig");
-const seq = @import("seq.zig");
+const mode = @import("../mode.zig");
+const seq = @import("../seq.zig");
 
 const Writer = std.Io.Writer;
 const Key = key_types.Key;

@@ -401,8 +401,8 @@ test "fuzz Stripper" {
             try testing.expectEqualStrings(expected, w.buffered());
         }
     }.one_, .{ .corpus = &.{
-        @import("corpus.zig").seed("\x1b[1mbold\x1b[0m"),
-        @import("corpus.zig").seed("\x1b]8;;u\x1b\\t\x1b]8;;\x1b\\"),
-        @import("corpus.zig").seed("\u{9b}\xc2\x9b\x9b\xe2\x82"),
+        @import("testing/corpus.zig").seed("\x1b[1mbold\x1b[0m"),
+        @import("testing/corpus.zig").seed("\x1b]8;;u\x1b\\t\x1b]8;;\x1b\\"),
+        @import("testing/corpus.zig").seed("\u{9b}\xc2\x9b\x9b\xe2\x82"),
     } });
 }

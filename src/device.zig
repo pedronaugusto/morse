@@ -20,7 +20,7 @@
 //! make of that is the caller's.
 
 const std = @import("std");
-const corpus = @import("corpus.zig");
+const corpus = @import("testing/corpus.zig");
 const mode = @import("mode.zig");
 const seq = @import("seq.zig");
 const style = @import("style.zig");

@@ -36,15 +36,15 @@
 //! what held, and stops there.
 
 const std = @import("std");
-const corpus = @import("corpus.zig");
+const corpus = @import("testing/corpus.zig");
 const framing = @import("framing.zig");
 const mouse = @import("mouse.zig");
 const query = @import("query.zig");
 const replies = @import("reply.zig");
 const seq = @import("seq.zig");
 const win32 = @import("win32.zig");
-const key_types = @import("key_types.zig");
-const key_encode = @import("key_encode.zig");
+const key_types = @import("key/key_types.zig");
+const key_encode = @import("key/key_encode.zig");
 const codepoint = key_types.codepoint;
 const protocolKey = key_types.protocolKey;
 
@@ -62,14 +62,14 @@ const ColorScheme = query.ColorScheme;
 /// reports the unshifted, current-layout codepoint, so `shift` and `a` is
 /// `.{ .char = 'a' }` with `Modifiers.shift` set, and the `A` that reached the
 /// screen is in `KeyEvent.shifted` or `KeyEvent.text` when the terminal said.
-pub const Key = @import("key_types.zig").Key;
+pub const Key = @import("key/key_types.zig").Key;
 
 /// Which modifiers were held, in the bit order the kitty keyboard protocol
 /// numbers them: `shift` is bit 1.
 ///
 /// A terminal spells these as the bitmask plus one, so a parameter of `5` is
 /// bits `4`, which is `ctrl`. That offset lives in the parser, not here.
-pub const Modifiers = @import("key_types.zig").Modifiers;
+pub const Modifiers = @import("key/key_types.zig").Modifiers;
 
 /// What happened to the key.
 ///
@@ -77,13 +77,13 @@ pub const Modifiers = @import("key_types.zig").Modifiers;
 /// is enabled. Win32 input mode also carries repeats and releases;
 /// `KeyParser.report_key_up` decides whether its releases are returned.
 /// Plain text and the legacy keyboard sequences report presses.
-pub const Kind = @import("key_types.zig").Kind;
+pub const Kind = @import("key/key_types.zig").Kind;
 
 /// One keypress.
 ///
 /// A value, not a view: nothing here borrows, so an event can be stored,
 /// compared and passed on long after the bytes it came from are gone.
-pub const KeyEvent = @import("key_types.zig").KeyEvent;
+pub const KeyEvent = @import("key/key_types.zig").KeyEvent;
 
 /// How big the terminal became, as an in-band resize report gives it.
 ///
@@ -92,7 +92,7 @@ pub const KeyEvent = @import("key_types.zig").KeyEvent;
 /// terminal that does not know its own pixel size, which is every terminal
 /// that is not drawing the glyphs itself -- a multiplexer, most obviously --
 /// so a program that divides by them must check first.
-pub const Resize = @import("key_types.zig").Resize;
+pub const Resize = @import("key/key_types.zig").Resize;
 
 /// One thing that arrived on the terminal's input.
 pub const Event = union(enum) {
@@ -717,7 +717,7 @@ fn decodePlain(bytes: []const u8, mods: Modifiers, prefix: usize) Decoded {
 /// Shared with the Windows console paths, which carry the same control codes
 /// in a field rather than in the stream, so that one byte means one key
 /// however it arrived.
-pub const asciiKey = @import("key_types.zig").asciiKey;
+pub const asciiKey = @import("key/key_types.zig").asciiKey;
 
 /// Reads one UTF-8 codepoint as a key.
 fn decodeUtf8(bytes: []const u8, mods: Modifiers, prefix: usize) Decoded {
@@ -734,7 +734,7 @@ fn decodeUtf8(bytes: []const u8, mods: Modifiers, prefix: usize) Decoded {
 ///
 /// A key held with anything but shift produced a control code rather than
 /// text, and a control code is not what the user meant to type.
-pub const setText = @import("key_types.zig").setText;
+pub const setText = @import("key/key_types.zig").setText;
 
 /// Reads a sequence introduced by `ESC`, which is every sequence there is —
 /// and also alt, which terminals spell by putting an `ESC` in front of the

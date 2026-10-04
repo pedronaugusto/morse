@@ -7,7 +7,7 @@
 //! through byte for byte. `printable` strips controls only when asked.
 
 const std = @import("std");
-const corpus = @import("corpus.zig");
+const corpus = @import("testing/corpus.zig");
 const framing = @import("framing.zig");
 const seq = @import("seq.zig");
 const strings = @import("strings.zig");
