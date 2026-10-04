@@ -2025,6 +2025,6 @@ test "strip leaves what the emulator prints" {
 //=========================================================================
 
 test "how many claims this file made" {
-    try std.testing.expectEqual(@as(usize, 3793), checks);
+    try std.testing.expectEqual(@as(usize, 3795), checks);
     std.debug.print("conformance: {d} assertions against the emulator\n", .{checks});
 }
