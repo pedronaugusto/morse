@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- `Probe` asks the terminal's colour count, `Co`, through XTGETTCAP, and routes its answer or refusal as `color_count`.
+
 - `querySixelGraphics` and `parseSixelGraphics` ask and read XTSMGRAPHICS, how many colour registers a sixel image may use and how big it may be, as `Reply.sixel_graphics`; `sixelCursorRight` is mode 8452; `Probe` asks all three, as `sixel_registers`, `sixel_geometry` and `sixel_cursor_right`.
 
 - `sixel` writes an image as a sixel string, from palette indices or from RGBA drawn in the nearest colour of a palette of up to 256, with the DECSIXEL parameters the caller gives and a band at a time from a fixed block of stack; `itermImage` and `itermImageMultipart` send a file as an iTerm2 inline image in one `OSC 1337` or as `MultipartFile`, `FilePart`s and `FileEnd`; `cost` counts all three.

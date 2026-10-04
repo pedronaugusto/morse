@@ -1412,6 +1412,7 @@ test "the startup probe is one write and a stream of answers" {
         .kitty_keyboard,
         .graphics,
         .truecolor,
+        .color_count,
         .version,
         .text_area_cells,
         .cell_pixels,

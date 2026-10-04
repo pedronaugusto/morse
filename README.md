@@ -99,7 +99,7 @@ asks how many colour registers a sixel image may use and how big it may be
 `sixelCursorRight` is mode 8452, which leaves the cursor beside an image
 rather than below it; `Probe` asks all three. Clipboard and
 capability replies borrow their encoded payloads and decode into supplied buffers.
-`Probe` writes startup questions; `probeAnswered` routes replies to those questions. The
+`Probe` writes startup questions, including the colour count `Co`; `probeAnswered` routes replies to those questions. The
 caller supplies deadlines because a terminal need not answer.
 
 ## Scope

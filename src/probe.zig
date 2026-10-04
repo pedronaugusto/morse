@@ -97,6 +97,8 @@ pub const Probe = struct {
         /// (XTGETTCAP), each asked on its own because a terminal that knows
         /// one need not know the other.
         truecolor,
+        /// How many colours the terminal has: `Co` (XTGETTCAP).
+        color_count,
         /// What the terminal calls itself (XTVERSION).
         version,
         /// How many rows and columns the text area has.
@@ -145,6 +147,8 @@ pub const Probe = struct {
     extra_cursors: bool = true,
     /// Ask whether the terminal takes 24-bit colour.
     truecolor: bool = true,
+    /// Ask how many colours the terminal has.
+    color_count: bool = true,
     /// Ask what the terminal calls itself.
     version: bool = true,
     /// Ask how big the text area is, in cells.
@@ -195,6 +199,8 @@ pub const Probe = struct {
             try tcap.queryCapability(w, "RGB");
         }
 
+        if (p.color_count) try tcap.queryCapability(w, "Co");
+
         if (p.version) try device.queryVersion(w);
         if (p.text_area_cells) try device.queryWindowSize(w, .text_area_cells);
         if (p.cell_pixels) try device.queryWindowSize(w, .cell_pixels);
@@ -225,6 +231,7 @@ pub const Probe = struct {
             .sixel_geometry => p.sixel_geometry,
             .extra_cursors => p.extra_cursors,
             .truecolor => p.truecolor,
+            .color_count => p.color_count,
             .version => p.version,
             .text_area_cells => p.text_area_cells,
             .cell_pixels => p.cell_pixels,
@@ -269,7 +276,7 @@ pub fn matches(reply: []const u8, question: Probe.Question) bool {
         .sixel_registers => sixelGraphicsFor(reply, .color_registers),
         .sixel_geometry => sixelGraphicsFor(reply, .geometry),
         .extra_cursors => multicursor.parseExtraCursorSupport(reply) != null,
-        .truecolor => if (tcap.parseCapabilityReply(reply)) |c| namesTruecolor(c) else false,
+        .truecolor, .color_count => if (tcap.parseCapabilityReply(reply)) |c| capabilityQuestion(c) == question else false,
         .version => device.parseVersion(reply) != null,
         .text_area_cells => windowSizeFor(reply, .text_area_cells),
         .cell_pixels => windowSizeFor(reply, .cell_pixels),
@@ -316,7 +323,7 @@ pub fn answered(event: key.Event) ?Probe.Question {
                 .geometry => .sixel_geometry,
             },
             .extra_cursor_support => .extra_cursors,
-            .capability => |c| if (namesTruecolor(c)) .truecolor else null,
+            .capability => |c| capabilityQuestion(c),
             .version => .version,
             .window_size => |w| switch (w.what) {
                 .text_area_cells => .text_area_cells,
@@ -331,16 +338,19 @@ pub fn answered(event: key.Event) ?Probe.Question {
     };
 }
 
-/// Whether a capability reply is about `Tc` or `RGB`, known or not: a
-/// refusal answers the question too.
-fn namesTruecolor(reply: tcap.CapabilityReply) bool {
+/// The question a capability reply answers, including a refusal. Each name
+/// is queried separately; if a terminal combines answers, truecolor takes
+/// precedence so the routing still names one question.
+fn capabilityQuestion(reply: tcap.CapabilityReply) ?Probe.Question {
     var it = reply.iterator();
+    var count = false;
     while (it.next()) |capability| {
         var name: [8]u8 = undefined;
         const n = capability.decodeName(&name) catch continue;
-        if (std.mem.eql(u8, n, "Tc") or std.mem.eql(u8, n, "RGB")) return true;
+        if (std.mem.eql(u8, n, "Tc") or std.mem.eql(u8, n, "RGB")) return .truecolor;
+        if (std.mem.eql(u8, n, "Co")) count = true;
     }
-    return false;
+    return if (count) .color_count else null;
 }
 
 /// Whether `reply` is a colour report about `target`.
@@ -379,7 +389,7 @@ test "a whole probe is one write, with DA1 last" {
     const bytes = out.written();
 
     // Pinned exactly, because the point of the thing is that it is one
-    // write of a known size rather than twenty-two round trips.
+    // write of a known size rather than twenty-three round trips.
     try std.testing.expectEqualStrings(
         "\x1b[6n" ++
             "\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\" ++
@@ -391,14 +401,15 @@ test "a whole probe is one write, with DA1 last" {
             "\x1b[?1;1;0S\x1b[?2;1;0S" ++
             "\x1b[> q" ++
             "\x1bP+q5463\x1b\\\x1bP+q524742\x1b\\" ++
+            "\x1bP+q436f\x1b\\" ++
             "\x1b[>0q" ++
             "\x1b[18t\x1b[16t" ++
             "\x1b[>c" ++
             "\x1b[c",
         bytes,
     );
-    try std.testing.expectEqual(@as(usize, 187), bytes.len);
-    try std.testing.expectEqual(@as(usize, 22), every_question.len);
+    try std.testing.expectEqual(@as(usize, 197), bytes.len);
+    try std.testing.expectEqual(@as(usize, 23), every_question.len);
 
     // DA1 is last in the write, though a multiplexer need not reply in order.
     try std.testing.expect(std.mem.endsWith(u8, bytes, "\x1b[c"));
@@ -457,6 +468,7 @@ fn writeOne(w: *Writer, question: Probe.Question, graphics_id: u32) Writer.Error
             try tcap.queryCapability(w, "Tc");
             try tcap.queryCapability(w, "RGB");
         },
+        .color_count => try tcap.queryCapability(w, "Co"),
         .version => try device.queryVersion(w),
         .text_area_cells => try device.queryWindowSize(w, .text_area_cells),
         .cell_pixels => try device.queryWindowSize(w, .cell_pixels),
@@ -488,6 +500,7 @@ test "a probe that asks nothing still asks for the device attributes" {
         .sixel_geometry = false,
         .extra_cursors = false,
         .truecolor = false,
+        .color_count = false,
         .version = false,
         .text_area_cells = false,
         .cell_pixels = false,
@@ -540,6 +553,7 @@ test "matches routes every answer to the question that asked it" {
         .{ .reply = "\x1b[?2;0;1000;1000S", .question = .sixel_geometry },
         .{ .reply = "\x1b[>1;2;3;29;30;40;100;101 q", .question = .extra_cursors },
         .{ .reply = "\x1bP0+r5463\x1b\\", .question = .truecolor },
+        .{ .reply = "\x1bP1+r436f=323536\x1b\\", .question = .color_count },
         .{ .reply = "\x1bP>|name(390)\x1b\\", .question = .version },
         .{ .reply = "\x1b[8;24;80t", .question = .text_area_cells },
         .{ .reply = "\x1b[6;16;8t", .question = .cell_pixels },
@@ -563,7 +577,7 @@ test "a reply to nothing the probe asked matches no question at all" {
         "\x1b[<0;40;12M", // a mouse report
         "\x1b[M\x20\x21\x21", // the older one
         "\x1b]52;c;aGk=\x1b\\", // a clipboard reply
-        "\x1bP1+r436f=323536\x1b\\", // a capability reply
+        "\x1bP1+r544e=787465726d\x1b\\", // an unasked capability
         "\x1b[200~", // a paste marker
         "\x1b[?2004;1$y", // a mode this probe does not ask about
         "\x1b]4;9;rgb:ffff/0000/0000\x1b\\", // a palette entry
@@ -628,14 +642,15 @@ test "the question an event answers is the question its bytes match" {
     // Every reply shape the probe asks for, and a few it does not: read as
     // an event, each answers the question its bytes match and no other.
     const samples = [_][]const u8{
-        "\x1b[12;40R",              "\x1b]10;rgb:1/2/3\x1b\\", "\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\",
-        "\x1b]12;rgb:ff/ff/ff\x07", "\x1b[?997;1n",            "\x1b[?2026;2$y",
-        "\x1b[?2027;1$y",           "\x1b[?2048;2$y",          "\x1b[?29u",
-        "\x1b[>4;2m",               "\x1b_Gi=31;OK\x1b\\",     "\x1b[>1;29 q",
-        "\x1bP>|name(390)\x1b\\",   "\x1b[8;24;80t",           "\x1b[6;16;8t",
-        "\x1b[>1;4000;48c",         "\x1b[?62;52;c",           "\x1b[<0;4;5M",
-        "\x1b[?1049;1$y",           "\x1b[4;480;720t",         "\x1b[?8452;1$y",
-        "\x1b[?1;0;16S",            "\x1b[?2;3;0S",
+        "\x1b[12;40R",              "\x1b]10;rgb:1/2/3\x1b\\",        "\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\",
+        "\x1b]12;rgb:ff/ff/ff\x07", "\x1b[?997;1n",                   "\x1b[?2026;2$y",
+        "\x1b[?2027;1$y",           "\x1b[?2048;2$y",                 "\x1b[?29u",
+        "\x1b[>4;2m",               "\x1b_Gi=31;OK\x1b\\",            "\x1b[>1;29 q",
+        "\x1bP>|name(390)\x1b\\",   "\x1b[8;24;80t",                  "\x1b[6;16;8t",
+        "\x1b[>1;4000;48c",         "\x1b[?62;52;c",                  "\x1b[<0;4;5M",
+        "\x1b[?1049;1$y",           "\x1b[4;480;720t",                "\x1b[?8452;1$y",
+        "\x1b[?1;0;16S",            "\x1b[?2;3;0S",                   "\x1bP1+r436f=323536\x1b\\",
+        "\x1bP0+r436f\x1b\\",       "\x1bP1+r436f=323536;5463\x1b\\",
     };
     for (samples) |bytes| {
         var storage: [128]u8 = undefined;
@@ -679,4 +694,29 @@ test "fuzz matches" {
         corpus.seed("\x1b[>1;29 q"),
         corpus.seed("\x1b[?997;1n"),
     } });
+}
+
+test "the probe asks the colour count and routes its answer or refusal" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try (Probe{ .graphics_id = 31 }).write(&out.writer);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\x1bP+q436f\x1b\\") != null);
+
+    for ([_][]const u8{ "\x1bP1+r436f=323536\x1b\\", "\x1bP0+r436f\x1b\\" }) |bytes| {
+        var storage: [128]u8 = undefined;
+        var parser: key.KeyParser = .init(&storage);
+        var events = parser.feed(bytes);
+        const question = answered(events.next().?) orelse return error.MissingColourCount;
+        try std.testing.expectEqualStrings("color_count", @tagName(question));
+        try std.testing.expect(matches(bytes, question));
+    }
+}
+
+test "a disabled colour count leaves its query out" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    const probe: Probe = .{ .graphics_id = 31, .color_count = false };
+    try probe.write(&out.writer);
+    try std.testing.expect(!probe.asks(.color_count));
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\x1bP+q436f\x1b\\") == null);
 }
