@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `sixel` writes an image as a sixel string, from palette indices or from RGBA drawn in the nearest colour of a palette of up to 256, with the DECSIXEL parameters the caller gives and a band at a time from a fixed block of stack; `itermImage` and `itermImageMultipart` send a file as an iTerm2 inline image in one `OSC 1337` or as `MultipartFile`, `FilePart`s and `FileEnd`; `cost` counts all three.
 
+- `Color.fit` and `Style.fit` turn a colour into the nearest one a terminal of a given `Color.Profile` shows: direct colour onto the 256-colour cube and grey ramp, any colour onto the sixteen theme slots (the terminal's, as `Color.Slots`, or xterm's), or none at all with attributes kept. Nearest is the redmean distance with anstyle-lossy's tie-break, and agrees with an exhaustive search over every 24-bit colour.
+
 - `strip` and `Stripper` remove control sequences, control strings, short escapes and C1 controls from terminal output, whole or a read at a time with no buffer for a sequence cut between reads; the C0 controls stay, and the conformance step checks the result against the text the emulator prints.
 
 - `encodeKey` writes a `KeyEvent` as the bytes a terminal sends for it, in the kitty keyboard protocol for any set of flags and in the legacy encodings with `modifyOtherKeys`, DECCKM, DECKPAM and DECBKM, and `cost.encodeKey` counts them; with every kitty flag set `KeyParser` reads each key back as itself, and the conformance step compares the bytes with ghostty's encoder.

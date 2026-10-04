@@ -55,7 +55,9 @@ Key events own their text; retained sequence bytes keep split input intact and b
 replies independent of the read buffer.
 
 `Style` describes SGR attributes and colours. `setStyle` writes from the terminal's
-default state; `diffStyle` writes the changes between two known styles. Cursor and erase
+default state; `diffStyle` writes the changes between two known styles. `Color.fit`
+and `Style.fit` turn colours into the nearest a terminal with 256 colours, sixteen or
+none can show; the caller says which it has. Cursor and erase
 commands use typed parameters. `cost` counts what the style, cursor, erase, repeat, mode,
 hyperlink, text-size, key, sixel and iTerm2 writers would write, through
 the code that writes it.

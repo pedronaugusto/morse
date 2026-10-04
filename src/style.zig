@@ -18,11 +18,14 @@
 //! morse holds no state, so `from` is the caller's to remember: it is the
 //! style of whatever it wrote last, and getting it wrong shows on screen.
 //!
-//! What this file will never hold: a colour downgraded to fit a terminal.
-//! Mapping a direct colour onto the palette, or the palette onto eight
-//! colours, is a decision about how a program should look on a terminal it
-//! has guessed the abilities of, and morse guesses nothing. Write the colour;
-//! `queryCapability` with `Co` asks how many the terminal has.
+//! `Color.fit` and `Style.fit` turn a colour into the nearest one a terminal
+//! with fewer colours can show: direct colour onto the 256-colour palette,
+//! either onto the sixteen theme slots, or any of them onto no colour at all.
+//! The conversion is morse's and the decision is not. How many colours a
+//! terminal takes is the caller's to find out -- `queryCapability` with `Tc`,
+//! `RGB` or `Co` asks, and the environment guesses -- and the caller passes
+//! the answer in as a `Color.Profile`. Nothing here asks, reads the
+//! environment, or picks a profile on its own.
 
 const std = @import("std");
 const seq = @import("seq.zig");
@@ -197,6 +200,176 @@ pub const Color = extern struct {
     pub fn eql(a: Color, b: Color) bool {
         return @as(u32, @bitCast(a)) == @as(u32, @bitCast(b));
     }
+
+    /// How many colours a terminal shows, which is what `fit` is told.
+    /// Ordered poorest first, each one the richest `Kind` it can show.
+    pub const Profile = enum(u8) {
+        /// No colour at all: every colour becomes `.default`. What
+        /// `NO_COLOR` asks for; bold, underline and the other attributes
+        /// are not colour and stay.
+        none = 0,
+        /// The sixteen theme slots, written with their short codes.
+        ansi = 1,
+        /// The 256-colour palette.
+        palette = 2,
+        /// Direct colour, `38;2;r;g;b`: every colour as given.
+        rgb = 3,
+    };
+
+    /// What the sixteen theme slots look like, in slot order: what `fit`
+    /// matches a colour against when it has to pick a slot.
+    pub const Slots = [16]Rgb;
+
+    /// xterm's own sixteen, which `fit` matches against when the caller does
+    /// not know the terminal's. A terminal's theme is the user's and is
+    /// rarely these; a caller that asked (`queryPaletteColor`) passes what
+    /// the terminal said instead.
+    pub const xterm_slots: Slots = .{
+        .{ .r = 0x00, .g = 0x00, .b = 0x00 }, .{ .r = 0xcd, .g = 0x00, .b = 0x00 },
+        .{ .r = 0x00, .g = 0xcd, .b = 0x00 }, .{ .r = 0xcd, .g = 0xcd, .b = 0x00 },
+        .{ .r = 0x00, .g = 0x00, .b = 0xee }, .{ .r = 0xcd, .g = 0x00, .b = 0xcd },
+        .{ .r = 0x00, .g = 0xcd, .b = 0xcd }, .{ .r = 0xe5, .g = 0xe5, .b = 0xe5 },
+        .{ .r = 0x7f, .g = 0x7f, .b = 0x7f }, .{ .r = 0xff, .g = 0x00, .b = 0x00 },
+        .{ .r = 0x00, .g = 0xff, .b = 0x00 }, .{ .r = 0xff, .g = 0xff, .b = 0x00 },
+        .{ .r = 0x5c, .g = 0x5c, .b = 0xff }, .{ .r = 0xff, .g = 0x00, .b = 0xff },
+        .{ .r = 0x00, .g = 0xff, .b = 0xff }, .{ .r = 0xff, .g = 0xff, .b = 0xff },
+    };
+
+    /// The nearest colour a terminal of `profile` shows, in the form it
+    /// takes. `slots` is what its sixteen theme slots look like, or null for
+    /// `xterm_slots`.
+    ///
+    /// - `.rgb` changes nothing.
+    /// - `.palette` turns direct colour into the nearest entry of the cube
+    ///   and the grey ramp, 16-255. Never into one of the sixteen slots:
+    ///   they are the user's theme, and a colour the program chose exactly
+    ///   should not turn into one that changes when the theme does.
+    /// - `.ansi` turns direct colour and the palette above 15 into the
+    ///   nearest slot, and a palette index below 16 into the slot it names,
+    ///   written with the short code a 16-colour terminal understands.
+    /// - `.none` turns every colour into `.default`.
+    ///
+    /// `.default` stays `.default` in every profile, and a colour already in
+    /// a form the profile shows comes back unchanged -- so a program that
+    /// picks its own colours for a poorer terminal gets exactly those.
+    ///
+    /// "Nearest" is the low-cost perceptual distance from
+    /// <https://www.compuphase.com/cmetric.htm>, the "redmean" weighting of
+    /// the three channels, squared and in integers: the metric and the
+    /// lowest-index tie-break anstyle-lossy uses, and the suite holds this
+    /// to an exhaustive search under it. termenv picks the cube entry a
+    /// channel at a time and compares it with one grey; this considers the
+    /// whole ramp, and is never farther.
+    pub fn fit(color: Color, profile: Profile, slots: ?*const Slots) Color {
+        switch (profile) {
+            .rgb => return color,
+            .none => return .default,
+            .palette => return switch (color.kind) {
+                .rgb => .palette(nearestEntry(color.toRgb())),
+                else => color,
+            },
+            .ansi => return switch (color.kind) {
+                .default, .ansi => color,
+                .palette => .ansi(@enumFromInt(if (color.index() < 16)
+                    color.index()
+                else if (slots) |s|
+                    nearestSlot(paletteRgb(color.index()).?, s)
+                else
+                    xterm_entry_slots[color.index() - 16])),
+                .rgb => .ansi(@enumFromInt(nearestSlot(color.toRgb(), slots orelse &xterm_slots))),
+            },
+        }
+    }
+};
+
+/// How far apart two colours look, in the units `Color.fit` compares: the
+/// "redmean" approximation from <https://www.compuphase.com/cmetric.htm>,
+/// without the square root. The weights of red and blue move with how red
+/// the pair is, which is most of what a plain RGB distance gets wrong.
+fn distance(a: Rgb, b: Rgb) u32 {
+    const red_sum = @as(i32, a.r) + b.r;
+    const dr = @as(i32, a.r) - b.r;
+    const dg = @as(i32, a.g) - b.g;
+    const db = @as(i32, a.b) - b.b;
+    return @intCast((1024 + red_sum) * dr * dr + 1024 * dg * dg + (1534 - red_sum) * db * db);
+}
+
+/// The six levels of a cube channel.
+const cube_levels = [6]u8{ 0, 95, 135, 175, 215, 255 };
+
+/// The cube level nearest `v`, the lower one when two are as near.
+fn cubeLevel(v: u8) u8 {
+    if (v < 48) return 0;
+    if (v <= 115) return 1;
+    if (v <= 155) return 2;
+    if (v <= 195) return 3;
+    if (v <= 235) return 4;
+    return 5;
+}
+
+/// The palette entry, 16-255, nearest `color`; the lowest index of several
+/// as near.
+///
+/// The green term of the distance has a fixed weight and the blue term's
+/// weight depends only on the two reds, so for any one red level of the cube
+/// the nearest green and blue levels are the nearest a channel at a time.
+/// That leaves six cube entries to compare, not 216, and then the 24 greys.
+fn nearestEntry(color: Rgb) u8 {
+    const g = cubeLevel(color.g);
+    const b = cubeLevel(color.b);
+    var best: u8 = 0;
+    var best_distance: u32 = std.math.maxInt(u32);
+    for (cube_levels, 0..) |level, r| {
+        const d = distance(color, .{ .r = level, .g = cube_levels[g], .b = cube_levels[b] });
+        if (d < best_distance) {
+            best_distance = d;
+            best = @intCast(16 + 36 * r + 6 * g + b);
+        }
+    }
+    // Against a grey `v` the distance is a quadratic in `v` that opens
+    // upward -- the cubic terms of red and blue cancel -- so the nearest
+    // grey is on one side or the other of its lowest point, and three greys
+    // around it are all that need comparing, in index order.
+    const r: i64 = color.r;
+    const gc: i64 = color.g;
+    const bc: i64 = color.b;
+    const a = 3582 - 2 * r + 2 * bc;
+    const minus_b = 2048 * r + r * r + 2048 * gc + 3068 * bc - 2 * r * bc + bc * bc;
+    // The lowest point is at minus_b / (2a); the grey below it is
+    // (point - 8) / 10, floored.
+    const below = @divFloor(minus_b - 16 * a, 20 * a);
+    const first: usize = @intCast(std.math.clamp(below - 1, 0, 21));
+    for (first..first + 3) |i| {
+        const level: u8 = @intCast(8 + 10 * i);
+        const d = distance(color, .{ .r = level, .g = level, .b = level });
+        if (d < best_distance) {
+            best_distance = d;
+            best = @intCast(232 + i);
+        }
+    }
+    return best;
+}
+
+/// The slot nearest `color`; the lowest of several as near.
+fn nearestSlot(color: Rgb, slots: *const Color.Slots) u8 {
+    var best: u8 = 0;
+    var best_distance: u32 = std.math.maxInt(u32);
+    for (slots, 0..) |slot, i| {
+        const d = distance(color, slot);
+        if (d < best_distance) {
+            best_distance = d;
+            best = @intCast(i);
+        }
+    }
+    return best;
+}
+
+/// The xterm slot nearest each palette entry above 15, worked out once.
+const xterm_entry_slots: [240]u8 = blk: {
+    @setEvalBranchQuota(100_000);
+    var table: [240]u8 = undefined;
+    for (&table, 16..) |*slot, i| slot.* = nearestSlot(paletteRgb(i).?, &Color.xterm_slots);
+    break :blk table;
 };
 
 /// The colour entry `index` of the 256-colour palette is above the sixteen
@@ -309,6 +482,17 @@ pub const Style = extern struct {
     overline: bool = false,
     /// Whether the glyphs are raised, lowered, or on the baseline.
     script: Script = .none,
+
+    /// The style with its three colours fitted to `profile`, as
+    /// `Color.fit` fits one. Everything that is not a colour stays, so under
+    /// `.none` bold is still bold and an underline still underlines.
+    pub fn fit(style: Style, profile: Color.Profile, slots: ?*const Color.Slots) Style {
+        var out = style;
+        out.fg = style.fg.fit(profile, slots);
+        out.bg = style.bg.fit(profile, slots);
+        out.underline_color = style.underline_color.fit(profile, slots);
+        return out;
+    }
 };
 
 /// The longest `CSI ... m` either spelling of a style change can produce:
@@ -1625,6 +1809,253 @@ test "a row of cells holding a style compares with memcmp" {
 
     a[40].style.fg = .ansi(.cyan);
     try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(&a), std.mem.sliceAsBytes(&b));
+}
+
+/// The selection code of two libraries that do what `Color.fit` does, ported
+/// from their source as oracles: anstyle-lossy 1.1.4 (Rust) and termenv
+/// (Go, `hexToANSI256Color`). Ported rather than run, so the suite needs
+/// neither toolchain; each function names the code it follows.
+const fit_oracle = struct {
+    /// anstyle-lossy's `distance`, verbatim.
+    fn lossyDistance(c1: Rgb, c2: Rgb) u32 {
+        const r_sum = @as(i32, c1.r) + @as(i32, c2.r);
+        const r_delta = @as(i32, c1.r) - @as(i32, c2.r);
+        const g_delta = @as(i32, c1.g) - @as(i32, c2.g);
+        const b_delta = @as(i32, c1.b) - @as(i32, c2.b);
+        const r = (2 * 512 + r_sum) * r_delta * r_delta;
+        const g = 4 * g_delta * g_delta * (1 << 8);
+        const b = (2 * 767 - r_sum) * b_delta * b_delta;
+        return @intCast(r + g + b);
+    }
+
+    /// anstyle-lossy's `XTERM_COLORS` above the placeholders, spelled out
+    /// rather than taken from `paletteRgb`.
+    fn xtermColor(index: u8) Rgb {
+        if (index >= 232) {
+            const v: u8 = 8 + 10 * (index - 232);
+            return .{ .r = v, .g = v, .b = v };
+        }
+        const levels = [6]u8{ 0, 95, 135, 175, 215, 255 };
+        const i = index - 16;
+        return .{ .r = levels[i / 36], .g = levels[(i / 6) % 6], .b = levels[i % 6] };
+    }
+
+    /// anstyle-lossy's `find_xterm_match`: every entry from 16 up, the first
+    /// strictly nearest kept.
+    fn lossyXterm(color: Rgb) u8 {
+        var best_index: u16 = 16;
+        var best_distance = lossyDistance(color, xtermColor(16));
+        var index: u16 = best_index + 1;
+        while (index < 256) : (index += 1) {
+            const d = lossyDistance(color, xtermColor(@intCast(index)));
+            if (d < best_distance) {
+                best_index = index;
+                best_distance = d;
+            }
+        }
+        return @intCast(best_index);
+    }
+
+    /// anstyle-lossy's `Palette::find_match`.
+    fn lossyAnsi(color: Rgb, palette: *const Color.Slots) u8 {
+        var best_index: usize = 0;
+        var best_distance = lossyDistance(color, palette[0]);
+        for (palette[1..], 1..) |entry, index| {
+            const d = lossyDistance(color, entry);
+            if (d < best_distance) {
+                best_index = index;
+                best_distance = d;
+            }
+        }
+        return @intCast(best_index);
+    }
+
+    /// termenv's two candidates from `hexToANSI256Color`: the cube entry
+    /// picked a channel at a time by `v2ci`, and the grey its `grayIdx`
+    /// arithmetic names. termenv then keeps the nearer under HSLuv; the
+    /// suite asks only that `fit` is never farther than either.
+    fn termenvCandidates(color: Rgb) [2]u8 {
+        const v2ci = struct {
+            fn f(v: i32) i32 {
+                if (v < 48) return 0;
+                if (v < 115) return 1;
+                return @divTrunc(v - 35, 40);
+            }
+        }.f;
+        const r = v2ci(color.r);
+        const g = v2ci(color.g);
+        const b = v2ci(color.b);
+        const ci = 36 * r + 6 * g + b;
+        // termenv averages the cube indices, not the channels, so this is
+        // always the darkest grey; ported as written.
+        const average = @divTrunc(r + g + b, 3);
+        const gray_idx: i32 = if (average > 238) 23 else @divTrunc(average - 3, 10);
+        return .{ @intCast(16 + ci), @intCast(232 + gray_idx) };
+    }
+
+    /// anstyle-lossy's `palette::VGA`.
+    const vga: Color.Slots = .{
+        .{ .r = 0, .g = 0, .b = 0 },      .{ .r = 170, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 170, .b = 0 },    .{ .r = 170, .g = 85, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 170 },    .{ .r = 170, .g = 0, .b = 170 },
+        .{ .r = 0, .g = 170, .b = 170 },  .{ .r = 170, .g = 170, .b = 170 },
+        .{ .r = 85, .g = 85, .b = 85 },   .{ .r = 255, .g = 85, .b = 85 },
+        .{ .r = 85, .g = 255, .b = 85 },  .{ .r = 255, .g = 255, .b = 85 },
+        .{ .r = 85, .g = 85, .b = 255 },  .{ .r = 255, .g = 85, .b = 255 },
+        .{ .r = 85, .g = 255, .b = 255 }, .{ .r = 255, .g = 255, .b = 255 },
+    };
+
+    /// A dark theme's slots (Catppuccin Mocha), the kind a terminal reports.
+    const mocha: Color.Slots = .{
+        .{ .r = 0x45, .g = 0x47, .b = 0x5a }, .{ .r = 0xf3, .g = 0x8b, .b = 0xa8 },
+        .{ .r = 0xa6, .g = 0xe3, .b = 0xa1 }, .{ .r = 0xf9, .g = 0xe2, .b = 0xaf },
+        .{ .r = 0x89, .g = 0xb4, .b = 0xfa }, .{ .r = 0xf5, .g = 0xc2, .b = 0xe7 },
+        .{ .r = 0x94, .g = 0xe2, .b = 0xd5 }, .{ .r = 0xba, .g = 0xc2, .b = 0xde },
+        .{ .r = 0x58, .g = 0x5b, .b = 0x70 }, .{ .r = 0xf3, .g = 0x8b, .b = 0xa8 },
+        .{ .r = 0xa6, .g = 0xe3, .b = 0xa1 }, .{ .r = 0xf9, .g = 0xe2, .b = 0xaf },
+        .{ .r = 0x89, .g = 0xb4, .b = 0xfa }, .{ .r = 0xf5, .g = 0xc2, .b = 0xe7 },
+        .{ .r = 0x94, .g = 0xe2, .b = 0xd5 }, .{ .r = 0xa6, .g = 0xad, .b = 0xc8 },
+    };
+
+    /// The corpus: a 16-step grid of the cube of all colours, every grey and
+    /// every pure ramp, each palette entry's own colour, and seeded random
+    /// colours. Calls `check` on each.
+    fn each(context: anytype, comptime check: fn (@TypeOf(context), Rgb) anyerror!void) !void {
+        var r: u16 = 0;
+        while (r < 256) : (r += 17) {
+            var g: u16 = 0;
+            while (g < 256) : (g += 17) {
+                var b: u16 = 0;
+                while (b < 256) : (b += 17) try check(context, .{ .r = @intCast(r), .g = @intCast(g), .b = @intCast(b) });
+            }
+        }
+        for (0..256) |i| {
+            const v: u8 = @intCast(i);
+            try check(context, .{ .r = v, .g = v, .b = v });
+            try check(context, .{ .r = v, .g = 0, .b = 0 });
+            try check(context, .{ .r = 0, .g = v, .b = 0 });
+            try check(context, .{ .r = 0, .g = 0, .b = v });
+        }
+        for (16..256) |i| try check(context, xtermColor(@intCast(i)));
+        var prng: std.Random.DefaultPrng = .init(0x5eed_c0102);
+        const random = prng.random();
+        for (0..20_000) |_| try check(context, .{ .r = random.int(u8), .g = random.int(u8), .b = random.int(u8) });
+    }
+};
+
+test "fit picks the palette entry and the slot anstyle-lossy picks, on the corpus" {
+    const Check = struct {
+        fn f(_: void, c: Rgb) anyerror!void {
+            const color: Color = .fromRgb(c);
+            try std.testing.expectEqual(fit_oracle.lossyXterm(c), color.fit(.palette, null).index());
+            try std.testing.expectEqual(fit_oracle.lossyAnsi(c, &Color.xterm_slots), color.fit(.ansi, null).index());
+            try std.testing.expectEqual(fit_oracle.lossyAnsi(c, &fit_oracle.vga), color.fit(.ansi, &fit_oracle.vga).index());
+            try std.testing.expectEqual(fit_oracle.lossyAnsi(c, &fit_oracle.mocha), color.fit(.ansi, &fit_oracle.mocha).index());
+        }
+    };
+    try fit_oracle.each({}, Check.f);
+
+    // The palette above the slots onto the slots: anstyle-lossy's
+    // `xterm_to_ansi`, the entry's colour matched like any other.
+    for (16..256) |i| {
+        const entry: Color = .palette(@intCast(i));
+        const rgb = fit_oracle.xtermColor(@intCast(i));
+        try std.testing.expectEqual(fit_oracle.lossyAnsi(rgb, &Color.xterm_slots), entry.fit(.ansi, null).index());
+        try std.testing.expectEqual(fit_oracle.lossyAnsi(rgb, &fit_oracle.vga), entry.fit(.ansi, &fit_oracle.vga).index());
+        // And each entry is the nearest entry to its own colour.
+        try std.testing.expectEqual(@as(u8, @intCast(i)), Color.fromRgb(rgb).fit(.palette, null).index());
+    }
+}
+
+test "fit is never farther than either entry termenv weighs, on the corpus" {
+    const Check = struct {
+        fn f(_: void, c: Rgb) anyerror!void {
+            const ours = fit_oracle.lossyDistance(c, fit_oracle.xtermColor(Color.fromRgb(c).fit(.palette, null).index()));
+            for (fit_oracle.termenvCandidates(c)) |theirs| {
+                try std.testing.expect(ours <= fit_oracle.lossyDistance(c, fit_oracle.xtermColor(theirs)));
+            }
+        }
+    };
+    try fit_oracle.each({}, Check.f);
+}
+
+test "fit writes each colour in the form the profile shows" {
+    const orange: Color = .rgb(255, 128, 0);
+    try std.testing.expectEqual(orange, orange.fit(.rgb, null));
+    try std.testing.expectEqual(Color.palette(208), orange.fit(.palette, null));
+    try std.testing.expectEqual(Color.palette(244), Color.rgb(128, 128, 128).fit(.palette, null));
+    try std.testing.expectEqual(Color.ansi(.blue), Color.rgb(0, 0, 0x80).fit(.ansi, null));
+    try std.testing.expectEqual(Color.default, orange.fit(.none, null));
+
+    // A palette index below 16 names a slot and takes its short code; one
+    // above is matched like direct colour.
+    try std.testing.expectEqual(Color.ansi(.bright_red), Color.palette(9).fit(.ansi, null));
+    try std.testing.expectEqual(Color.ansi(.bright_red), Color.palette(196).fit(.ansi, null));
+
+    // What the terminal said its slots look like decides the slot.
+    try std.testing.expectEqual(Color.ansi(.red), Color.rgb(240, 140, 170).fit(.ansi, &fit_oracle.mocha));
+
+    // A colour already in a form the profile shows comes back as it was,
+    // which is how a program's own colours for a poorer terminal survive.
+    for ([_]Color.Profile{ .ansi, .palette, .rgb }) |profile| {
+        try std.testing.expectEqual(Color.default, Color.default.fit(profile, null));
+        try std.testing.expectEqual(Color.ansi(.magenta), Color.ansi(.magenta).fit(profile, &fit_oracle.mocha));
+    }
+    try std.testing.expectEqual(Color.palette(5), Color.palette(5).fit(.palette, null));
+    try std.testing.expectEqual(Color.palette(200), Color.palette(200).fit(.palette, null));
+    try std.testing.expectEqual(Color.default, Color.ansi(.red).fit(.none, null));
+    try std.testing.expectEqual(Color.default, Color.palette(200).fit(.none, null));
+}
+
+test "fitting twice is fitting once, and the result is canonical" {
+    const Check = struct {
+        fn f(_: void, c: Rgb) anyerror!void {
+            for ([_]Color.Profile{ .none, .ansi, .palette, .rgb }) |profile| {
+                const once = Color.fromRgb(c).fit(profile, &fit_oracle.mocha);
+                try std.testing.expectEqual(once, once.fit(profile, &fit_oracle.mocha));
+                try std.testing.expect(@intFromEnum(once.kind) <= @intFromEnum(profile));
+                // The same four bytes a constructor would have made.
+                const remade: Color = switch (once.kind) {
+                    .default => .default,
+                    .ansi => .ansi(once.toAnsi()),
+                    .palette => .palette(once.index()),
+                    .rgb => .fromRgb(once.toRgb()),
+                };
+                try std.testing.expect(once.eql(remade));
+            }
+        }
+    };
+    try fit_oracle.each({}, Check.f);
+}
+
+test "no colour keeps the attributes" {
+    const style: Style = .{
+        .fg = .rgb(255, 128, 0),
+        .bg = .palette(17),
+        .underline_color = .ansi(.red),
+        .bold = true,
+        .italic = true,
+        .underline = .curly,
+        .reverse = true,
+        .strikethrough = true,
+    };
+    var expected = style;
+    expected.fg = .default;
+    expected.bg = .default;
+    expected.underline_color = .default;
+    try std.testing.expectEqual(expected, style.fit(.none, null));
+
+    const sixteen = style.fit(.ansi, null);
+    try std.testing.expectEqual(Color.ansi(.yellow), sixteen.fg);
+    try std.testing.expectEqual(Color.ansi(.black), sixteen.bg);
+    try std.testing.expectEqual(Color.ansi(.red), sixteen.underline_color);
+    try std.testing.expect(sixteen.bold and sixteen.italic and sixteen.reverse);
+
+    // And the fitted style writes the codes a 16-colour terminal reads.
+    var buffer: [64]u8 = undefined;
+    var w: Writer = .fixed(&buffer);
+    try setStyle(&w, (Style{ .fg = style.fg, .bg = style.bg }).fit(.ansi, null));
+    try std.testing.expectEqualStrings("\x1b[33;40m", w.buffered());
 }
 
 /// The encoder `diffStyle` used before it priced by counting: every
