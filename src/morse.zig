@@ -28,7 +28,7 @@ const framing = @import("framing.zig");
 const graphics = @import("graphics.zig");
 const iterm = @import("iterm.zig");
 const key = @import("key.zig");
-const key_encode = @import("key/key_encode.zig");
+const key_encode = @import("key/encode.zig");
 const mode = @import("mode.zig");
 const mouse_events = @import("mouse.zig");
 const multicursor = @import("multicursor.zig");
@@ -774,7 +774,7 @@ pub const parseExtraCursorColors = multicursor.parseExtraCursorColors;
 
 test {
     _ = @import("base64.zig");
-    _ = @import("work_test.zig");
+    _ = @import("testing/work_test.zig");
     _ = @import("clipboard.zig");
     _ = @import("cursor.zig");
     _ = @import("device.zig");
@@ -782,7 +782,7 @@ test {
     _ = @import("graphics.zig");
     _ = @import("iterm.zig");
     _ = @import("key.zig");
-    _ = @import("key/key_encode.zig");
+    _ = @import("key/encode.zig");
     _ = @import("mode.zig");
     _ = @import("mouse.zig");
     _ = @import("multicursor.zig");

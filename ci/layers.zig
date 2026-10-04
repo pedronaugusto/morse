@@ -4,9 +4,9 @@ const gantry = @import("gantry");
 pub const layers: []const gantry.rules.Layer = &.{
     .{ .name = "values", .patterns = &.{
         "src/base64.zig",
-        "src/testing/**",
+        "src/testing/corpus.zig",
         "src/framing.zig",
-        "src/key/key_types.zig",
+        "src/key/event.zig",
         "src/seq.zig",
         "src/strings.zig",
         "src/strip.zig",
@@ -28,7 +28,7 @@ pub const layers: []const gantry.rules.Layer = &.{
     } },
     .{ .name = "protocols", .patterns = &.{
         "src/device.zig",
-        "src/key/key_encode.zig",
+        "src/key/encode.zig",
         "src/multicursor.zig",
         "src/win32.zig",
     } },
@@ -40,10 +40,11 @@ pub const layers: []const gantry.rules.Layer = &.{
     } },
     .{ .name = "probes and tests", .patterns = &.{
         "src/probe.zig",
-        "src/work_test.zig",
+        "src/testing/work_test.zig",
     } },
     .{ .name = "public", .patterns = &.{
         "src/morse.zig",
+        "src/tests.zig",
     } },
 };
 
@@ -61,7 +62,7 @@ pub const required = [_][]const u8{
     "src/base64.zig",
     "src/testing/corpus.zig",
     "src/framing.zig",
-    "src/key/key_types.zig",
+    "src/key/event.zig",
     "src/seq.zig",
     "src/strings.zig",
     "src/strip.zig",
@@ -79,14 +80,15 @@ pub const required = [_][]const u8{
     "src/style.zig",
     "src/tcap.zig",
     "src/device.zig",
-    "src/key/key_encode.zig",
+    "src/key/encode.zig",
     "src/multicursor.zig",
     "src/win32.zig",
     "src/reply.zig",
     "src/key.zig",
     "src/probe.zig",
-    "src/work_test.zig",
+    "src/testing/work_test.zig",
     "src/morse.zig",
+    "src/tests.zig",
 };
 
 /// Tokens only their owners may spell. morse spells and reads bytes; the

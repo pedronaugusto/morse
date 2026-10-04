@@ -36,7 +36,7 @@
 //! state it is given, and keeps nothing between calls.
 
 const std = @import("std");
-const key_types = @import("key_types.zig");
+const key_types = @import("event.zig");
 const mode = @import("../mode.zig");
 const seq = @import("../seq.zig");
 

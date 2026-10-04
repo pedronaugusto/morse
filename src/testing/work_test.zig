@@ -4,12 +4,12 @@
 //! bench branch, separately from the unit suite.
 
 const std = @import("std");
-const base64 = @import("base64.zig");
-const cursor = @import("cursor.zig");
-const graphics = @import("graphics.zig");
-const key = @import("key.zig");
-const seq = @import("seq.zig");
-const style = @import("style.zig");
+const base64 = @import("../base64.zig");
+const cursor = @import("../cursor.zig");
+const graphics = @import("../graphics.zig");
+const key = @import("../key.zig");
+const seq = @import("../seq.zig");
+const style = @import("../style.zig");
 
 const Writer = std.Io.Writer;
 

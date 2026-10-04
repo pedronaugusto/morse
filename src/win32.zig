@@ -21,7 +21,7 @@
 
 const std = @import("std");
 const corpus = @import("testing/corpus.zig");
-const key = @import("key/key_types.zig");
+const key = @import("key/event.zig");
 const mouse = @import("mouse.zig");
 
 const Key = key.Key;

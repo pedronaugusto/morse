@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
         .name = "morse-tests",
         .filters = if (b.option([]const u8, "test-filter", "Select tests by name")) |filter| &.{filter} else &.{},
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/morse.zig"),
+            .root_source_file = b.path("src/tests.zig"),
             .target = target,
             .optimize = optimize,
             // Off so that `zig build test --fuzz` compiles. Zig 0.16.0's
