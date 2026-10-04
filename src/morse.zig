@@ -773,6 +773,7 @@ pub const ExtraCursorColors = multicursor.ExtraCursorColors;
 pub const parseExtraCursorColors = multicursor.parseExtraCursorColors;
 
 test {
+    _ = strings;
     _ = @import("base64.zig");
     _ = @import("testing/work_test.zig");
     _ = @import("clipboard.zig");

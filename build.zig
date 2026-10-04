@@ -1,8 +1,7 @@
 const std = @import("std");
+const preflight = @import("preflight");
 
 pub fn build(b: *std.Build) void {
-    importChecks(b);
-
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -56,7 +55,7 @@ pub fn build(b: *std.Build) void {
     // Built AND run, against the module a consumer gets. An example that is
     // only compiled proves the names still resolve; running it is what
     // proves the bytes are still the bytes. examples/quickstart.zig is also where
-    // README.md's Usage block comes from -- see ci/readme_usage.sh -- so the
+    // README.md's Usage block comes from -- see zig build docs -- usage -- so the
     // snippet a reader copies cannot drift from code CI executes.
     //=====================================================================
 
@@ -127,6 +126,8 @@ pub fn build(b: *std.Build) void {
             "the conformance step needs its emulator dependency, and it was not fetched",
         ).step);
     }
+    preflight.addCi(b, .{ .tests = test_step, .portable_tests = true });
+    _ = ciCheck(b, "check-clocks", "ci/clocks.zig");
 }
 
 /// Every example, listed rather than globbed: a build graph that scans a
@@ -137,21 +138,14 @@ const example_sources = [_][]const u8{
 };
 
 // Build-only tooling belongs to a root invocation, never a consumer's dependency graph.
-fn importChecks(b: *std.Build) void {
-    const step = b.step("check-imports", "Check source layers and import boundaries");
-    if (b.pkg_hash.len != 0) return;
-    const dependency = if (b.lazyDependency("gantry", .{ .target = b.graph.host, .optimize = .Debug })) |dep| dep.module("gantry") else return;
-    const checker = b.addExecutable(.{
-        .name = "check-imports",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("ci/imports.zig"),
-            .target = b.graph.host,
-            .optimize = .Debug,
-            .imports = &.{.{ .name = "gantry", .module = dependency }},
-        }),
-    });
-    const run = b.addRunArtifact(checker);
+fn ciCheck(b: *std.Build, name: []const u8, source: []const u8) *std.Build.Step.Compile {
+    const module = b.createModule(.{ .root_source_file = b.path(source), .target = b.graph.host, .optimize = .Debug });
+    const executable = b.addExecutable(.{ .name = name, .root_module = module });
+    const tests = b.addTest(.{ .root_module = module });
+    const run = b.addRunArtifact(executable);
     run.setCwd(b.path("."));
-    if (b.args) |args| run.addArgs(args);
+    const step = b.step(name, "Run repository CI checks and their regressions");
+    step.dependOn(&b.addRunArtifact(tests).step);
     step.dependOn(&run.step);
+    return executable;
 }

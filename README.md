@@ -15,7 +15,7 @@ settings.
 
 [examples/quickstart.zig](examples/quickstart.zig)
 
-<!-- BEGIN GENERATED ci/readme_usage.sh -->
+<!-- BEGIN GENERATED zig build docs -- usage -->
 ```zig
 const std = @import("std");
 const morse = @import("morse");
@@ -115,12 +115,12 @@ caller supplies deadlines because a terminal need not answer.
 
 ## Testing
 
-Local build scripts clear `.zig-cache/{o,h,z,tmp}` above the measured cap in `ci/cache.sh`; run `sh ci/cache.sh` before direct Zig builds (only a rebuild is lost).
+Local build scripts clear `.zig-cache/{o,h,z,tmp}` above the measured cap through preflight; run `zig build cache` before direct Zig builds (only a rebuild is lost).
 
 `zig build test` runs the unit suite and both examples in Debug by default. Tests check
 writer bytes, malformed input, split framing, console records and parser round trips.
 `zig build examples` runs the examples separately; `zig build check` compiles the tests
-and examples without running them. CI also runs `ci/check-readme.sh`.
+and examples without running them. CI also runs `zig build lint`.
 
 [CI](.github/workflows/ci.yml) runs tests and examples in Debug and ReleaseSafe on
 `ubuntu-latest`, `macos-latest` and `windows-latest`, plus ReleaseFast on Ubuntu.

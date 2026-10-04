@@ -1,0 +1,45 @@
+{
+  "sources": [
+    "src"
+  ],
+  "test_roots": [
+    "src/morse.zig"
+  ],
+  "test_support": [
+    "src/testing/*"
+  ],
+  "function_exceptions": {
+    "src/key.zig:frameEscape": {
+      "lines": 129,
+      "reason": "Existing implementation at adoption; this exact bound cannot grow and shrinks when the function is split."
+    }
+  },
+  "layout_exceptions": {
+    "src/key": {
+      "files": [
+        "src/key.zig",
+        "src/key_encode.zig",
+        "src/key_types.zig"
+      ],
+      "reason": "Existing namespace at adoption; these exact members are retained until its layout branch lands."
+    }
+  },
+  "docs": {
+    "zig build docs -- usage": {
+      "source": "examples/quickstart.zig",
+      "region": "usage",
+      "imports": [
+        "std",
+        "morse"
+      ]
+    }
+  },
+  "ziglint_exceptions": "ci/ziglint-exceptions.json",
+  "extra_checks": [
+    [
+      "zig",
+      "build",
+      "check-clocks"
+    ]
+  ]
+}

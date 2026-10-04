@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Share the Zig CI gate through preflight, with requested fast runs and full merge checks.
+
 - `Probe` asks the terminal's colour count, `Co`, through XTGETTCAP, and routes its answer or refusal as `color_count`.
 
 - `querySixelGraphics` and `parseSixelGraphics` ask and read XTSMGRAPHICS, how many colour registers a sixel image may use and how big it may be, as `Reply.sixel_graphics`; `sixelCursorRight` is mode 8452; `Probe` asks all three, as `sixel_registers`, `sixel_geometry` and `sixel_cursor_right`.
