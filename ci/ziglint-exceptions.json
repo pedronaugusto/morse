@@ -105,6 +105,13 @@
     "reason": "Existing finding at migration; this exact source and diagnostic are retained until the owning code is revised."
   },
   {
+    "rule": "Z011",
+    "path": "src/key/encode.zig",
+    "source": "const cp = if (i + n <= text.len) std.unicode.utf8Decode(text[i..][0..n]) catch null else null;",
+    "detail": "'utf8Decode' is deprecated: Deprecated. This function has an awkward API that is too easy to use incorrectly.",
+    "reason": "Existing declaration on main, moved or retargeted by its layout; this exact finding is retained while landing preflight."
+  },
+  {
     "rule": "Z016",
     "path": "src/base64.zig",
     "source": "std.debug.assert(src.len % 3 == 0 and dest.len == src.len / 3 * 4);",
@@ -123,13 +130,6 @@
     "path": "src/style.zig",
     "source": "fn each(context: anytype, comptime check: fn (@TypeOf(context), Rgb) anyerror!void) !void {",
     "detail": "'comptime' parameter should come before 'other'",
-    "reason": "Existing finding at migration; this exact source and diagnostic are retained until the owning code is revised."
-  },
-  {
-    "rule": "Z011",
-    "path": "src/key_encode.zig",
-    "source": "const cp = if (i + n <= text.len) std.unicode.utf8Decode(text[i..][0..n]) catch null else null;",
-    "detail": "'utf8Decode' is deprecated: Deprecated. This function has an awkward API that is too easy to use incorrectly.",
     "reason": "Existing finding at migration; this exact source and diagnostic are retained until the owning code is revised."
   },
   {
@@ -184,23 +184,23 @@
   {
     "rule": "Z028",
     "path": "src/strip.zig",
-    "source": "@import(\"corpus.zig\").seed(\"\\x1b[1mbold\\x1b[0m\"),",
+    "source": "@import(\"testing/corpus.zig\").seed(\"\\x1b[1mbold\\x1b[0m\"),",
     "detail": "inline @import; assign to a top-level const",
-    "reason": "Existing finding at migration; this exact source and diagnostic are retained until the owning code is revised."
+    "reason": "Existing declaration on main, moved or retargeted by its layout; this exact finding is retained while landing preflight."
   },
   {
     "rule": "Z028",
     "path": "src/strip.zig",
-    "source": "@import(\"corpus.zig\").seed(\"\\x1b]8;;u\\x1b\\\\t\\x1b]8;;\\x1b\\\\\"),",
+    "source": "@import(\"testing/corpus.zig\").seed(\"\\x1b]8;;u\\x1b\\\\t\\x1b]8;;\\x1b\\\\\"),",
     "detail": "inline @import; assign to a top-level const",
-    "reason": "Existing finding at migration; this exact source and diagnostic are retained until the owning code is revised."
+    "reason": "Existing declaration on main, moved or retargeted by its layout; this exact finding is retained while landing preflight."
   },
   {
     "rule": "Z028",
     "path": "src/strip.zig",
-    "source": "@import(\"corpus.zig\").seed(\"\\u{9b}\\xc2\\x9b\\x9b\\xe2\\x82\"),",
+    "source": "@import(\"testing/corpus.zig\").seed(\"\\u{9b}\\xc2\\x9b\\x9b\\xe2\\x82\"),",
     "detail": "inline @import; assign to a top-level const",
-    "reason": "Existing finding at migration; this exact source and diagnostic are retained until the owning code is revised."
+    "reason": "Existing declaration on main, moved or retargeted by its layout; this exact finding is retained while landing preflight."
   },
   {
     "rule": "Z023",
