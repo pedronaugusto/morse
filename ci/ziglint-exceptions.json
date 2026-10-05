@@ -14,20 +14,6 @@
     "reason": "Existing finding at migration; this exact source and diagnostic are retained until the owning code is revised."
   },
   {
-    "rule": "Z012",
-    "path": "src/mode.zig",
-    "source": "pub fn number(m: Motion) u16 {",
-    "detail": "public function exposes private type 'Motion'",
-    "reason": "Existing finding at migration; this exact source and diagnostic are retained until the owning code is revised."
-  },
-  {
-    "rule": "Z012",
-    "path": "src/mode.zig",
-    "source": "pub fn number(e: Encoding) u16 {",
-    "detail": "public function exposes private type 'Encoding'",
-    "reason": "Existing finding at migration; this exact source and diagnostic are retained until the owning code is revised."
-  },
-  {
     "rule": "Z011",
     "path": "src/mode.zig",
     "source": "while (std.mem.indexOf(u8, rest, seq.csi ++ \"?\")) |at| : (count += 1) {",

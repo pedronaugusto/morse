@@ -233,7 +233,7 @@ pub const Mouse = packed struct(u32) {
 
         /// The DEC private mode that asks for this motion, ready to hand to
         /// `queryMode`.
-        pub fn number(m: Motion) u16 {
+        pub fn number(m: Mouse.Motion) u16 {
             return @intFromEnum(m);
         }
     };
@@ -262,7 +262,7 @@ pub const Mouse = packed struct(u32) {
 
         /// The DEC private mode that asks for this encoding, ready to hand to
         /// `queryMode`.
-        pub fn number(e: Encoding) u16 {
+        pub fn number(e: Mouse.Encoding) u16 {
             return @intFromEnum(e);
         }
     };

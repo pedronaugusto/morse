@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Qualify the public `Mouse.Motion.number` and `Mouse.Encoding.number` receiver types; both enums were already public and their API is unchanged.
+
 - Share the Zig CI gate through preflight, with requested fast runs and full merge checks.
 
 - `Probe` asks the terminal's colour count, `Co`, through XTGETTCAP, and routes its answer or refusal as `color_count`.
