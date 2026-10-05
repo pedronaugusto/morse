@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- Put compile-time parameters first in `seq.writeHex` and `strings.writeChecked` (internal helpers; root exports are unchanged).
+- Clear lint and quality exceptions, split the escape framing oracle by grammar, and assert buffer, UTF-8, base64 and SGR bounds.
+
 - Qualify the public `Mouse.Motion.number` and `Mouse.Encoding.number` receiver types; both enums were already public and their API is unchanged.
 
 - Share the Zig CI gate through preflight, with requested fast runs and full merge checks.

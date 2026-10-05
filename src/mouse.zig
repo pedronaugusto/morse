@@ -511,7 +511,7 @@ test "every event this package can encode parses back to itself" {
     for (std.meta.tags(Button)) |button| {
         for ([_]bool{ false, true }) |press| {
             for (0..16) |modifiers| {
-                const ev = MouseEvent{
+                const ev: MouseEvent = .{
                     .button = button,
                     .x = 1 + @as(u32, @intCast(modifiers)) * 100,
                     .y = 4294967295 - @as(u32, @intCast(modifiers)),
@@ -533,7 +533,7 @@ test "a pixel event round trips once the caller says it is one" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const sent = MouseEvent{ .button = .left, .x = 801, .y = 601, .press = true, .pixels = true };
+    const sent: MouseEvent = .{ .button = .left, .x = 801, .y = 601, .press = true, .pixels = true };
     try encodeMouse(&out.writer, sent);
 
     // The wire carries no unit, so the parse comes back in cells; a program
@@ -566,7 +566,7 @@ test "toCells maps the first cell, its last pixel, and the next cell" {
 }
 
 test "toCells keeps everything about the event except the coordinates" {
-    const ev = MouseEvent{
+    const ev: MouseEvent = .{
         .button = .wheel_down,
         .x = 100,
         .y = 200,
@@ -593,7 +593,7 @@ test "toCells keeps everything about the event except the coordinates" {
 }
 
 test "toCells leaves a cell event alone and is idempotent" {
-    const cells = MouseEvent{ .button = .left, .x = 40, .y = 12, .press = true };
+    const cells: MouseEvent = .{ .button = .left, .x = 40, .y = 12, .press = true };
     try std.testing.expectEqual(cells, toCells(cells, 8, 16));
 
     const converted = toCells(.{ .button = .left, .x = 41, .y = 33, .press = true, .pixels = true }, 8, 16);

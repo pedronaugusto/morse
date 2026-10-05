@@ -21,6 +21,9 @@
 //! manage the termios state, and holds no capability database. It turns
 //! intent into bytes and bytes back into intent.
 
+const std = @import("std");
+const Self = @This();
+
 const clipboard = @import("clipboard.zig");
 const cursor = @import("cursor.zig");
 const device = @import("device.zig");
@@ -802,7 +805,6 @@ test {
 }
 
 test "a frame's lengths, counted through cost, add up to what it writes" {
-    const std = @import("std");
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     const w = &out.writer;
@@ -841,7 +843,6 @@ test "a frame's lengths, counted through cost, add up to what it writes" {
 }
 
 test "a frame stripped is the text it wrote" {
-    const std = @import("std");
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     const w = &out.writer;
@@ -864,7 +865,6 @@ test "a frame stripped is the text it wrote" {
 }
 
 test "the root module re-exports what the README promises" {
-    const std = @import("std");
 
     // A name dropped from a module but left in the root is a compile error
     // here rather than a broken import in a consumer.
@@ -968,7 +968,7 @@ test "the root module re-exports what the README promises" {
 
     // Every length in `cost` is named for a writer the root exports.
     inline for (@typeInfo(cost).@"struct".decls) |decl| {
-        if (!@hasDecl(@This(), decl.name)) @compileError("cost." ++ decl.name ++ " has no writer");
+        if (!@hasDecl(Self, decl.name)) @compileError("cost." ++ decl.name ++ " has no writer");
     }
 
     try queryDeviceAttributes(w);

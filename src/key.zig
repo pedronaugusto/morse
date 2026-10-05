@@ -36,6 +36,7 @@
 //! what held, and stops there.
 
 const std = @import("std");
+const utf8 = @import("utf8.zig");
 const corpus = @import("testing/corpus.zig");
 const framing = @import("framing.zig");
 const mouse = @import("mouse.zig");
@@ -287,6 +288,12 @@ pub const KeyParser = struct {
         return .{ .buffer = buffer };
     }
 
+    fn assertValid(p: *const KeyParser) void {
+        std.debug.assert(p.buffer.len >= min_buffer);
+        std.debug.assert(p.start <= p.end);
+        std.debug.assert(p.end <= p.buffer.len);
+    }
+
     /// Hands `bytes` to the parser and returns the events they complete.
     ///
     /// Run the returned iterator to null before the next call, or keep its
@@ -299,6 +306,7 @@ pub const KeyParser = struct {
     /// while (events.next()) |event| { ... }
     /// ```
     pub fn feed(p: *KeyParser, bytes: []const u8) Events {
+        p.assertValid();
         return .{ .parser = p, .fresh = bytes };
     }
 
@@ -313,6 +321,7 @@ pub const KeyParser = struct {
     /// Borrowed from the parser's buffer, on the same terms as
     /// `Event.unhandled`.
     pub fn pending(p: *const KeyParser) []const u8 {
+        p.assertValid();
         return p.buffer[p.start..p.end];
     }
 
@@ -397,6 +406,8 @@ pub const KeyParser = struct {
     /// been suspended, or after the terminal has been reset underneath it,
     /// because the bytes from before are no longer part of anything.
     pub fn reset(p: *KeyParser) void {
+        p.assertValid();
+        defer p.assertValid();
         p.start = 0;
         p.end = 0;
         p.repeating = null;
@@ -409,8 +420,10 @@ pub const KeyParser = struct {
 
     /// Moves the unread bytes to the front, making room at the end.
     fn compact(p: *KeyParser) void {
+        p.assertValid();
+        defer p.assertValid();
         if (p.start == 0) return;
-        std.mem.copyForwards(u8, p.buffer, p.buffer[p.start..p.end]);
+        @memmove(p.buffer[0 .. p.end - p.start], p.buffer[p.start..p.end]);
         p.end -= p.start;
         p.start = 0;
     }
@@ -438,6 +451,8 @@ pub const Events = struct {
     ///
     /// Null does not mean the parser is empty: see `KeyParser.pending`.
     pub fn next(it: *Events) ?Event {
+        it.parser.assertValid();
+        defer it.parser.assertValid();
         const p = it.parser;
         if (p.repeating == null and p.skipping == null and p.start == p.end) {
             if (it.fresh.len == 0) return null;
@@ -677,7 +692,7 @@ fn decodeRun(bytes: []const u8) Decoded {
         }
         const n = std.unicode.utf8ByteSequenceLength(b) catch break;
         if (len + n > bytes.len) break;
-        _ = std.unicode.utf8Decode(bytes[len..][0..n]) catch break;
+        _ = utf8.decode(bytes[len..][0..n]) catch break;
         len += n;
         codepoints += 1;
     }
@@ -723,7 +738,7 @@ pub const asciiKey = @import("key/event.zig").asciiKey;
 fn decodeUtf8(bytes: []const u8, mods: Modifiers, prefix: usize) Decoded {
     const n = std.unicode.utf8ByteSequenceLength(bytes[0]) catch return .{ .skip = prefix + 1 };
     if (bytes.len < n) return .incomplete;
-    const cp = std.unicode.utf8Decode(bytes[0..n]) catch return .{ .skip = prefix + 1 };
+    const cp = utf8.decode(bytes[0..n]) catch return .{ .skip = prefix + 1 };
 
     var ev: KeyEvent = .{ .key = .{ .char = cp }, .mods = mods };
     setText(&ev, bytes[0..n]);
@@ -2388,7 +2403,7 @@ test "fuzz KeyParser" {
     // progress -- a feed that is run to null either empties the buffer or
     // leaves a partial sequence strictly shorter than the buffer.
     try std.testing.fuzz({}, struct {
-        fn one_(_: void, smith: *std.testing.Smith) anyerror!void {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var input: [256]u8 = undefined;
             const bytes = input[0..smith.sliceWithHash(&input, 0)];
 
@@ -2438,7 +2453,7 @@ test "fuzz KeyParser" {
             _ = parser.flush();
             try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
         }
-    }.one_, .{ .corpus = &.{
+    }.one, .{ .corpus = &.{
         corpus.seed("\x1b[97:65:97;2:3;65u"),
         corpus.seed("\x1b[27u"),
         corpus.seed("\x1b[1;5A"),
@@ -2476,7 +2491,7 @@ test "fuzz the parameter scanner" {
     // The property: no parameter string panics or overflows, and what is read
     // back never claims more parameters than the parser holds.
     try std.testing.fuzz({}, struct {
-        fn one_(_: void, smith: *std.testing.Smith) anyerror!void {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var input: [64]u8 = undefined;
             const bytes = input[0..smith.sliceWithHash(&input, 0)];
 
@@ -2487,7 +2502,7 @@ test "fuzz the parameter scanner" {
                 for (0..max_subparams) |j| _ = params.get(i, j);
             }
         }
-    }.one_, .{ .corpus = &.{
+    }.one, .{ .corpus = &.{
         corpus.seed(""),
         corpus.seed("1"),
         corpus.seed("1;5"),
@@ -2573,133 +2588,83 @@ fn frameWithGrammar(bytes: []const u8, out: []Frame) []Frame {
 /// second `ESC`, or one whose sequence has a byte in it the grammar does not
 /// allow there. Either way one byte goes and the machine starts again.
 fn frameEscape(bytes: []const u8) ?usize {
-    std.debug.assert(bytes.len != 0 and bytes[0] == seq.esc);
-
-    const State = enum {
-        /// Just past the `ESC`, deciding what it introduces.
-        introducer,
-        /// Just past a `CSI`, where a private marker may stand.
-        csi_marker,
-        /// In a `CSI`'s parameter bytes.
-        csi_parameter,
-        /// In a `CSI`'s intermediate bytes, and then its final.
-        csi_intermediate,
-        /// Past the extra `[` of a Linux virtual-console function key.
-        linux_console_final,
-        /// In an `SS3`'s parameter bytes, and then its final.
-        ss3,
-        /// In a control string.
-        string,
-        /// In a control string, one byte past an `ESC`.
-        string_escape,
-        /// In the intermediate bytes of a short escape, and then its final.
-        short_escape,
+    std.debug.assert(bytes.len != 0);
+    std.debug.assert(bytes[0] == seq.esc);
+    if (bytes.len == 1) return null;
+    const b = bytes[1];
+    if (b == seq.esc) return 1;
+    return switch (b) {
+        '[' => frameCsi(bytes),
+        'O' => frameSs3(bytes),
+        ']', 'P', 'X', '^', '_' => frameString(bytes),
+        0x20...0x2f => frameShortEscape(bytes),
+        else => frameAlt(bytes),
     };
+}
 
-    var state: State = .introducer;
-    var marked = false;
-    var parameterised = false;
-    var intermediate = false;
-    var i: usize = 1;
+/// Alt introduces one ASCII key or one complete UTF-8 codepoint.
+fn frameAlt(bytes: []const u8) ?usize {
+    const b = bytes[1];
+    if (b < 0x80) return 2;
+    const n = std.unicode.utf8ByteSequenceLength(b) catch return 2;
+    if (1 + n > bytes.len) return null;
+    _ = utf8.decode(bytes[1..][0..n]) catch return 2;
+    return 1 + n;
+}
 
-    while (i < bytes.len) {
-        const b = bytes[i];
-        switch (state) {
-            .introducer => {
-                // Two escapes running: the first is a key on its own.
-                if (b == seq.esc) return 1;
-                i += 1;
-                if (b == '[') {
-                    state = .csi_marker;
-                } else if (b == 'O') {
-                    state = .ss3;
-                } else if (b == ']' or b == 'P' or b == 'X' or b == '^' or b == '_') {
-                    state = .string;
-                } else if (b >= 0x20 and b <= 0x2f) {
-                    state = .short_escape;
-                } else if (b < 0x80) {
-                    // `ESC` and a key, which is how alt is spelled.
-                    return 2;
-                } else {
-                    const n = std.unicode.utf8ByteSequenceLength(b) catch return 2;
-                    if (1 + n > bytes.len) return null;
-                    _ = std.unicode.utf8Decode(bytes[1..][0..n]) catch return 2;
-                    return 1 + n;
-                }
-            },
-            .csi_marker => {
-                if (b == '[') {
-                    i += 1;
-                    state = .linux_console_final;
-                    continue;
-                }
-                if (b >= '<' and b <= '?') {
-                    marked = true;
-                    i += 1;
-                }
-                state = .csi_parameter;
-            },
-            .csi_parameter => {
-                if (b >= 0x30 and b <= 0x3f) {
-                    parameterised = true;
-                    i += 1;
-                } else if (b == '$' and !marked and parameterised) {
-                    return i + 1;
-                } else {
-                    state = .csi_intermediate;
-                }
-            },
-            .csi_intermediate => {
-                if (b >= 0x20 and b <= 0x2f) {
-                    intermediate = true;
-                    i += 1;
-                    continue;
-                }
-                if (b < 0x40 or b > 0x7e) return 1;
-                // `CSI M` with nothing in front of the `M` is the older
-                // mouse report, whose three bytes are arbitrary and are part
-                // of the sequence. Its length is the only one in the whole
-                // grammar that the final byte does not give.
-                if (b == 'M' and !marked and !parameterised and !intermediate) {
-                    if (i + 1 + x10_mouse_fields > bytes.len) return null;
-                    return i + 1 + x10_mouse_fields;
-                }
-                return i + 1;
-            },
-            .linux_console_final => {
-                if (b < 0x40 or b > 0x7e) return 1;
-                return i + 1;
-            },
-            .ss3 => {
-                if (b >= 0x30 and b <= 0x3f) {
-                    i += 1;
-                    continue;
-                }
-                if (b < 0x40 or b > 0x7e) return 1;
-                return i + 1;
-            },
-            .string => {
-                if (b == seq.bel) return i + 1;
-                i += 1;
-                if (b == seq.esc) state = .string_escape;
-            },
-            .string_escape => {
-                // `ST` closes the string; a bare `ESC` is the next sequence
-                // beginning, and the string ends in front of it.
-                if (b == '\\') return i + 1;
-                return i - 1;
-            },
-            .short_escape => {
-                if (b >= 0x20 and b <= 0x2f) {
-                    i += 1;
-                    continue;
-                }
-                if (b < 0x30 or b > 0x7e) return 1;
-                return i + 1;
-            },
+/// CSI parameters precede intermediate bytes, followed by one final byte.
+fn frameCsi(bytes: []const u8) ?usize {
+    var i: usize = 2;
+    if (i == bytes.len) return null;
+    if (bytes[i] == '[') {
+        i += 1;
+        if (i == bytes.len) return null;
+        return if (bytes[i] >= 0x40 and bytes[i] <= 0x7e) i + 1 else 1;
+    }
+    const marked = bytes[i] >= '<' and bytes[i] <= '?';
+    if (marked) i += 1;
+    const parameter_start = i;
+    while (i < bytes.len and bytes[i] >= 0x30 and bytes[i] <= 0x3f) : (i += 1) {}
+    const parameterised = i != parameter_start;
+    if (i < bytes.len and bytes[i] == '$' and !marked and parameterised) return i + 1;
+    const intermediate_start = i;
+    while (i < bytes.len and bytes[i] >= 0x20 and bytes[i] <= 0x2f) : (i += 1) {}
+    if (i == bytes.len) return null;
+    const b = bytes[i];
+    if (b < 0x40 or b > 0x7e) return 1;
+    // Bare CSI M has three arbitrary legacy mouse fields after its final.
+    if (b == 'M' and !marked and !parameterised and i == intermediate_start) {
+        if (i + 1 + x10_mouse_fields > bytes.len) return null;
+        return i + 1 + x10_mouse_fields;
+    }
+    return i + 1;
+}
+
+fn frameSs3(bytes: []const u8) ?usize {
+    var i: usize = 2;
+    while (i < bytes.len and bytes[i] >= 0x30 and bytes[i] <= 0x3f) : (i += 1) {}
+    if (i == bytes.len) return null;
+    return if (bytes[i] >= 0x40 and bytes[i] <= 0x7e) i + 1 else 1;
+}
+
+/// BEL and ST terminate strings; a bare ESC starts the next sequence.
+fn frameString(bytes: []const u8) ?usize {
+    var i: usize = 2;
+    while (i < bytes.len) : (i += 1) {
+        if (bytes[i] == seq.bel) return i + 1;
+        if (bytes[i] == seq.esc) {
+            if (i + 1 == bytes.len) return null;
+            return if (bytes[i + 1] == '\\') i + 2 else i;
         }
     }
     return null;
+}
+
+fn frameShortEscape(bytes: []const u8) ?usize {
+    var i: usize = 2;
+    while (i < bytes.len and bytes[i] >= 0x20 and bytes[i] <= 0x2f) : (i += 1) {}
+    if (i == bytes.len) return null;
+    return if (bytes[i] >= 0x30 and bytes[i] <= 0x7e) i + 1 else 1;
 }
 
 /// The pieces the differential generator builds a stream out of: complete
@@ -2847,7 +2812,7 @@ test "fuzz the framing against a second framer" {
     // A disagreement is a bug in one of them, and the test does not say
     // which, which is the point: neither is the oracle.
     try std.testing.fuzz({}, struct {
-        fn one_(_: void, smith: *std.testing.Smith) anyerror!void {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var picks: [128]u8 = undefined;
             const chosen = picks[0..smith.sliceWithHash(&picks, 0)];
 
@@ -2857,7 +2822,7 @@ test "fuzz the framing against a second framer" {
             // have put together.
             _ = try checkFraming(chosen);
         }
-    }.one_, .{ .corpus = &.{
+    }.one, .{ .corpus = &.{
         corpus.seed("\x00\x01\x02\x03\x04\x05\x06\x07"),
         corpus.seed("\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f"),
         corpus.seed("\x10\x11\x12\x13\x14\x15\x16\x17"),
@@ -3666,10 +3631,10 @@ fn decodeKeys(bytes: []const u8, out: []KeyEvent) []KeyEvent {
 }
 
 /// Writes every spelling of a key in the corpus to `visit`, one at a time.
-fn keyCorpus(context: anytype, comptime visit: fn (@TypeOf(context), []const u8) anyerror!void) !void {
+fn keyCorpus(comptime visit: anytype, context: anytype) !void {
     var buffer: [96]u8 = undefined;
     const Print = struct {
-        fn go(b: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
+        fn go(comptime fmt: []const u8, b: []u8, args: anytype) []const u8 {
             return std.fmt.bufPrint(b, fmt, args) catch unreachable; // unreachable: the corpus uses a 96-byte buffer for bounded numeric key sequences
         }
     };
@@ -3689,21 +3654,21 @@ fn keyCorpus(context: anytype, comptime visit: fn (@TypeOf(context), []const u8)
     // with every legacy modifier parameter.
     const mods_params = [_]u16{ 2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 16, 17, 33, 64 };
     for ("ABCDEFHPQS") |final| {
-        try visit(context, Print.go(&buffer, "\x1b[{c}", .{final}));
-        try visit(context, Print.go(&buffer, "\x1bO{c}", .{final}));
+        try visit(context, Print.go("\x1b[{c}", &buffer, .{final}));
+        try visit(context, Print.go("\x1bO{c}", &buffer, .{final}));
         for (mods_params) |m| {
-            try visit(context, Print.go(&buffer, "\x1b[1;{d}{c}", .{ m, final }));
-            try visit(context, Print.go(&buffer, "\x1bO{d}{c}", .{ m, final }));
+            try visit(context, Print.go("\x1b[1;{d}{c}", &buffer, .{ m, final }));
+            try visit(context, Print.go("\x1bO{d}{c}", &buffer, .{ m, final }));
         }
     }
     for ("RMXjklmnopqrstuvwxy") |final| {
-        try visit(context, Print.go(&buffer, "\x1bO{c}", .{final}));
-        try visit(context, Print.go(&buffer, "\x1bO5{c}", .{final}));
+        try visit(context, Print.go("\x1bO{c}", &buffer, .{final}));
+        try visit(context, Print.go("\x1bO5{c}", &buffer, .{final}));
     }
     const numbers = [_]u16{ 1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 23, 24, 25, 26, 28, 29, 31, 32, 33, 34, 42, 43, 44, 45, 46 };
     for (numbers) |n| {
-        try visit(context, Print.go(&buffer, "\x1b[{d}~", .{n}));
-        for (mods_params) |m| try visit(context, Print.go(&buffer, "\x1b[{d};{d}~", .{ n, m }));
+        try visit(context, Print.go("\x1b[{d}~", &buffer, .{n}));
+        for (mods_params) |m| try visit(context, Print.go("\x1b[{d};{d}~", &buffer, .{ n, m }));
     }
     for ([_][]const u8{
         "\x1b[Z",  "\x1b[1;5Z", "\x1b[2$", "\x1b[5^", "\x1b[3@", "\x1b[23$", "\x1b[11^", "\x1b[23@",
@@ -3714,7 +3679,7 @@ fn keyCorpus(context: anytype, comptime visit: fn (@TypeOf(context), []const u8)
     // modifyOtherKeys.
     const mok_codes = [_]u21{ 9, 13, 27, 127, ' ', 'a', 'A', '1', '!', 'i', 'm', '[', 0xe9 };
     for (mok_codes) |code| for (mods_params) |m| {
-        try visit(context, Print.go(&buffer, "\x1b[27;{d};{d}~", .{ m, code }));
+        try visit(context, Print.go("\x1b[27;{d};{d}~", &buffer, .{ m, code }));
     };
 
     // Kitty: every named codepoint and a spread of characters, across the
@@ -3732,9 +3697,9 @@ fn keyCorpus(context: anytype, comptime visit: fn (@TypeOf(context), []const u8)
     };
     const kitty_mods = [_]u16{ 1, 2, 3, 5, 6, 9, 17, 33, 65, 129, 256 };
     for (codes[0..count]) |code| {
-        try visit(context, Print.go(&buffer, "\x1b[{d}u", .{code}));
+        try visit(context, Print.go("\x1b[{d}u", &buffer, .{code}));
         for (kitty_mods) |m| for ([_]u8{ 1, 2, 3 }) |kind| {
-            try visit(context, Print.go(&buffer, "\x1b[{d};{d}:{d}u", .{ code, m, kind }));
+            try visit(context, Print.go("\x1b[{d};{d}:{d}u", &buffer, .{ code, m, kind }));
         };
     }
     for ([_][]const u8{
@@ -3779,7 +3744,7 @@ const RoundTrip = struct {
 
 test "every key the parser reads, encoded with every kitty flag, reads back as itself" {
     var rt: RoundTrip = .{};
-    try keyCorpus(&rt, RoundTrip.visit);
+    try keyCorpus(RoundTrip.visit, &rt);
     // The corpus is what it says it is, not a handful of cases.
     try std.testing.expect(rt.keys > 2000);
 }
@@ -3824,7 +3789,7 @@ test "every encoding writes a key that reads back as a key it writes the same wa
             .cursor_keys_application = state & 2 != 0,
             .keypad_application = state & 4 != 0,
         } };
-        try keyCorpus(&pr, Projection.visit);
+        try keyCorpus(Projection.visit, &pr);
         try std.testing.expect(pr.single > 1000);
     }
     // Kitty's flags without disambiguation or every key as a sequence keep
@@ -3834,7 +3799,7 @@ test "every encoding writes a key that reads back as a key it writes the same wa
     while (bits < 32) : (bits += 1) {
         if (bits & 0b1001 == 0) continue;
         var pr: Projection = .{ .enc = .{ .kitty = .fromBits(@intCast(bits)) } };
-        try keyCorpus(&pr, Projection.visit);
+        try keyCorpus(Projection.visit, &pr);
         try std.testing.expect(pr.single > 1000);
     }
 }
@@ -3872,7 +3837,7 @@ test "fuzz the encoder against the parser" {
     // alternate on a key that is not a codepoint, and less a typed
     // codepoint the protocol has given to a named key.
     try std.testing.fuzz({}, struct {
-        fn one_(_: void, smith: *std.testing.Smith) anyerror!void {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var input: [256]u8 = undefined;
             const bytes = input[0..smith.sliceWithHash(&input, 0)];
             var decoded: [64]KeyEvent = undefined;
@@ -3892,7 +3857,7 @@ test "fuzz the encoder against the parser" {
                 try std.testing.expectEqual(expected, back[0]);
             }
         }
-    }.one_, .{ .corpus = &.{
+    }.one, .{ .corpus = &.{
         corpus.seed("\x1b[97:65:98;2:3;65u"),
         corpus.seed("\x1b[1;129A\x1b[3;5:2~"),
         corpus.seed("a\x01\x1bb\x1b[27;6;97~"),

@@ -126,7 +126,7 @@ pub fn writeSigned(w: *std.Io.Writer, value: i32) std.Io.Writer.Error!void {
 ///
 /// Two digits for a byte of an XTGETTCAP name, four for a channel of an OSC
 /// colour: the two spellings of hex in the package, in one place.
-pub fn writeHex(w: *std.Io.Writer, value: u64, comptime digits: usize) std.Io.Writer.Error!void {
+pub fn writeHex(comptime digits: usize, w: *std.Io.Writer, value: u64) std.Io.Writer.Error!void {
     var buffer: [digits]u8 = undefined;
     var i: usize = digits;
     var rest = value;
@@ -199,8 +199,8 @@ pub fn stripStringTerminator(bytes: []const u8) ?[]const u8 {
 
     // Either byte ends or abandons a control string. Seeing one in the body
     // means the final terminator belongs to a later sequence.
-    if (std.mem.indexOfScalar(u8, body, bel) != null) return null;
-    if (std.mem.indexOfScalar(u8, body, esc) != null) return null;
+    if (std.mem.findScalar(u8, body, bel) != null) return null;
+    if (std.mem.findScalar(u8, body, esc) != null) return null;
     return body;
 }
 
@@ -275,13 +275,13 @@ test "writeSigned writes the sign and the digits, the smallest i32 included" {
 test "writeHex pads to the width it was asked for" {
     var buffer: [8]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buffer);
-    try writeHex(&w, 0x0a, 2);
-    try writeHex(&w, 0xff, 2);
+    try writeHex(2, &w, 0x0a);
+    try writeHex(2, &w, 0xff);
     try std.testing.expectEqualStrings("0aff", w.buffered());
 
     var wide: [8]u8 = undefined;
     var v: std.Io.Writer = .fixed(&wide);
-    try writeHex(&v, 0x1c1c, 4);
+    try writeHex(4, &v, 0x1c1c);
     try std.testing.expectEqualStrings("1c1c", v.buffered());
 }
 

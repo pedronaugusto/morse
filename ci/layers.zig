@@ -4,6 +4,7 @@ const gantry = @import("gantry");
 pub const layers: []const gantry.rules.Layer = &.{
     .{ .name = "values", .patterns = &.{
         "src/base64.zig",
+        "src/utf8.zig",
         "src/testing/corpus.zig",
         "src/framing.zig",
         "src/key/event.zig",
@@ -60,6 +61,7 @@ pub const references: []const gantry.rules.ReferenceRule = &.{
 
 pub const required = [_][]const u8{
     "src/base64.zig",
+    "src/utf8.zig",
     "src/testing/corpus.zig",
     "src/framing.zig",
     "src/key/event.zig",

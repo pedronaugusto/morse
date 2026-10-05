@@ -36,6 +36,7 @@
 //! state it is given, and keeps nothing between calls.
 
 const std = @import("std");
+const utf8 = @import("../utf8.zig");
 const key_types = @import("event.zig");
 const mode = @import("../mode.zig");
 const seq = @import("../seq.zig");
@@ -218,7 +219,7 @@ fn serialize(w: anytype, f: Fields, final: u8) !void {
         var first = true;
         while (i < text.len) {
             const n = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
-            const cp = if (i + n <= text.len) std.unicode.utf8Decode(text[i..][0..n]) catch null else null;
+            const cp = if (i + n <= text.len) utf8.decode(text[i..][0..n]) catch null else null;
             i += if (cp == null) 1 else n;
             const value = cp orelse continue;
             try w.writeByte(if (first) ';' else ':');
@@ -640,7 +641,7 @@ fn soleCodepoint(text: []const u8) ?u21 {
     if (text.len == 0) return null;
     const n = std.unicode.utf8ByteSequenceLength(text[0]) catch return null;
     if (n != text.len) return null;
-    return std.unicode.utf8Decode(text) catch null;
+    return utf8.decode(text) catch null;
 }
 
 /// A key that stands for a codepoint, the legacy way.

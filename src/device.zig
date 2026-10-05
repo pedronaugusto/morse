@@ -95,7 +95,7 @@ pub const DeviceAttributes = struct {
     /// feature, so a false here is a reason to fall back rather than proof of
     /// absence.
     pub fn has(da: DeviceAttributes, attribute: u16) bool {
-        return std.mem.indexOfScalar(u16, da.list(), attribute) != null;
+        return std.mem.findScalar(u16, da.list(), attribute) != null;
     }
 };
 
@@ -439,11 +439,11 @@ pub fn parseColorReply(bytes: []const u8) ?ColorReport {
 /// `rgb:rrrr/gggg/bbbb`, four lowercase hex digits a channel.
 fn writeRgb(w: *Writer, color: Rgb16) Writer.Error!void {
     try w.writeAll("rgb:");
-    try seq.writeHex(w, color.r, 4);
+    try seq.writeHex(4, w, color.r);
     try w.writeByte('/');
-    try seq.writeHex(w, color.g, 4);
+    try seq.writeHex(4, w, color.g);
     try w.writeByte('/');
-    try seq.writeHex(w, color.b, 4);
+    try seq.writeHex(4, w, color.b);
 }
 
 /// Reads the `rgb:rrrr/gggg/bbbb` body an OSC colour reply carries, at any
@@ -1157,7 +1157,7 @@ test "fuzz parseModifyKeysReply" {
     // The property: no input panics or overflows, and whatever is accepted
     // writes back the bytes it was read from.
     try std.testing.fuzz({}, struct {
-        fn one_(_: void, smith: *std.testing.Smith) anyerror!void {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var input: [32]u8 = undefined;
             const bytes = input[0..smith.sliceWithHash(&input, 0)];
 
@@ -1170,7 +1170,7 @@ test "fuzz parseModifyKeysReply" {
             try std.testing.expectEqual(report.resource, again.resource);
             try std.testing.expectEqual(report.value, again.value);
         }
-    }.one_, .{ .corpus = &.{
+    }.one, .{ .corpus = &.{
         corpus.seed("\x1b[>4;2m"),
         corpus.seed("\x1b[>0;0m"),
         corpus.seed("\x1b[>4m"),

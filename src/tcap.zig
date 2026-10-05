@@ -67,7 +67,7 @@ pub fn queryCapabilities(w: *Writer, names: []const []const u8) Writer.Error!voi
 
 /// Writes `bytes` as lowercase hexadecimal, two digits a byte.
 fn writeHex(w: *Writer, bytes: []const u8) Writer.Error!void {
-    for (bytes) |b| try seq.writeHex(w, b, 2);
+    for (bytes) |b| try seq.writeHex(2, w, b);
 }
 
 /// One capability out of a reply, with both halves still in hexadecimal.
@@ -144,7 +144,7 @@ pub const Capabilities = struct {
     /// The next capability, or null at the end of the reply.
     pub fn next(it: *Capabilities) ?Capability {
         if (it.rest.len == 0) return null;
-        const end = std.mem.indexOfScalar(u8, it.rest, ';') orelse it.rest.len;
+        const end = std.mem.findScalar(u8, it.rest, ';') orelse it.rest.len;
         const entry = it.rest[0..end];
         it.rest = if (end == it.rest.len) it.rest[end..] else it.rest[end + 1 ..];
         // Checked at parse time, which is what lets this be infallible.
@@ -188,7 +188,7 @@ pub fn parseCapabilityReply(bytes: []const u8) ?CapabilityReply {
     // rather than a silently skipped one.
     var scan = entries;
     while (scan.len != 0) {
-        const end = std.mem.indexOfScalar(u8, scan, ';') orelse scan.len;
+        const end = std.mem.findScalar(u8, scan, ';') orelse scan.len;
         _ = parseEntry(scan[0..end]) orelse return null;
         if (end == scan.len) break;
         scan = scan[end + 1 ..];
@@ -205,7 +205,7 @@ pub fn parseCapabilityReply(bytes: []const u8) ?CapabilityReply {
 /// are hex. Returns null for an empty name, odd-length hex, or a byte that is
 /// not a hex digit.
 fn parseEntry(entry: []const u8) ?Capability {
-    const split = std.mem.indexOfScalar(u8, entry, '=');
+    const split = std.mem.findScalar(u8, entry, '=');
     const name = if (split) |i| entry[0..i] else entry;
     if (name.len == 0 or !isHex(name)) return null;
     if (split) |i| {

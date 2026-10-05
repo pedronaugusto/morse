@@ -1535,7 +1535,7 @@ test "a style diffed against itself writes nothing" {
 }
 
 test "everything on and everything off again, in both directions" {
-    const everything = Style{
+    const everything: Style = .{
         .fg = .ansi(.red),
         .bg = .ansi(.bright_blue),
         .underline_color = .ansi(.green),
@@ -1920,7 +1920,7 @@ const fit_oracle = struct {
     /// The corpus: a 16-step grid of the cube of all colours, every grey and
     /// every pure ramp, each palette entry's own colour, and seeded random
     /// colours. Calls `check` on each.
-    fn each(context: anytype, comptime check: fn (@TypeOf(context), Rgb) anyerror!void) !void {
+    fn each(comptime check: anytype, context: anytype) !void {
         var r: u16 = 0;
         while (r < 256) : (r += 17) {
             var g: u16 = 0;
@@ -1953,7 +1953,7 @@ test "fit picks the palette entry and the slot anstyle-lossy picks, on the corpu
             try std.testing.expectEqual(fit_oracle.lossyAnsi(c, &fit_oracle.mocha), color.fit(.ansi, &fit_oracle.mocha).index());
         }
     };
-    try fit_oracle.each({}, Check.f);
+    try fit_oracle.each(Check.f, {});
 
     // The palette above the slots onto the slots: anstyle-lossy's
     // `xterm_to_ansi`, the entry's colour matched like any other.
@@ -1976,7 +1976,7 @@ test "fit is never farther than either entry termenv weighs, on the corpus" {
             }
         }
     };
-    try fit_oracle.each({}, Check.f);
+    try fit_oracle.each(Check.f, {});
 }
 
 test "fit writes each colour in the form the profile shows" {
@@ -2025,7 +2025,7 @@ test "fitting twice is fitting once, and the result is canonical" {
             }
         }
     };
-    try fit_oracle.each({}, Check.f);
+    try fit_oracle.each(Check.f, {});
 }
 
 test "no colour keeps the attributes" {

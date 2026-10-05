@@ -1071,7 +1071,7 @@ const Command = struct {
     fn get(c: Command, name: u8) ?[]const u8 {
         var rest = c.keys;
         while (rest.len != 0) {
-            const end = std.mem.indexOfScalar(u8, rest, ',') orelse rest.len;
+            const end = std.mem.findScalar(u8, rest, ',') orelse rest.len;
             const pair = rest[0..end];
             if (pair[0] == name) return pair[2..];
             rest = if (end == rest.len) rest[end..] else rest[end + 1 ..];
@@ -1093,7 +1093,7 @@ fn readCommand(bytes: []const u8) ?Command {
     rest = rest[1..];
 
     const body = seq.stripStringTerminator(rest) orelse return null;
-    const separator = std.mem.indexOfScalar(u8, body, ';');
+    const separator = std.mem.findScalar(u8, body, ';');
     const keys = if (separator) |i| body[0..i] else body;
     const payload = if (separator) |i| body[i + 1 ..] else body[body.len..];
 
@@ -1108,7 +1108,7 @@ fn validKeys(keys: []const u8) bool {
     var seen: u64 = 0;
     var rest = keys;
     while (true) {
-        const end = std.mem.indexOfScalar(u8, rest, ',') orelse rest.len;
+        const end = std.mem.findScalar(u8, rest, ',') orelse rest.len;
         const pair = rest[0..end];
         if (pair.len < 3 or pair[1] != '=') return false;
 
@@ -1772,8 +1772,8 @@ test "a frame with every key writes them in the documented order" {
 
 test "an animation command image cannot represent no image" {
     inline for (.{ Frame, Animate, Compose }) |CommandType| {
-        const Image = @FieldType(CommandType, "image");
-        try std.testing.expectEqual(@as(usize, 2), @typeInfo(Image).@"union".fields.len);
+        const image_type = @FieldType(CommandType, "image");
+        try std.testing.expectEqual(@as(usize, 2), @typeInfo(image_type).@"union".fields.len);
     }
 }
 

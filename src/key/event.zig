@@ -1,5 +1,6 @@
 //! Keys and their text, shared by stream and console decoders.
 const std = @import("std");
+const utf8 = @import("../utf8.zig");
 
 /// A key, either the codepoint it stands for or the name it goes by.
 ///
@@ -569,7 +570,7 @@ fn firstCodepoint(bytes: []const u8) ?u21 {
     if (bytes.len == 0) return null;
     const n = std.unicode.utf8ByteSequenceLength(bytes[0]) catch return null;
     if (bytes.len < n) return null;
-    return std.unicode.utf8Decode(bytes[0..n]) catch null;
+    return utf8.decode(bytes[0..n]) catch null;
 }
 
 test "protocolCode and protocolKey are one table read both ways" {

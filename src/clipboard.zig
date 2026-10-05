@@ -155,7 +155,7 @@ pub fn parseClipboardReply(bytes: []const u8) ?ClipboardReply {
 
     // The spec allows the selection field to name more than one selection, so
     // it is a run of selection bytes rather than a single one.
-    const separator = std.mem.indexOfScalar(u8, body, ';') orelse return null;
+    const separator = std.mem.findScalar(u8, body, ';') orelse return null;
     const selections = body[0..separator];
     if (selections.len == 0) return null;
     for (selections) |c| {

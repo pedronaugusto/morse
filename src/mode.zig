@@ -762,7 +762,7 @@ const MouseModel = struct {
     }
 
     fn isMotion(mode: u16) bool {
-        return std.mem.indexOfScalar(u16, &motion_modes, mode) != null;
+        return std.mem.findScalar(u16, &motion_modes, mode) != null;
     }
 
     fn apply(model: *MouseModel, bytes: []const u8) !void {
@@ -999,7 +999,7 @@ test "every pointer shape has a name, and only the hyphenated ones differ" {
         seen += 1;
         try std.testing.expect(shape.name().len != 0);
         // A hyphenated name is not the tag, and a one-word name is.
-        const hyphenated = std.mem.indexOfScalar(u8, shape.name(), '-') != null;
+        const hyphenated = std.mem.findScalar(u8, shape.name(), '-') != null;
         try std.testing.expectEqual(hyphenated, !std.mem.eql(u8, shape.name(), @tagName(shape)));
     }
     try std.testing.expectEqual(@as(usize, 14), seen);
@@ -1071,11 +1071,11 @@ test "no writer here puts two modes in one sequence" {
 
     var rest = out.written();
     var count: usize = 0;
-    while (std.mem.indexOf(u8, rest, seq.csi ++ "?")) |at| : (count += 1) {
+    while (std.mem.find(u8, rest, seq.csi ++ "?")) |at| : (count += 1) {
         const body = rest[at + 3 ..];
         const end = std.mem.indexOfAny(u8, body, "hl").?;
         // One mode number and nothing else: no `;`, no second parameter.
-        try std.testing.expect(std.mem.indexOfScalar(u8, body[0..end], ';') == null);
+        try std.testing.expect(std.mem.findScalar(u8, body[0..end], ';') == null);
         rest = body[end + 1 ..];
     }
     try std.testing.expectEqual(@as(usize, 11), count);
@@ -1094,4 +1094,10 @@ test "the setMode cost is the length setMode writes, for every mode" {
     var w: Writer = .fixed(&buffer);
     try unicodeCore.set(&w, false);
     try std.testing.expectEqual(w.buffered().len, cost.setMode(unicodeCore.number, false));
+}
+
+comptime {
+    std.debug.assert(@bitSizeOf(Mouse.Motion) == 16);
+    std.debug.assert(@bitSizeOf(Mouse.Encoding) == 16);
+    std.debug.assert(@bitSizeOf(Mouse) == 32);
 }

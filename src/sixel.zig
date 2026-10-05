@@ -392,7 +392,7 @@ fn written(buffer: []u8, image: Sixel) ![]const u8 {
 fn draw(bytes: []const u8, width: u32, height: u32, grid: []u16, palette: []Rgb) !void {
     @memset(grid, Block.undrawn);
     if (!std.mem.startsWith(u8, bytes, "\x1bP") or !std.mem.endsWith(u8, bytes, "\x1b\\")) return error.NotSixel;
-    var i = (std.mem.indexOfScalar(u8, bytes, 'q') orelse return error.NotSixel) + 1;
+    var i = (std.mem.findScalar(u8, bytes, 'q') orelse return error.NotSixel) + 1;
     const end = bytes.len - 2;
     var x: u32 = 0;
     var band: u32 = 0;

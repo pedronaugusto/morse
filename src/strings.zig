@@ -20,7 +20,7 @@ pub fn checkText(text: []const u8) error{ControlInText}!void {
 /// clean, and a refusal leaves the buffer's contents as they were. Without
 /// that room the checked parts are read first and everything is then handed
 /// to the writer together.
-pub inline fn writeChecked(w: *Writer, comptime checked: []const bool, parts: [checked.len][]const u8) Error!void {
+pub inline fn writeChecked(comptime checked: []const bool, w: *Writer, parts: [checked.len][]const u8) Error!void {
     var total: usize = 0;
     inline for (parts) |part| total += part.len;
     if (w.unusedCapacityLen() >= total) {
@@ -82,13 +82,13 @@ fn scan(comptime copy: bool, dest: []u8, text: []const u8) bool {
 
 /// `scan` over `text`, which is at least `block_len` long.
 fn scanBlocks(comptime block_len: usize, comptime copy: bool, dest: []u8, text: []const u8) bool {
-    const Block = @Vector(block_len, u8);
-    const space: Block = @splat(0x20);
-    const del: Block = @splat(0x7f);
+    const block_type = @Vector(block_len, u8);
+    const space: block_type = @splat(0x20);
+    const del: block_type = @splat(0x7f);
     var any: @Vector(block_len, bool) = @splat(false);
     var i: usize = 0;
     while (i + block_len <= text.len) : (i += block_len) {
-        const block: Block = text[i..][0..block_len].*;
+        const block: block_type = text[i..][0..block_len].*;
         if (copy) dest[i..][0..block_len].* = block;
         any = any | (block < space) | (block == del);
     }
@@ -96,7 +96,7 @@ fn scanBlocks(comptime block_len: usize, comptime copy: bool, dest: []u8, text: 
         // The last block overlaps the one before it, and so does its store:
         // the overlapping bytes are written twice, with the same values.
         const last = text.len - block_len;
-        const block: Block = text[last..][0..block_len].*;
+        const block: block_type = text[last..][0..block_len].*;
         if (copy) dest[last..][0..block_len].* = block;
         any = any | (block < space) | (block == del);
     }
@@ -176,7 +176,7 @@ test "writeChecked writes every part, or nothing when a checked part holds a con
             var small: Writer = .fixed(&tight);
             try small.writeAll("ok");
             inline for (.{ &roomy, &small }) |w| {
-                const result = writeChecked(w, &.{ false, true, false }, .{ "<", text[0..len], ">" });
+                const result = writeChecked(&.{ false, true, false }, w, .{ "<", text[0..len], ">" });
                 if (refused) {
                     try std.testing.expectError(error.ControlInText, result);
                     try std.testing.expectEqualStrings("ok", w.buffered());

@@ -67,7 +67,8 @@ pub fn write(w: *Writer, bytes: []const u8) Writer.Error!void {
 /// Encodes `src`, whole groups of three bytes, into `dest`, four characters
 /// for each. The standard library's encoder reads twelve bytes at a time.
 fn encodeGroups(dest: []u8, src: []const u8) void {
-    std.debug.assert(src.len % 3 == 0 and dest.len == src.len / 3 * 4);
+    std.debug.assert(src.len % 3 == 0);
+    std.debug.assert(dest.len == src.len / 3 * 4);
     _ = std.base64.standard.Encoder.encode(dest, src);
 }
 
@@ -92,6 +93,7 @@ pub fn isValid(data: []const u8) bool {
             if (index[c] == invalid) return false;
         }
     }
+    std.debug.assert(padding <= 2);
     return switch (padding) {
         0 => true,
         1 => index[data[data.len - 2]] & 0x03 == 0,
@@ -104,6 +106,7 @@ pub fn isValid(data: []const u8) bool {
 ///
 /// Exact, not an upper bound, and it assumes `isValid(data)`.
 pub fn decodedLen(data: []const u8) usize {
+    std.debug.assert(isValid(data));
     std.debug.assert(data.len % 4 == 0);
     if (data.len == 0) return 0;
     var padding: usize = 0;
@@ -134,6 +137,8 @@ pub fn decode(data: []const u8, out: []u8) error{NoSpaceLeft}![]u8 {
             out[written] = @truncate(accumulator >> @intCast(bits));
             written += 1;
         }
+        std.debug.assert(bits < 8);
+        std.debug.assert(written <= len);
     }
     std.debug.assert(written == len);
     return out[0..len];
@@ -246,4 +251,10 @@ test "a writer with no room left reports the failure" {
     var buffer: [2]u8 = undefined;
     var w: Writer = .fixed(&buffer);
     try std.testing.expectError(error.WriteFailed, write(&w, "hi"));
+}
+
+comptime {
+    std.debug.assert(alphabet.len == 64);
+    std.debug.assert(index.len == 256);
+    for (alphabet, 0..) |char, i| std.debug.assert(index[char] == i);
 }

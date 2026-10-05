@@ -17,8 +17,10 @@
 //! the one-call form for a string already whole.
 
 const std = @import("std");
+const utf8 = @import("utf8.zig");
 const framing = @import("framing.zig");
 const seq = @import("seq.zig");
+const corpus = @import("testing/corpus.zig");
 
 const Writer = std.Io.Writer;
 
@@ -141,8 +143,6 @@ pub const Stripper = struct {
         }
     }
 
-    /// Ends the output. A sequence still open is dropped, as a terminal
-    /// drops one; a codepoint cut short is written as the bytes it was.
     fn assertValid(s: *const Stripper) void {
         std.debug.assert(s.held_len <= s.held.len);
         if (s.held_len != 0) {
@@ -151,6 +151,8 @@ pub const Stripper = struct {
         }
     }
 
+    /// Ends the output. A sequence still open is dropped, as a terminal
+    /// drops one; a codepoint cut short is written as the bytes it was.
     pub fn finish(s: *Stripper, w: *Writer) Writer.Error!void {
         s.assertValid();
         defer s.assertValid();
@@ -239,11 +241,11 @@ pub const Stripper = struct {
 fn plainRun(bytes: []const u8) usize {
     var i: usize = 0;
     if (std.simd.suggestVectorLength(u8)) |n| {
-        const Block = @Vector(n, u8);
-        const esc: Block = @splat(seq.esc);
-        const high: Block = @splat(0x80);
+        const block_type = @Vector(n, u8);
+        const esc: block_type = @splat(seq.esc);
+        const high: block_type = @splat(0x80);
         while (i + n <= bytes.len) : (i += n) {
-            const block: Block = bytes[i..][0..n].*;
+            const block: block_type = bytes[i..][0..n].*;
             const stop = (block == esc) | (block >= high);
             if (@reduce(.Or, stop)) break;
         }
@@ -273,7 +275,7 @@ fn codepoint(bytes: []const u8) Codepoint {
         for (bytes[1..]) |b| if (b & 0xc0 != 0x80) return .invalid;
         return .partial;
     }
-    const cp = std.unicode.utf8Decode(bytes[0..n]) catch return .invalid;
+    const cp = utf8.decode(bytes[0..n]) catch return .invalid;
     if (cp >= 0x80 and cp <= 0x9f) return .{ .control = n };
     return .{ .text = n };
 }
@@ -398,13 +400,13 @@ test "fuzz Stripper" {
     // The properties: no input panics; the text never grows; it holds no
     // ESC; and any split of the input strips to what the whole of it does.
     try testing.fuzz({}, struct {
-        fn one_(_: void, smith: *testing.Smith) anyerror!void {
+        fn one(_: void, smith: *testing.Smith) anyerror!void {
             var input: [256]u8 = undefined;
             const bytes = input[0..smith.sliceWithHash(&input, 0)];
             var whole: [256]u8 = undefined;
             const expected = try strip(&whole, bytes);
             try testing.expect(expected.len <= bytes.len);
-            try testing.expect(std.mem.indexOfScalar(u8, expected, seq.esc) == null);
+            try testing.expect(std.mem.findScalar(u8, expected, seq.esc) == null);
             const cut = if (bytes.len == 0) 0 else smith.value(u8) % (bytes.len + 1);
             var out: [256]u8 = undefined;
             var w: Writer = .fixed(&out);
@@ -414,9 +416,9 @@ test "fuzz Stripper" {
             try s.finish(&w);
             try testing.expectEqualStrings(expected, w.buffered());
         }
-    }.one_, .{ .corpus = &.{
-        @import("testing/corpus.zig").seed("\x1b[1mbold\x1b[0m"),
-        @import("testing/corpus.zig").seed("\x1b]8;;u\x1b\\t\x1b]8;;\x1b\\"),
-        @import("testing/corpus.zig").seed("\u{9b}\xc2\x9b\x9b\xe2\x82"),
+    }.one, .{ .corpus = &.{
+        corpus.seed("\x1b[1mbold\x1b[0m"),
+        corpus.seed("\x1b]8;;u\x1b\\t\x1b]8;;\x1b\\"),
+        corpus.seed("\u{9b}\xc2\x9b\x9b\xe2\x82"),
     } });
 }

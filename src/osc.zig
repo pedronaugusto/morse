@@ -23,7 +23,7 @@ const Writer = std.Io.Writer;
 /// C0 controls and DEL in `text` return `error.ControlInText` before
 /// anything is written. Ordinary text, including UTF-8, is unchanged.
 pub fn title(w: *Writer, text: []const u8) strings.Error!void {
-    try strings.writeChecked(w, &.{ false, true, false }, .{ seq.osc ++ "2;", text, &.{seq.bel} });
+    try strings.writeChecked(&.{ false, true, false }, w, .{ seq.osc ++ "2;", text, &.{seq.bel} });
 }
 
 /// Sets the icon name: `OSC 1 ; text BEL`.
@@ -36,7 +36,7 @@ pub fn title(w: *Writer, text: []const u8) strings.Error!void {
 ///
 /// Like `title`, refuses C0 controls and DEL before writing any bytes.
 pub fn iconName(w: *Writer, text: []const u8) strings.Error!void {
-    try strings.writeChecked(w, &.{ false, true, false }, .{ seq.osc ++ "1;", text, &.{seq.bel} });
+    try strings.writeChecked(&.{ false, true, false }, w, .{ seq.osc ++ "1;", text, &.{seq.bel} });
 }
 
 /// Pushes the window title onto the terminal's title stack:
@@ -78,7 +78,7 @@ pub fn titlePop(w: *Writer) Writer.Error!void {
 /// A shell is the usual writer of this; a program that changes directory on
 /// the user's behalf is the other one.
 pub fn workingDirectory(w: *Writer, uri: []const u8) strings.Error!void {
-    try strings.writeChecked(w, &.{ false, true, false }, .{ seq.osc ++ "7;", uri, seq.st });
+    try strings.writeChecked(&.{ false, true, false }, w, .{ seq.osc ++ "7;", uri, seq.st });
 }
 
 /// Opens a hyperlink: every cell written until the matching `hyperlinkEnd`
@@ -91,7 +91,7 @@ pub fn workingDirectory(w: *Writer, uri: []const u8) strings.Error!void {
 /// Percent-encode the URI as the spec requires; params must use its grammar,
 /// which has no `;`, or `parseHyperlink` reads them back cut at it.
 pub fn hyperlinkStart(w: *Writer, uri: []const u8, params: ?[]const u8) strings.Error!void {
-    try strings.writeChecked(w, &hyperlink_start_checked, hyperlinkStartParts(uri, params));
+    try strings.writeChecked(&hyperlink_start_checked, w, hyperlinkStartParts(uri, params));
 }
 
 /// The bytes of `hyperlinkStart`, once its fields are known to be clean, into
@@ -131,7 +131,7 @@ fn spellHyperlinkEnd(w: anytype) !void {
 /// `hyperlinkEnd`. C0 controls and DEL in either field are refused before
 /// writing. Text keeps the attributes set before the call.
 pub fn hyperlink(w: *Writer, text: []const u8, uri: []const u8) strings.Error!void {
-    try strings.writeChecked(w, &hyperlink_checked, hyperlinkParts(text, uri));
+    try strings.writeChecked(&hyperlink_checked, w, hyperlinkParts(text, uri));
 }
 
 /// The bytes of `hyperlink`, into a `*Writer` or a `*seq.Count`: the parts
@@ -306,7 +306,7 @@ pub fn parseHyperlink(body: []const u8) ?Hyperlink {
     const prefix = "8;";
     if (!std.mem.startsWith(u8, body, prefix)) return null;
     const rest = body[prefix.len..];
-    const split = std.mem.indexOfScalar(u8, rest, ';') orelse return null;
+    const split = std.mem.findScalar(u8, rest, ';') orelse return null;
     return .{ .params = rest[0..split], .uri = rest[split + 1 ..] };
 }
 
@@ -332,7 +332,7 @@ pub fn parseTextSize(body: []const u8) ?SizedText {
     const prefix = "66;";
     if (!std.mem.startsWith(u8, body, prefix)) return null;
     const rest = body[prefix.len..];
-    const split = std.mem.indexOfScalar(u8, rest, ';') orelse return null;
+    const split = std.mem.findScalar(u8, rest, ';') orelse return null;
     const metadata = rest[0..split];
 
     var size: TextSize = .{};
@@ -482,9 +482,9 @@ test "every size the keys can spell round trips through the grammar" {
                 // Zero and one are both the base size, written as neither.
                 if (want.scale == 0) want.scale = 1;
                 try std.testing.expectEqual(want, read.size);
-                try std.testing.expectEqual(scale > 1, std.mem.indexOf(u8, out.written(), "s=") != null);
-                try std.testing.expectEqual(width != 0, std.mem.indexOf(u8, out.written(), "w=") != null);
-                try std.testing.expectEqual(vertical != .top, std.mem.indexOf(u8, out.written(), "v=") != null);
+                try std.testing.expectEqual(scale > 1, std.mem.find(u8, out.written(), "s=") != null);
+                try std.testing.expectEqual(width != 0, std.mem.find(u8, out.written(), "w=") != null);
+                try std.testing.expectEqual(vertical != .top, std.mem.find(u8, out.written(), "v=") != null);
             }
             if (width == 7) break;
         }

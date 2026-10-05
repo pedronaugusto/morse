@@ -531,7 +531,7 @@ test "a field turned off leaves exactly that question out" {
         whole.written().len - only.written().len,
         without.written().len,
     );
-    try std.testing.expect(std.mem.indexOf(u8, without.written(), only.written()) == null);
+    try std.testing.expect(std.mem.find(u8, without.written(), only.written()) == null);
 }
 
 test "matches routes every answer to the question that asked it" {
@@ -700,7 +700,7 @@ test "the probe asks the colour count and routes its answer or refusal" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     try (Probe{ .graphics_id = 31 }).write(&out.writer);
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\x1bP+q436f\x1b\\") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\x1bP+q436f\x1b\\") != null);
 
     for ([_][]const u8{ "\x1bP1+r436f=323536\x1b\\", "\x1bP0+r436f\x1b\\" }) |bytes| {
         var storage: [128]u8 = undefined;
@@ -718,5 +718,5 @@ test "a disabled colour count leaves its query out" {
     const probe: Probe = .{ .graphics_id = 31, .color_count = false };
     try probe.write(&out.writer);
     try std.testing.expect(!probe.asks(.color_count));
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\x1bP+q436f\x1b\\") == null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\x1bP+q436f\x1b\\") == null);
 }

@@ -127,14 +127,14 @@ fn writeKeys(w: anytype, file: ItermFile, size: usize) !void {
         try w.writeAll(";name=");
         try writeBase64(w, name);
     }
-    try writeSize(w, "width", file.width);
-    try writeSize(w, "height", file.height);
+    try writeSize("width", w, file.width);
+    try writeSize("height", w, file.height);
     if (!file.preserve_aspect_ratio) try w.writeAll(";preserveAspectRatio=0");
     if (file.inline_image) try w.writeAll(";inline=1");
     if (file.do_not_move_cursor) try w.writeAll(";doNotMoveCursor=1");
 }
 
-fn writeSize(w: anytype, comptime key: []const u8, size: ItermSize) !void {
+fn writeSize(comptime key: []const u8, w: anytype, size: ItermSize) !void {
     const value, const unit = switch (size) {
         .auto => return,
         .cells => |n| .{ n, "" },
@@ -209,9 +209,9 @@ test "a multipart file joins its pieces into the file's base64" {
     var joined: [64]u8 = undefined;
     var n: usize = 0;
     var rest = w.buffered();
-    while (std.mem.indexOf(u8, rest, "FilePart=")) |at| {
+    while (std.mem.find(u8, rest, "FilePart=")) |at| {
         rest = rest[at + "FilePart=".len ..];
-        const end = std.mem.indexOf(u8, rest, "\x1b\\").?;
+        const end = std.mem.find(u8, rest, "\x1b\\").?;
         @memcpy(joined[n..][0..end], rest[0..end]);
         n += end;
     }

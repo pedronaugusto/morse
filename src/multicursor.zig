@@ -332,7 +332,7 @@ pub fn parseExtraCursorSupport(bytes: []const u8) ?ExtraCursorSupport {
 
     var rest = body;
     while (true) {
-        const end = std.mem.indexOfScalar(u8, rest, ';') orelse rest.len;
+        const end = std.mem.findScalar(u8, rest, ';') orelse rest.len;
         const scan = seq.scanParam(u32, rest[0..end], 0) orelse return null;
         if (scan.len != end) return null;
         switch (scan.value) {
@@ -438,7 +438,7 @@ pub const ExtraCursors = struct {
     /// Moves to the next block, or reports that there is none.
     fn advance(it: *ExtraCursors) bool {
         if (it.rest.len == 0) return false;
-        const end = std.mem.indexOfScalar(u8, it.rest, ';') orelse it.rest.len;
+        const end = std.mem.findScalar(u8, it.rest, ';') orelse it.rest.len;
         var block = it.rest[0..end];
         it.rest = if (end == it.rest.len) it.rest[end..] else it.rest[end + 1 ..];
 
@@ -478,14 +478,14 @@ pub const ExtraCursors = struct {
 pub fn parseExtraCursors(bytes: []const u8) ?ExtraCursorReport {
     const body = stripSequence(bytes) orelse return null;
 
-    const first = std.mem.indexOfScalar(u8, body, ';') orelse body.len;
+    const first = std.mem.findScalar(u8, body, ';') orelse body.len;
     if (!std.mem.eql(u8, body[0..first], "100")) return null;
     if (first == body.len) return .{ .blocks = body[body.len..] };
 
     const blocks = body[first + 1 ..];
     var rest = blocks;
     while (true) {
-        const end = std.mem.indexOfScalar(u8, rest, ';') orelse rest.len;
+        const end = std.mem.findScalar(u8, rest, ';') orelse rest.len;
         if (!validBlock(rest[0..end])) return null;
         if (end == rest.len) break;
         rest = rest[end + 1 ..];
@@ -539,7 +539,7 @@ pub fn parseExtraCursorColors(bytes: []const u8) ?ExtraCursorColors {
     if (!std.mem.startsWith(u8, body, "101;")) return null;
 
     const rest = body[4..];
-    const separator = std.mem.indexOfScalar(u8, rest, ';') orelse return null;
+    const separator = std.mem.findScalar(u8, rest, ';') orelse return null;
     const text = scanColor(rest[0..separator], 30) orelse return null;
     const cursor = scanColor(rest[separator + 1 ..], 40) orelse return null;
     return .{ .text = text, .cursor = cursor };
@@ -853,8 +853,8 @@ test "the writer and the reader agree on the order of every co-ordinate" {
         try std.testing.expect(read.next() == null);
 
         // And the set sequence carries the same numbers in the same order.
-        try std.testing.expect(std.mem.indexOf(u8, out.written(), ":1:1:40:120") != null);
-        try std.testing.expect(std.mem.indexOf(u8, out.written(), ":2:3:4:5") != null);
+        try std.testing.expect(std.mem.find(u8, out.written(), ":1:1:40:120") != null);
+        try std.testing.expect(std.mem.find(u8, out.written(), ":2:3:4:5") != null);
     }
 }
 
