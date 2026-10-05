@@ -3670,7 +3670,7 @@ fn keyCorpus(context: anytype, comptime visit: fn (@TypeOf(context), []const u8)
     var buffer: [96]u8 = undefined;
     const Print = struct {
         fn go(b: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
-            return std.fmt.bufPrint(b, fmt, args) catch unreachable;
+            return std.fmt.bufPrint(b, fmt, args) catch unreachable; // unreachable: the corpus uses a 96-byte buffer for bounded numeric key sequences
         }
     };
 

@@ -235,11 +235,12 @@ fn isHex(text: []const u8) bool {
 /// parsed must hold the same thing.
 fn decodeHex(hex: []const u8, out: []u8) error{NoSpaceLeft}![]u8 {
     std.debug.assert(hex.len % 2 == 0);
+    for (hex) |digit| std.debug.assert(std.ascii.isHex(digit));
     const len = hex.len / 2;
     if (out.len < len) return error.NoSpaceLeft;
     for (0..len) |i| {
-        const high = std.fmt.charToDigit(hex[i * 2], 16) catch unreachable;
-        const low = std.fmt.charToDigit(hex[i * 2 + 1], 16) catch unreachable;
+        const high = std.fmt.charToDigit(hex[i * 2], 16) catch unreachable; // unreachable: hex digits are checked below and by parseCapabilityReply
+        const low = std.fmt.charToDigit(hex[i * 2 + 1], 16) catch unreachable; // unreachable: hex digits are checked below and by parseCapabilityReply
         out[i] = @as(u8, high) * 16 + low;
     }
     return out[0..len];

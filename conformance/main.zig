@@ -1748,7 +1748,7 @@ fn keyPair(case: KeyCase, pair: *KeyPair) void {
             // What the key types with shift as held: the text a terminal
             // reads off the layout, whatever else is held.
             const typed = if (case.mods.shift) usShifted(c) orelse c else c;
-            const n = std.unicode.utf8Encode(typed, &pair.utf8) catch unreachable;
+            const n = std.unicode.utf8Encode(typed, &pair.utf8) catch unreachable; // unreachable: the fixture key and its US shifted form are Unicode scalars
             theirs.utf8 = pair.utf8[0..n];
             theirs.unshifted_codepoint = c;
             theirs.consumed_mods = .{ .shift = case.mods.shift };
@@ -1962,7 +1962,8 @@ const Printed = struct {
     len: usize = 0,
 
     fn put(p: *Printed, cp: u21) void {
-        p.len += std.unicode.utf8Encode(cp, p.out[p.len..]) catch unreachable;
+        std.debug.assert(p.len + 4 <= p.out.len);
+        p.len += std.unicode.utf8Encode(cp, p.out[p.len..]) catch unreachable; // unreachable: the emulator emits Unicode scalar values
     }
 
     pub fn vt(p: *Printed, comptime action: StreamAction.Tag, value: StreamAction.Value(action)) void {

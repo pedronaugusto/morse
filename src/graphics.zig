@@ -895,8 +895,9 @@ pub fn placeholderCell(w: *Writer, row: u16, col: u16, id_top: u8) Writer.Error!
 
 /// Writes one codepoint as UTF-8.
 fn writeCodepoint(w: *Writer, cp: u21) Writer.Error!void {
+    std.debug.assert(std.unicode.utf8ValidCodepoint(cp));
     var buffer: [4]u8 = undefined;
-    const len = std.unicode.utf8Encode(cp, &buffer) catch unreachable;
+    const len = std.unicode.utf8Encode(cp, &buffer) catch unreachable; // unreachable: all callers pass the scalar placeholder or entries of the validated diacritic table
     try w.writeAll(buffer[0..len]);
 }
 
@@ -2438,4 +2439,10 @@ test "fuzz parseGraphicsResponse" {
         corpus.seed("\x1b_Gi=1,;OK\x1b\\"),
         corpus.seed("\x1b_Gi=31;OK"),
     } });
+}
+
+comptime {
+    std.debug.assert(diacritics.len >= 256);
+    std.debug.assert(std.unicode.utf8ValidCodepoint(placeholder));
+    for (diacritics) |cp| std.debug.assert(std.unicode.utf8ValidCodepoint(cp));
 }

@@ -55,13 +55,16 @@ pub const Stripper = struct {
     /// control. A sequence or codepoint the end of `bytes` cuts is finished
     /// by the next call.
     pub fn feed(s: *Stripper, w: *Writer, bytes: []const u8) Writer.Error!void {
+        s.assertValid();
+        defer s.assertValid();
         var i: usize = 0;
         // A codepoint the last piece cut: complete it first.
         if (s.held_len != 0) {
             var joined: [4]u8 = undefined;
             const held = s.held[0..s.held_len];
             @memcpy(joined[0..held.len], held);
-            const need = std.unicode.utf8ByteSequenceLength(held[0]) catch unreachable;
+            const need = std.unicode.utf8ByteSequenceLength(held[0]) catch unreachable; // unreachable: held is written only from a prefix accepted by codepoint
+            std.debug.assert(held.len < need);
             const take = @min(need - held.len, bytes.len);
             @memcpy(joined[held.len..][0..take], bytes[0..take]);
             const have = held.len + take;
@@ -140,7 +143,17 @@ pub const Stripper = struct {
 
     /// Ends the output. A sequence still open is dropped, as a terminal
     /// drops one; a codepoint cut short is written as the bytes it was.
+    fn assertValid(s: *const Stripper) void {
+        std.debug.assert(s.held_len <= s.held.len);
+        if (s.held_len != 0) {
+            std.debug.assert(s.state == .text);
+            std.debug.assert(codepoint(s.held[0..s.held_len]) == .partial);
+        }
+    }
+
     pub fn finish(s: *Stripper, w: *Writer) Writer.Error!void {
+        s.assertValid();
+        defer s.assertValid();
         const held = s.held;
         const len = s.held_len;
         s.* = .{};
@@ -274,8 +287,9 @@ pub fn strip(out: []u8, text: []const u8) error{NoSpaceLeft}![]u8 {
     if (out.len < text.len) return error.NoSpaceLeft;
     var w: Writer = .fixed(out);
     var s: Stripper = .{};
-    s.feed(&w, text) catch unreachable;
-    s.finish(&w) catch unreachable;
+    s.feed(&w, text) catch unreachable; // unreachable: stripping only removes bytes and out is at least text.len bytes
+    s.finish(&w) catch unreachable; // unreachable: the retained prefix is part of text and stripping cannot expand it
+    std.debug.assert(w.end <= text.len);
     return w.buffered();
 }
 

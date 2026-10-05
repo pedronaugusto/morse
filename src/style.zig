@@ -2145,15 +2145,17 @@ const oracle = struct {
     fn diff(w: *Writer, from: Style, to: Style) Writer.Error!void {
         var scratch: [max_sequence]u8 = undefined;
         var delta: Writer.Discarding = .init(&scratch);
-        const turned_off = writeSgr(&delta.writer, from, to, false) catch unreachable;
+        const turned_off = writeSgr(&delta.writer, from, to, false) catch unreachable; // unreachable: Discarding accepts and counts every byte without a failing drain
         const difference = delta.fullCount();
+        std.debug.assert(difference <= max_sequence);
         if (difference == 0) return;
         if (!turned_off) {
             _ = try writeSgr(w, from, to, false);
             return;
         }
         var whole: Writer.Discarding = .init(&scratch);
-        _ = writeSgr(&whole.writer, from, to, true) catch unreachable;
+        _ = writeSgr(&whole.writer, from, to, true) catch unreachable; // unreachable: Discarding accepts and counts every byte without a failing drain
+        std.debug.assert(whole.fullCount() <= max_sequence);
         _ = try writeSgr(w, from, to, whole.fullCount() < difference);
     }
 
