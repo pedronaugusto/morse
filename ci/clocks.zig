@@ -38,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
             const name = text[token.loc.start..token.loc.end];
             if (token.tag != .identifier or !clockName(name)) continue;
             const line = 1 + std.mem.count(u8, text[0..token.loc.start], "\n");
-            std.debug.print("src/{s}:{d}: {s}: clocks belong on the bench branch\n", .{ entry.path, line, name });
+            std.log.err("src/{s}:{d}: {s}: clocks belong on the bench branch\n", .{ entry.path, line, name });
             found += 1;
         }
     }

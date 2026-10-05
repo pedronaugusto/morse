@@ -2137,7 +2137,7 @@ test "undecided is true exactly when flush would settle a key" {
         const settled = parser.flush();
         const key = if (settled) |event| event == .key else false;
         std.testing.expectEqual(key, undecided) catch |err| {
-            std.debug.print("pending {f}\n", .{std.ascii.hexEscape(input, .lower)});
+            std.log.err("pending {f}\n", .{std.ascii.hexEscape(input, .lower)});
             return err;
         };
     }
@@ -3766,11 +3766,11 @@ const RoundTrip = struct {
             var again: [4]KeyEvent = undefined;
             const back = decodeKeys(w.buffered(), &again);
             std.testing.expectEqual(@as(usize, 1), back.len) catch |err| {
-                std.debug.print("{any} from {any} wrote {any}\n", .{ k, bytes, w.buffered() });
+                std.log.err("{any} from {any} wrote {any}\n", .{ k, bytes, w.buffered() });
                 return err;
             };
             std.testing.expectEqual(k, back[0]) catch |err| {
-                std.debug.print("{any} from {any} wrote {any}\n", .{ k, bytes, w.buffered() });
+                std.log.err("{any} from {any} wrote {any}\n", .{ k, bytes, w.buffered() });
                 return err;
             };
         }
@@ -3807,7 +3807,7 @@ const Projection = struct {
             var w2: std.Io.Writer = .fixed(&second);
             try key_encode.encodeKey(&w2, back[0], pr.enc);
             std.testing.expectEqualStrings(w.buffered(), w2.buffered()) catch |err| {
-                std.debug.print("{any}: {any} -> {any} -> {any}\n", .{ pr.enc, k, w.buffered(), back[0] });
+                std.log.err("{any}: {any} -> {any} -> {any}\n", .{ pr.enc, k, w.buffered(), back[0] });
                 return err;
             };
         }

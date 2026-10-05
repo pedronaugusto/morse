@@ -10,7 +10,10 @@
 const std = @import("std");
 const morse = @import("morse");
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    var display_buffer: [4096]u8 = undefined;
+    var display = std.Io.File.stdout().writer(init.io, &display_buffer);
+    const output = &display.interface;
     // --- README:usage ---
 
     // Any `*std.Io.Writer` will do -- a buffered writer over stdout is the
@@ -140,35 +143,35 @@ pub fn main() !void {
     );
     while (events.next()) |event| switch (event) {
         // A key, and whatever text the terminal said it produced.
-        .key => |key| std.debug.print("key:        {s}{t} {s}\n", .{
+        .key => |key| try output.print("key:        {s}{t} {s}\n", .{
             if (key.mods.ctrl) "ctrl+" else "",
             key.key,
             key.text(),
         }),
         // A run of printable text -- pasted, or typed faster than a read.
         // One event and a borrowed slice, not one `KeyEvent` per character.
-        .text => |text| std.debug.print("text:       {s}\n", .{text}),
+        .text => |text| try output.print("text:       {s}\n", .{text}),
         // The mouse, read: which button, where, and which modifiers.
-        .mouse => |click| std.debug.print(
+        .mouse => |click| try output.print(
             "click:      {s} at {d},{d}\n",
             .{ @tagName(click.button), click.x, click.y },
         ),
         // An answer to a question, read. `probeAnswered` says which question
         // of a probe it answers, so routing is a lookup, not a parse.
         .reply => |reply| switch (reply) {
-            .device_attributes => |da| std.debug.print("terminal:   class {d}\n", .{da.class}),
+            .device_attributes => |da| try output.print("terminal:   class {d}\n", .{da.class}),
             else => {},
         },
         // Framed, and not a key or an answer: an OSC nobody asked for.
         .unhandled => {},
         // A terminal asked for in-band resize says so here rather than
         // through a signal.
-        .resize => |size| std.debug.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),
+        .resize => |size| try output.print("resize:     {d}x{d}\n", .{ size.cols, size.rows }),
         // A terminal in mode 2031 says so when the user's theme flips.
-        .color_scheme => |scheme| std.debug.print("scheme:     {t}\n", .{scheme}),
+        .color_scheme => |scheme| try output.print("scheme:     {t}\n", .{scheme}),
         // A reply longer than the buffer: said, never turned into the keys
         // its bytes look like. Size the buffer for the answers you ask for.
-        .overflow => |bytes| std.debug.print("dropped:    {d} bytes\n", .{bytes}),
+        .overflow => |bytes| try output.print("dropped:    {d} bytes\n", .{bytes}),
         .paste_start, .paste_end, .focus_in, .focus_out => {},
     };
 
@@ -220,25 +223,26 @@ pub fn main() !void {
     try morse.altScreen.set(w, false);
     // --- README:usage ---
 
-    std.debug.print("escape:     {t}\n", .{escape.key.key});
-    std.debug.print("mode 2026:  {s}\n", .{@tagName(mode.state)});
-    std.debug.print("cursor:     row {d}, col {d}\n", .{ position.row, position.col });
-    std.debug.print("background: {any}\n", .{background.color.to8()});
-    std.debug.print("colours:    {s}\n", .{color_count});
-    std.debug.print("pixel 321,97 in 8x16 cells: {d},{d}\n", .{ cell.x, cell.y });
-    std.debug.print("wrote {d} bytes:\n  ", .{out.end});
-    printEscaped(out.buffered());
+    try output.print("escape:     {t}\n", .{escape.key.key});
+    try output.print("mode 2026:  {s}\n", .{@tagName(mode.state)});
+    try output.print("cursor:     row {d}, col {d}\n", .{ position.row, position.col });
+    try output.print("background: {any}\n", .{background.color.to8()});
+    try output.print("colours:    {s}\n", .{color_count});
+    try output.print("pixel 321,97 in 8x16 cells: {d},{d}\n", .{ cell.x, cell.y });
+    try output.print("wrote {d} bytes:\n  ", .{out.end});
+    try printEscaped(output, out.buffered());
+    try output.flush();
 }
 
 /// The bytes of a sequence, with the controls spelled out, so the example's
 /// output is readable in a CI log.
-fn printEscaped(bytes: []const u8) void {
+fn printEscaped(output: *std.Io.Writer, bytes: []const u8) std.Io.Writer.Error!void {
     for (bytes) |byte| {
         switch (byte) {
-            0x1b => std.debug.print("<ESC>", .{}),
-            0x07 => std.debug.print("<BEL>", .{}),
-            else => std.debug.print("{c}", .{byte}),
+            0x1b => try output.print("<ESC>", .{}),
+            0x07 => try output.print("<BEL>", .{}),
+            else => try output.print("{c}", .{byte}),
         }
     }
-    std.debug.print("\n", .{});
+    try output.print("\n", .{});
 }

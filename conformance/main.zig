@@ -565,7 +565,7 @@ fn checkStyle(v: *Vt, style: morse.Style) !void {
     checks += 1;
     const actual = v.cursor().style;
     if (!actual.eql(expectedStyle(style))) {
-        std.debug.print(
+        std.log.err(
             "style mismatch\n  wanted {any}\n  got    {any}\n",
             .{ expectedStyle(style), actual },
         );
@@ -1421,7 +1421,7 @@ test "the startup probe is one write and a stream of answers" {
     }) |question| {
         checks += 1;
         if (!answered.contains(question)) {
-            std.debug.print("probe: no answer for {t}\n", .{question});
+            std.log.err("probe: no answer for {t}\n", .{question});
             return error.TestExpectedEqual;
         }
     }
@@ -1920,7 +1920,7 @@ test "every key is written as the emulator's encoder writes it, or the differenc
                         const sig = @as(usize, @intFromEnum(std.meta.activeTag(case.key))) * 8 + @as(usize, @intFromEnum(case.kind)) * 2 + @intFromBool(state >= 16);
                         if (!seen[sig % seen.len]) {
                             seen[sig % seen.len] = true;
-                            std.debug.print("{s} {any} {any} mods={x} kitty={b} state={d}\n  morse   {any}\n  ghostty {any}\n", .{ @tagName(case.key), case.key, case.kind, case.mods.bits(), enc.kitty.bits(), state, ours.buffered(), theirs.buffered() });
+                            std.log.err("{s} {any} {any} mods={x} kitty={b} state={d}\n  morse   {any}\n  ghostty {any}\n", .{ @tagName(case.key), case.key, case.kind, case.mods.bits(), enc.kitty.bits(), state, ours.buffered(), theirs.buffered() });
                         }
                         continue;
                     };
@@ -1935,13 +1935,13 @@ test "every key is written as the emulator's encoder writes it, or the differenc
     while (it.next()) |entry| {
         // Command and a key is not compared on macOS, see above.
         const exempt = entry.key == .super_in_fixterms and @import("builtin").os.tag == .macos;
-        if (entry.value.* == 0 and !exempt) std.debug.print("difference {s} no longer occurs\n", .{@tagName(entry.key)});
+        if (entry.value.* == 0 and !exempt) std.log.err("difference {s} no longer occurs\n", .{@tagName(entry.key)});
         try check(entry.value.* != 0 or exempt);
     }
-    std.debug.print("keys: {d} encodings agree with the emulator's", .{same});
+    std.log.err("keys: {d} encodings agree with the emulator's", .{same});
     it = counts.iterator();
-    while (it.next()) |entry| std.debug.print(", {d} {s}", .{ entry.value.*, @tagName(entry.key) });
-    std.debug.print("\n", .{});
+    while (it.next()) |entry| std.log.err(", {d} {s}", .{ entry.value.*, @tagName(entry.key) });
+    std.log.err("\n", .{});
 }
 
 //=========================================================================
@@ -2027,5 +2027,5 @@ test "strip leaves what the emulator prints" {
 
 test "how many claims this file made" {
     try std.testing.expectEqual(@as(usize, 3795), checks);
-    std.debug.print("conformance: {d} assertions against the emulator\n", .{checks});
+    std.log.err("conformance: {d} assertions against the emulator\n", .{checks});
 }
