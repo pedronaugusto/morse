@@ -811,7 +811,8 @@ pub const placeholder: u21 = 0x10EEEE;
 /// How many rows or columns a placeholder grid can address.
 ///
 /// One per diacritic the protocol lists, which is 297. A grid larger than
-/// that cannot be spelled, and neither can a terminal that size.
+/// that cannot be spelled; a terminal can be wider or taller than that, and
+/// a row or column past it is refused with `error.PlaceholderOutOfRange`.
 pub const placeholder_max: u16 = diacritics.len;
 
 /// One row of a placeholder grid.
@@ -845,9 +846,11 @@ pub const Placeholder = struct {
 /// the protocol lets a cell inherit its row and column from the cell to its
 /// left, and this does not use that, because it breaks the moment two
 /// placeholders overlap or the host scrolls one sideways.
-pub fn placeholderRow(w: *Writer, row: Placeholder) Writer.Error!void {
-    std.debug.assert(row.row < placeholder_max);
-    std.debug.assert(row.columns <= placeholder_max);
+///
+/// A `row.row` of `placeholder_max` or more, or `row.columns` past it, is
+/// refused with `error.PlaceholderOutOfRange` before anything is written.
+pub fn placeholderRow(w: *Writer, row: Placeholder) (Writer.Error || error{PlaceholderOutOfRange})!void {
+    if (row.row >= placeholder_max or row.columns > placeholder_max) return error.PlaceholderOutOfRange;
 
     try w.writeAll(seq.csi ++ "38;2;");
     try seq.writeInt(w, (row.id >> 16) & 0xff);
@@ -883,9 +886,12 @@ pub fn placeholderRow(w: *Writer, row: Placeholder) Writer.Error!void {
 /// No colour: `placeholderRow` writes that once for a whole row, because the
 /// colour is what carries the image id and repeating it per cell would
 /// quadruple the bytes.
-pub fn placeholderCell(w: *Writer, row: u16, col: u16, id_top: u8) Writer.Error!void {
-    std.debug.assert(row < placeholder_max);
-    std.debug.assert(col < placeholder_max);
+///
+/// A `row` or `col` of `placeholder_max` or more is refused with
+/// `error.PlaceholderOutOfRange` before anything is written.
+pub fn placeholderCell(w: *Writer, row: u16, col: u16, id_top: u8) (Writer.Error || error{PlaceholderOutOfRange})!void {
+    if (row >= placeholder_max or col >= placeholder_max) return error.PlaceholderOutOfRange;
+    comptime std.debug.assert(std.math.maxInt(u8) < placeholder_max);
 
     try writeCodepoint(w, placeholder);
     try writeCodepoint(w, diacritics[row]);
@@ -2200,6 +2206,29 @@ test "every row and column the table can address writes a cell" {
         try placeholderCell(&w, @intCast(i), @intCast(placeholder_max - 1 - i), 0);
         try std.testing.expect(w.buffered().len >= 4 + 2 + 2);
     }
+}
+
+test "a row or column past the diacritic table is refused, with nothing written" {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+
+    const last = placeholder_max - 1;
+    try std.testing.expectError(error.PlaceholderOutOfRange, placeholderCell(&out.writer, placeholder_max, 0, 0));
+    try std.testing.expectError(error.PlaceholderOutOfRange, placeholderCell(&out.writer, 0, placeholder_max, 0));
+    try std.testing.expectError(error.PlaceholderOutOfRange, placeholderCell(&out.writer, 0, std.math.maxInt(u16), 0));
+    try std.testing.expectError(
+        error.PlaceholderOutOfRange,
+        placeholderRow(&out.writer, .{ .id = 1, .row = placeholder_max, .columns = 1 }),
+    );
+    try std.testing.expectError(
+        error.PlaceholderOutOfRange,
+        placeholderRow(&out.writer, .{ .id = 1, .row = 0, .columns = placeholder_max + 1 }),
+    );
+    try std.testing.expectEqualStrings("", out.written());
+
+    // The last row and the widest row still go through.
+    try placeholderRow(&out.writer, .{ .id = 1, .row = last, .columns = placeholder_max });
+    try std.testing.expect(out.written().len != 0);
 }
 
 test "readCommand returns null on anything it does not recognise" {

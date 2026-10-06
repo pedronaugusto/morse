@@ -117,10 +117,12 @@ caller supplies deadlines because a terminal need not answer.
 
 Local build scripts clear `.zig-cache/{o,h,z,tmp}` above the measured cap through preflight; run `zig build cache` before direct Zig builds (only a rebuild is lost).
 
-`zig build test` runs the unit suite and both examples in Debug by default. Tests check
-writer bytes, malformed input, split framing, console records and parser round trips.
+`zig build test` runs `zig build lint` first, then the unit suite and both examples, in
+Debug by default; `-Dci-lint=false` leaves the lint step out. Tests check writer bytes,
+malformed input, split framing, console records and parser round trips.
 `zig build examples` runs the examples separately; `zig build check` compiles the tests
-and examples without running them. CI also runs `zig build lint`.
+and examples without running them. `zig build check-consumer`, part of lint, builds a
+project that depends on morse with no packages fetched.
 
 [CI](.github/workflows/ci.yml) runs tests and examples in Debug and ReleaseSafe on
 `ubuntu-latest`, `macos-latest` and `windows-latest`, plus ReleaseFast on Ubuntu.
@@ -129,7 +131,8 @@ the clock policy. There is no ThreadSanitizer job.
 
 Compile-only jobs cover `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-windows-gnu`,
 `aarch64-windows-gnu`, `x86_64-macos` and `aarch64-macos`. Separate Ubuntu and macOS
-jobs run `zig build conformance`.
+jobs run `zig build conformance` on pull requests and full dispatches, not on pushes to
+`main`.
 
 ## Licence
 

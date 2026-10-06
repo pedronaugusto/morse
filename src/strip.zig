@@ -287,13 +287,38 @@ fn codepoint(bytes: []const u8) Codepoint {
 /// ends inside is dropped, and a codepoint it cuts short is kept.
 pub fn strip(out: []u8, text: []const u8) error{NoSpaceLeft}![]u8 {
     if (out.len < text.len) return error.NoSpaceLeft;
-    var w: Writer = .fixed(out);
+    var into: InPlace = .{ .out = out };
     var s: Stripper = .{};
-    s.feed(&w, text) catch unreachable; // unreachable: stripping only removes bytes and out is at least text.len bytes
-    s.finish(&w) catch unreachable; // unreachable: the retained prefix is part of text and stripping cannot expand it
-    std.debug.assert(w.end <= text.len);
-    return w.buffered();
+    s.feed(&into.writer, text) catch unreachable; // unreachable: stripping only removes bytes and out is at least text.len bytes
+    s.finish(&into.writer) catch unreachable; // unreachable: the retained prefix is part of text and stripping cannot expand it
+    std.debug.assert(into.end <= text.len);
+    return out[0..into.end];
 }
+
+/// A writer into `out` that buffers nothing and moves rather than copies,
+/// so `out` may be the text being stripped: what `strip` writes never runs
+/// ahead of what it has read, and `@memmove` onto bytes already read is
+/// sound where `@memcpy` is not.
+const InPlace = struct {
+    out: []u8,
+    end: usize = 0,
+    writer: Writer = .{ .buffer = &.{}, .vtable = &.{ .drain = drain } },
+
+    fn drain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
+        const into: *InPlace = @alignCast(@fieldParentPtr("writer", w)); // safe: this vtable is only ever installed in InPlace.writer
+        var n: usize = 0;
+        for (data[0 .. data.len - 1]) |bytes| n += try into.put(bytes);
+        for (0..splat) |_| n += try into.put(data[data.len - 1]);
+        return n;
+    }
+
+    fn put(into: *InPlace, bytes: []const u8) Writer.Error!usize {
+        if (into.out.len - into.end < bytes.len) return error.WriteFailed;
+        @memmove(into.out[into.end..][0..bytes.len], bytes);
+        into.end += bytes.len;
+        return bytes.len;
+    }
+};
 
 //=========================================================================
 // Tests.
@@ -379,6 +404,12 @@ test "a sequence cut anywhere strips the same as when it is whole" {
 test "strip works in place and refuses a buffer shorter than the text" {
     var buffer = "\x1b[1mbold\x1b[0m".*;
     try testing.expectEqualStrings("bold", try strip(&buffer, &buffer));
+    // A run of text longer than what was stripped before it lands on
+    // itself, as do codepoints past ASCII and the bytes of one cut short.
+    var long = "\x1b[1mhello world this is long text\x1b[0m".*;
+    try testing.expectEqualStrings("hello world this is long text", try strip(&long, &long));
+    var wide = "\x1b[1m\u{e9}t\u{e9} long enough to overlap\xc2\x85!\xe2\x82".*;
+    try testing.expectEqualStrings("\u{e9}t\u{e9} long enough to overlap!\xe2\x82", try strip(&wide, &wide));
     var small: [3]u8 = undefined;
     try testing.expectError(error.NoSpaceLeft, strip(&small, "abcd"));
 }

@@ -5,10 +5,12 @@
 //! cursor is, does not track what is on screen, and does not clamp a row or a
 //! column to a terminal size it has not been told.
 //!
-//! Two consequences run through everything below. A count is written as given:
-//! a terminal reads `0` as `1` for the movement sequences, so a caller whose
-//! count is computed must skip the call rather than rely on that. And a
-//! movement is clamped by the terminal at the edge of the screen or of the
+//! Two consequences run through everything below. A count of zero writes
+//! nothing: a terminal reads `CSI 0 C` as `CSI 1 C`, so the sequence for
+//! "no columns" is no sequence, and the relative moves, the scrolls, the
+//! inserts, deletes and erases and `repeatChar` all leave it out, at a cost
+//! of 0. A position is written as given, and there `0` is read as `1`, the
+//! first row or column. And a movement is clamped by the terminal at the edge of the screen or of the
 //! scroll region, silently — there is no reply and no error, so a program that
 //! has lost track of where the cursor is cannot find out by moving it.
 //! `cursorTo` is how such a program recovers.
@@ -43,6 +45,13 @@ fn csi2(w: anytype, a: u32, b: u32, final: u8) !void {
     try w.writeByte(final);
 }
 
+/// Writes `CSI n final` for a count, or nothing when `n` is 0: a terminal
+/// reads a zero count as one, so no count is spelled as no sequence.
+fn csiCount(w: anytype, n: u32, final: u8) !void {
+    if (n == 0) return;
+    try csi1(w, n, final);
+}
+
 /// Writes `CSI final`, a sequence with no parameter at all.
 fn csi0(w: anytype, final: u8) !void {
     try w.writeAll(seq.csi);
@@ -68,9 +77,10 @@ fn escape(w: anytype, final: u8) !void {
 /// immediately: a cursor move, a style change or anything else in between
 /// makes what it repeats undefined. Terminals that do not implement it
 /// ignore it, which draws a shorter run rather than a wrong one, so a
-/// program that cannot verify support is safer writing the glyphs.
+/// program that cannot verify support is safer writing the glyphs. A
+/// `count` of 0 writes nothing.
 pub fn repeatChar(w: *Writer, count: u32) Writer.Error!void {
-    try csi1(w, count, 'b');
+    try csiCount(w, count, 'b');
 }
 
 /// Moves the cursor to `row` and `col`, counting from 1 at the top-left:
@@ -80,7 +90,7 @@ pub fn repeatChar(w: *Writer, count: u32) Writer.Error!void {
 /// is the sequence a program writes when it no longer trusts its idea of where
 /// the cursor is. Coordinates past the edge are clamped by the terminal
 /// without a word, so an answer to where the cursor then sits has to be asked
-/// for rather than assumed.
+/// for rather than assumed. A 0 is written as given and read as 1.
 pub fn cursorTo(w: *Writer, row: u32, col: u32) Writer.Error!void {
     try csi2(w, row, col, 'H');
 }
@@ -89,38 +99,38 @@ pub fn cursorTo(w: *Writer, row: u32, col: u32) Writer.Error!void {
 /// top of the screen, or at the top of the scroll region when the cursor is
 /// inside one.
 pub fn cursorUp(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'A');
+    try csiCount(w, n, 'A');
 }
 
 /// Moves the cursor down `n` rows in the same column: `CSI n B`. Stops at the
 /// bottom of the screen, or of the scroll region; it does not scroll.
 pub fn cursorDown(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'B');
+    try csiCount(w, n, 'B');
 }
 
 /// Moves the cursor `n` columns to the right in the same row: `CSI n C`. Stops
 /// at the last column; it does not wrap to the next row.
 pub fn cursorRight(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'C');
+    try csiCount(w, n, 'C');
 }
 
 /// Moves the cursor `n` columns to the left in the same row: `CSI n D`. Stops
 /// at column 1; it does not wrap to the previous row.
 pub fn cursorLeft(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'D');
+    try csiCount(w, n, 'D');
 }
 
 /// Moves the cursor down `n` rows and to column 1: `CSI n E`. The column part
 /// is what separates this from `cursorDown`, and what makes it the sequence
 /// for walking down a list of rows each written from its start.
 pub fn cursorNextLine(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'E');
+    try csiCount(w, n, 'E');
 }
 
 /// Moves the cursor up `n` rows and to column 1: `CSI n F`. The mirror of
 /// `cursorNextLine`, and likewise a column move as well as a row move.
 pub fn cursorPrevLine(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'F');
+    try csiCount(w, n, 'F');
 }
 
 /// Moves the cursor to column `col` in the row it is already on, counting from
@@ -128,7 +138,8 @@ pub fn cursorPrevLine(w: *Writer, n: u32) Writer.Error!void {
 ///
 /// Absolute in the column and relative in nothing, so a program that knows
 /// which row it is writing can put a field at a fixed column without knowing
-/// how wide what it just wrote turned out to be.
+/// how wide what it just wrote turned out to be. A 0 is written as given and
+/// read as 1.
 pub fn cursorColumn(w: *Writer, col: u32) Writer.Error!void {
     try csi1(w, col, 'G');
 }
@@ -138,7 +149,7 @@ pub fn cursorColumn(w: *Writer, col: u32) Writer.Error!void {
 ///
 /// The vertical mirror of `cursorColumn`, and what a program that is walking
 /// down a fixed column writes so that it does not have to know how far the
-/// cursor moved sideways.
+/// cursor moved sideways. A 0 is written as given and read as 1.
 pub fn cursorRow(w: *Writer, row: u32) Writer.Error!void {
     try csi1(w, row, 'd');
 }
@@ -235,14 +246,14 @@ pub fn scrollRegionReset(w: *Writer) Writer.Error!void {
 /// top `n` rows of the region leave and `n` blank rows come in at the bottom.
 /// The cursor does not move.
 pub fn scrollUp(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'S');
+    try csiCount(w, n, 'S');
 }
 
 /// Scrolls the contents of the scrolling region down by `n` rows: `CSI n T`.
 /// The bottom `n` rows of the region leave and `n` blank rows come in at the
 /// top. The cursor does not move.
 pub fn scrollDown(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'T');
+    try csiCount(w, n, 'T');
 }
 
 /// Inserts `n` blank rows at the cursor's row, IL: `CSI n L`.
@@ -252,7 +263,7 @@ pub fn scrollDown(w: *Writer, n: u32) Writer.Error!void {
 /// Shifting rows the terminal already has costs one short sequence, which is
 /// why this beats repainting everything below the insertion point.
 pub fn insertLines(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'L');
+    try csiCount(w, n, 'L');
 }
 
 /// Inserts `n` blank cells at the cursor, ICH: `CSI n @`.
@@ -262,7 +273,7 @@ pub fn insertLines(w: *Writer, n: u32) Writer.Error!void {
 /// the same reason: shifting cells the terminal already has beats repainting
 /// the rest of the row.
 pub fn insertChars(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, '@');
+    try csiCount(w, n, '@');
 }
 
 /// Deletes `n` cells at the cursor, DCH: `CSI n P`.
@@ -270,7 +281,7 @@ pub fn insertChars(w: *Writer, n: u32) Writer.Error!void {
 /// The cells to the right shift back and `n` blanks come in at the end of the
 /// row. The counterpart to `insertChars`.
 pub fn deleteChars(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'P');
+    try csiCount(w, n, 'P');
 }
 
 /// Erases `n` cells from the cursor rightwards, ECH: `CSI n X`.
@@ -280,7 +291,7 @@ pub fn deleteChars(w: *Writer, n: u32) Writer.Error!void {
 /// so it is what clears a field of known width without touching the rest of
 /// the row.
 pub fn eraseChars(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'X');
+    try csiCount(w, n, 'X');
 }
 
 /// Deletes `n` rows starting at the cursor's row, DL: `CSI n M`.
@@ -289,7 +300,7 @@ pub fn eraseChars(w: *Writer, n: u32) Writer.Error!void {
 /// in at the bottom of it. The counterpart to `insertLines`, and cheap for the
 /// same reason.
 pub fn deleteLines(w: *Writer, n: u32) Writer.Error!void {
-    try csi1(w, n, 'M');
+    try csiCount(w, n, 'M');
 }
 
 /// How many bytes each writer in this file writes, given the same arguments
@@ -303,7 +314,7 @@ pub fn deleteLines(w: *Writer, n: u32) Writer.Error!void {
 pub const cost = struct {
     /// `repeatChar`.
     pub fn repeatChar(count: u32) usize {
-        return seq.count(csi1, .{ count, 'b' });
+        return seq.count(csiCount, .{ count, 'b' });
     }
 
     /// `cursorTo`.
@@ -313,32 +324,32 @@ pub const cost = struct {
 
     /// `cursorUp`.
     pub fn cursorUp(n: u32) usize {
-        return seq.count(csi1, .{ n, 'A' });
+        return seq.count(csiCount, .{ n, 'A' });
     }
 
     /// `cursorDown`.
     pub fn cursorDown(n: u32) usize {
-        return seq.count(csi1, .{ n, 'B' });
+        return seq.count(csiCount, .{ n, 'B' });
     }
 
     /// `cursorRight`.
     pub fn cursorRight(n: u32) usize {
-        return seq.count(csi1, .{ n, 'C' });
+        return seq.count(csiCount, .{ n, 'C' });
     }
 
     /// `cursorLeft`.
     pub fn cursorLeft(n: u32) usize {
-        return seq.count(csi1, .{ n, 'D' });
+        return seq.count(csiCount, .{ n, 'D' });
     }
 
     /// `cursorNextLine`.
     pub fn cursorNextLine(n: u32) usize {
-        return seq.count(csi1, .{ n, 'E' });
+        return seq.count(csiCount, .{ n, 'E' });
     }
 
     /// `cursorPrevLine`.
     pub fn cursorPrevLine(n: u32) usize {
-        return seq.count(csi1, .{ n, 'F' });
+        return seq.count(csiCount, .{ n, 'F' });
     }
 
     /// `cursorColumn`.
@@ -383,37 +394,37 @@ pub const cost = struct {
 
     /// `scrollUp`.
     pub fn scrollUp(n: u32) usize {
-        return seq.count(csi1, .{ n, 'S' });
+        return seq.count(csiCount, .{ n, 'S' });
     }
 
     /// `scrollDown`.
     pub fn scrollDown(n: u32) usize {
-        return seq.count(csi1, .{ n, 'T' });
+        return seq.count(csiCount, .{ n, 'T' });
     }
 
     /// `insertLines`.
     pub fn insertLines(n: u32) usize {
-        return seq.count(csi1, .{ n, 'L' });
+        return seq.count(csiCount, .{ n, 'L' });
     }
 
     /// `insertChars`.
     pub fn insertChars(n: u32) usize {
-        return seq.count(csi1, .{ n, '@' });
+        return seq.count(csiCount, .{ n, '@' });
     }
 
     /// `deleteChars`.
     pub fn deleteChars(n: u32) usize {
-        return seq.count(csi1, .{ n, 'P' });
+        return seq.count(csiCount, .{ n, 'P' });
     }
 
     /// `eraseChars`.
     pub fn eraseChars(n: u32) usize {
-        return seq.count(csi1, .{ n, 'X' });
+        return seq.count(csiCount, .{ n, 'X' });
     }
 
     /// `deleteLines`.
     pub fn deleteLines(n: u32) usize {
-        return seq.count(csi1, .{ n, 'M' });
+        return seq.count(csiCount, .{ n, 'M' });
     }
 };
 
@@ -505,15 +516,14 @@ test "scrolling and line editing write the final bytes they document" {
     try std.testing.expectEqualStrings("\x1b[1S\x1b[2T\x1b[3L\x1b[4M", out.written());
 }
 
-test "a count is written as given, zero and the largest alike" {
+test "a count is written as given up to the largest, and a position even at zero" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try cursorUp(&out.writer, 0);
     try cursorRight(&out.writer, 4294967295);
     try cursorTo(&out.writer, 0, 4294967295);
     try std.testing.expectEqualStrings(
-        "\x1b[0A\x1b[4294967295C\x1b[0;4294967295H",
+        "\x1b[4294967295C\x1b[0;4294967295H",
         out.written(),
     );
 }
@@ -562,14 +572,43 @@ test "the character-level edits write their own finals" {
     try std.testing.expectEqualStrings("\x1b[3@\x1b[4P\x1b[5X", out.written());
 }
 
-test "a count of zero is written as given, as everywhere else here" {
+test "a count of zero writes nothing and costs nothing, a position of zero is written" {
+    // A terminal reads `CSI 0 C` as one column, so the zero count must not
+    // reach it at all.
+    const counts = [_]struct {
+        write: *const fn (*Writer, u32) Writer.Error!void,
+        count: *const fn (u32) usize,
+    }{
+        .{ .write = repeatChar, .count = cost.repeatChar },
+        .{ .write = cursorUp, .count = cost.cursorUp },
+        .{ .write = cursorDown, .count = cost.cursorDown },
+        .{ .write = cursorRight, .count = cost.cursorRight },
+        .{ .write = cursorLeft, .count = cost.cursorLeft },
+        .{ .write = cursorNextLine, .count = cost.cursorNextLine },
+        .{ .write = cursorPrevLine, .count = cost.cursorPrevLine },
+        .{ .write = scrollUp, .count = cost.scrollUp },
+        .{ .write = scrollDown, .count = cost.scrollDown },
+        .{ .write = insertLines, .count = cost.insertLines },
+        .{ .write = insertChars, .count = cost.insertChars },
+        .{ .write = deleteChars, .count = cost.deleteChars },
+        .{ .write = eraseChars, .count = cost.eraseChars },
+        .{ .write = deleteLines, .count = cost.deleteLines },
+    };
+    for (counts) |case| {
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+
+        try case.write(&out.writer, 0);
+        try std.testing.expectEqualStrings("", out.written());
+        try std.testing.expectEqual(@as(usize, 0), case.count(0));
+    }
+
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try insertChars(&out.writer, 0);
-    try eraseChars(&out.writer, 0);
+    try cursorColumn(&out.writer, 0);
     try cursorRow(&out.writer, 0);
-    try std.testing.expectEqualStrings("\x1b[0@\x1b[0X\x1b[0d", out.written());
+    try std.testing.expectEqualStrings("\x1b[0G\x1b[0d", out.written());
 }
 
 test "repeatChar writes REP with the count it was given" {

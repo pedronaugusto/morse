@@ -802,6 +802,43 @@ test "repeatChar draws the run the count asks for" {
     try checkScreen(&v, "-----");
 }
 
+test "a count of zero leaves the screen and the cursor where they were" {
+    var v: Vt = undefined;
+    try v.init(5, 5);
+    defer v.deinit();
+
+    // Sent as `CSI 0 final`, every one of these would act once.
+    const counts = [_]*const fn (*std.Io.Writer, u32) std.Io.Writer.Error!void{
+        morse.cursorUp,       morse.cursorDown,     morse.cursorRight, morse.cursorLeft,
+        morse.cursorNextLine, morse.cursorPrevLine, morse.scrollUp,    morse.scrollDown,
+        morse.insertLines,    morse.deleteLines,    morse.insertChars, morse.deleteChars,
+        morse.eraseChars,     morse.repeatChar,
+    };
+    for (counts) |write| {
+        try fillScreen(&v);
+        try morse.cursorTo(v.w(), 3, 3);
+        v.feed();
+        v.print("x");
+        try write(v.w(), 0);
+        v.feed();
+        try checkEqual(@as(usize, 3), v.cursor().x);
+        try checkEqual(@as(usize, 2), v.cursor().y);
+        try checkScreen(&v, "AAAAA\nBBBBB\nCCxCC\nDDDDD\nEEEEE");
+    }
+
+    // A position of zero is the first row or column.
+    try morse.cursorTo(v.w(), 0, 0);
+    v.feed();
+    try checkEqual(@as(usize, 0), v.cursor().x);
+    try checkEqual(@as(usize, 0), v.cursor().y);
+    try morse.cursorTo(v.w(), 3, 3);
+    try morse.cursorColumn(v.w(), 0);
+    try morse.cursorRow(v.w(), 0);
+    v.feed();
+    try checkEqual(@as(usize, 0), v.cursor().x);
+    try checkEqual(@as(usize, 0), v.cursor().y);
+}
+
 //=========================================================================
 // Titles, working directory and hyperlinks.
 //=========================================================================
@@ -2026,6 +2063,6 @@ test "strip leaves what the emulator prints" {
 //=========================================================================
 
 test "how many claims this file made" {
-    try std.testing.expectEqual(@as(usize, 3795), checks);
+    try std.testing.expectEqual(@as(usize, 3841), checks);
     std.log.info("conformance: {d} assertions against the emulator\n", .{checks});
 }
