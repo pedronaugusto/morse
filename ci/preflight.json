@@ -5,9 +5,6 @@
   "test_roots": [
     "src/tests.zig"
   ],
-  "test_support": [
-    "src/testing/*"
-  ],
   "function_exceptions": {},
   "layout_exceptions": {},
   "docs": {
@@ -22,11 +19,6 @@
   },
   "ziglint_exceptions": "ci/ziglint-exceptions.json",
   "extra_checks": [
-    [
-      "zig",
-      "build",
-      "check-clocks"
-    ],
     [
       "zig",
       "build",

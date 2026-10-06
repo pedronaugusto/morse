@@ -1,3 +1,4 @@
+//! What a project that depends on morse writes.
 const std = @import("std");
 const morse = @import("morse");
 

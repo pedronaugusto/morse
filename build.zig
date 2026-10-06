@@ -138,18 +138,9 @@ pub fn build(b: *std.Build) void {
     if (b.pkg_hash.len != 0) return;
     if (b.lazyImport(@This(), "preflight")) |preflight| {
         preflight.addCi(b, .{ .tests = test_step, .portable_tests = true });
+        // The build a consumer gets: nothing morse fetches for itself.
+        preflight.addConsumerCheck(b, .{ .package = "morse", .program = b.path("ci/consumer.zig") });
     }
-    _ = ciCheck(b, "check-clocks", "ci/clocks.zig");
-
-    // A project that depends on morse by path, built with an empty package
-    // directory, so nothing morse fetches for itself can be reached. It is
-    // the build a consumer gets.
-    const consumer = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "--system" });
-    consumer.addDirectoryArg(b.addWriteFiles().add("README", "No packages.\n").dirname());
-    consumer.setCwd(b.path("ci/consumer"));
-    consumer.has_side_effects = true;
-    consumer.expectExitCode(0);
-    b.step("check-consumer", "Build a project that depends on morse, with no packages fetched").dependOn(&consumer.step);
 }
 
 /// Every example, listed rather than globbed: a build graph that scans a
@@ -158,16 +149,3 @@ const example_sources = [_][]const u8{
     "examples/usage.zig",
     "examples/quickstart.zig",
 };
-
-// Build-only tooling belongs to a root invocation, never a consumer's dependency graph.
-fn ciCheck(b: *std.Build, name: []const u8, source: []const u8) *std.Build.Step.Compile {
-    const module = b.createModule(.{ .root_source_file = b.path(source), .target = b.graph.host, .optimize = .Debug });
-    const executable = b.addExecutable(.{ .name = name, .root_module = module });
-    const tests = b.addTest(.{ .root_module = module });
-    const run = b.addRunArtifact(executable);
-    run.setCwd(b.path("."));
-    const step = b.step(name, "Run repository CI checks and their regressions");
-    step.dependOn(&b.addRunArtifact(tests).step);
-    step.dependOn(&run.step);
-    return executable;
-}
