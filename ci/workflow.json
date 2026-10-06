@@ -9,6 +9,5 @@
     "x86_64-macos",
     "aarch64-macos"
   ],
-  "compile_once": false,
-  "test_timeout": ""
+  "compile_once": false
 }

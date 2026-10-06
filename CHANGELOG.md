@@ -6,22 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-- morse's own gate pins preflight 9e72aac: `ci/layers.zig` orders production sources only, so the fuzz corpus left the `values` layer. The clock check is twelve `owned` token rules nobody may spell, replacing `ci/clocks.zig` and `zig build check-clocks`. The manifest no longer lists gantry, which nothing in morse's build reads; the consumer check is preflight's `addConsumerCheck` with the program in `ci/consumer.zig`, and `zig build ci-linux` uses preflight's Debian image in place of an identical `ci/linux.Dockerfile`.
-- A project that depends on morse builds again: `build.zig` reaches its lazy `preflight` dependency through `b.lazyImport`, and only in morse's own tree, rather than with a top-level `@import` no consumer could compile. `zig build check-consumer`, run by lint, builds one with no packages fetched.
 - `strip` works in place as documented: `strip(buf, buf)` panicked with `@memcpy arguments alias` in safe builds, and was undefined behaviour in ReleaseFast, once a run of text overlapped where it was written.
 - `KeyParser` frames `CSI Ps ; Pm $ y`, the ANSI-mode DECRPM reply, whole as `Event.unhandled`; `$` is rxvt's shifted-key final only after one number that names a key. It used to split into an unhandled `CSI Ps;Pm $` and a typed `y`.
 - `KeyParser` reads `ESC [` or `ESC O` followed by a control byte as alt+`[` or alt+`O` and then the control, as `flush` reads the same two bytes; the alt was dropped before.
 - The relative moves (`cursorUp`, `cursorDown`, `cursorRight`, `cursorLeft`, `cursorNextLine`, `cursorPrevLine`), the scrolls (`scrollUp`, `scrollDown`), the edits (`insertLines`, `deleteLines`, `insertChars`, `deleteChars`, `eraseChars`) and `repeatChar` write nothing for a count of 0, and `cost` gives 0 for them; they wrote `CSI 0 final`, which a terminal reads as a count of 1. Positions (`cursorTo`, `cursorColumn`, `cursorRow`) are still written as given, and 0 reads as 1.
 - `placeholderRow` and `placeholderCell` return `error.PlaceholderOutOfRange`, before writing anything, for a row or column the diacritic table cannot spell; past it they read out of bounds in ReleaseFast. Their error set is now `Writer.Error || error{PlaceholderOutOfRange}`.
 - `KeyParser`'s own state is in fields named with a leading `_` (`_buffer`, `_start`, `_end`, `_repeating`, `_repeat_left`, `_console`, `_skipping`, `_dropped`, `_waiting`); `report_key_up` and `mouse_pixels` are the fields a caller sets.
-- The `KeyParser` fuzz target and a fixed sweep check that the events do not depend on where the reads were cut.
 
-- Put compile-time parameters first in `seq.writeHex` and `strings.writeChecked` (internal helpers; root exports are unchanged).
-- Clear lint and quality exceptions, split the escape framing oracle by grammar, and assert buffer, UTF-8, base64 and SGR bounds.
-
-- Qualify the public `Mouse.Motion.number` and `Mouse.Encoding.number` receiver types; both enums were already public and their API is unchanged.
-
-- Share the Zig CI gate through preflight, with requested fast runs and full merge checks.
+- Safe builds assert buffer, UTF-8, base64 and SGR bounds.
 
 - `Probe` asks the terminal's colour count, `Co`, through XTGETTCAP, and routes its answer or refusal as `color_count`.
 

@@ -93,24 +93,12 @@ pub const required = [_][]const u8{
 /// terminal device, its modes and the console are conduit's. Library code
 /// and unit tests leave clocks to the caller and the bench branch.
 pub const owned: []const gantry.rules.TokenRule = &.{
-    .{ .name = "console owner", .token = "CreateFileW" },
-    .{ .name = "console owner", .token = "ReadConsoleInputW" },
-    .{ .name = "console owner", .token = "GetConsoleMode" },
-    .{ .name = "console owner", .token = "SetConsoleMode" },
-    .{ .name = "console owner", .kind = .string, .token = "kernel32" },
-    .{ .name = "terminal mode owner", .token = "tcgetattr" },
-    .{ .name = "terminal mode owner", .token = "tcsetattr" },
-    .{ .name = "terminal mode owner", .token = "ioctl" },
-    .{ .name = "clocks belong on the bench branch", .token = "Clock" },
-    .{ .name = "clocks belong on the bench branch", .token = "Timer" },
-    .{ .name = "clocks belong on the bench branch", .token = "Instant" },
-    .{ .name = "clocks belong on the bench branch", .token = "nanoTimestamp" },
-    .{ .name = "clocks belong on the bench branch", .token = "microTimestamp" },
-    .{ .name = "clocks belong on the bench branch", .token = "milliTimestamp" },
-    .{ .name = "clocks belong on the bench branch", .token = "timestamp" },
-    .{ .name = "clocks belong on the bench branch", .token = "clock_gettime" },
-    .{ .name = "clocks belong on the bench branch", .token = "gettimeofday" },
-    .{ .name = "clocks belong on the bench branch", .token = "mach_absolute_time" },
-    .{ .name = "clocks belong on the bench branch", .token = "QueryPerformanceCounter" },
-    .{ .name = "clocks belong on the bench branch", .token = "sleep" },
+    .{ .name = "console owner", .tokens = &.{ "CreateFileW", "ReadConsoleInputW", "GetConsoleMode", "SetConsoleMode" } },
+    .{ .name = "console owner", .kind = .string, .tokens = &.{"kernel32"} },
+    .{ .name = "terminal mode owner", .tokens = &.{ "tcgetattr", "tcsetattr", "ioctl" } },
+    .{ .name = "clocks belong on the bench branch", .tokens = &.{
+        "Clock",          "Timer",              "Instant",                 "nanoTimestamp",
+        "microTimestamp", "milliTimestamp",     "timestamp",               "clock_gettime",
+        "gettimeofday",   "mach_absolute_time", "QueryPerformanceCounter", "sleep",
+    } },
 };
