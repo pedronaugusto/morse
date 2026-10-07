@@ -1927,7 +1927,7 @@ test "every key is written as the emulator's encoder writes it, or the differenc
                 // macOS ghostty types nothing for command and a key in the
                 // legacy encoding, which is a platform's choice, not the
                 // protocol's.
-                const mac_command = @import("builtin").os.tag == .macos and mods.super and case.key == .char;
+                const mac_command = @import("builtin").target.os.tag == .macos and mods.super and case.key == .char;
 
                 var pair: KeyPair = .{ .ours = undefined, .theirs = undefined };
                 keyPair(case, &pair);
@@ -1982,7 +1982,7 @@ test "every key is written as the emulator's encoder writes it, or the differenc
     var it = counts.iterator();
     while (it.next()) |entry| {
         // Command and a key is not compared on macOS, see above.
-        const exempt = entry.key == .super_in_fixterms and @import("builtin").os.tag == .macos;
+        const exempt = entry.key == .super_in_fixterms and @import("builtin").target.os.tag == .macos;
         if (entry.value.* == 0 and !exempt) std.log.info("difference {s} no longer occurs\n", .{@tagName(entry.key)});
         try check(entry.value.* != 0 or exempt);
     }
