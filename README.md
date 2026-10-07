@@ -45,12 +45,13 @@ const mouse = (events.next() orelse return error.MissingMouse).mouse;
 
 ## Design
 
-The library uses only `std` and allocates no storage of its own. The conformance step
-alone fetches a lazy, pinned Ghostty emulator dependency to check terminal behaviour;
-consumer builds do not fetch it. Writers take a `*std.Io.Writer` and leave flushing to
-the caller. Parsers borrow their input; `KeyParser` retains incomplete sequences in a
-caller-owned buffer. Drain each `Events` iterator before feeding more bytes, and consume
-borrowed event data before the next iterator step, feed or flush.
+The library uses only `std` and allocates no storage of its own. The conformance build
+under `conformance/` pins a Ghostty emulator in a manifest of its own to check terminal
+behaviour; morse's manifest does not name it, so no build of a program on morse fetches
+or compiles it. Writers take a `*std.Io.Writer` and leave flushing to the caller.
+Parsers borrow their input; `KeyParser` retains incomplete sequences in a caller-owned
+buffer. Drain each `Events` iterator before feeding more bytes, and consume borrowed
+event data before the next iterator step, feed or flush.
 Key events own their text; retained sequence bytes keep split input intact and borrowed
 replies independent of the read buffer.
 
@@ -120,7 +121,7 @@ caller supplies deadlines because a terminal need not answer.
 - [preflight](https://github.com/pedronaugusto/preflight) runs the source checks,
   the tests and CI.
 - [Ghostty](https://github.com/ghostty-org/ghostty)'s `libghostty-vt` is the
-  emulator the conformance step writes to, fetched only for that step.
+  emulator the conformance build writes to, named only in `conformance/build.zig.zon`.
 
 ## Testing
 
@@ -129,13 +130,14 @@ Local build scripts clear `.zig-cache/{o,h,z,tmp}` above the measured cap throug
 `zig build test` runs `zig build lint` first, then the unit suite and both examples, in
 Debug by default; `-Dci-lint=false` leaves the lint step out. Tests check writer bytes,
 malformed input, split framing, console records and parser round trips.
-`zig build examples` runs the examples separately; `zig build check` compiles the tests,
-examples and benchmarks without running them. `zig build check-consumer`, part of lint, builds a
+`zig build examples` runs the examples separately; `zig build check` compiles the tests
+and examples without running them. `zig build check-consumer`, part of lint, builds a
 project that depends on morse with no packages fetched.
 
-`zig build bench` runs the speed ceilings in `bench/` on this machine, best with
-`-Doptimize=ReleaseFast` and nothing else running. They are wide on purpose and catch a
-change that costs many times what it did; CI compiles them and never runs them.
+`zig build bench` builds the speed ceilings in `bench/` in ReleaseFast under
+`zig-out/bench` and runs them on this machine, best with nothing else running. They are
+wide on purpose and catch a change that costs many times what it did; `zig build test`
+runs each point once at its smallest size, with no clock read against a ceiling.
 
 [CI](.github/workflows/ci.yml) runs in tiers. The fast tier runs the source checks and
 the Debug suite on `ubuntu-latest`; the merge tier, on the candidate for `main`, adds
@@ -146,8 +148,9 @@ the clock policy. There is no ThreadSanitizer job.
 
 Compile-only jobs cover `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-windows-gnu`,
 `aarch64-windows-gnu`, `x86_64-macos` and `aarch64-macos`. Separate Ubuntu and macOS
-jobs run `zig build conformance` on pull requests and merge or release dispatches, not on
-pushes to `main`.
+jobs run the conformance build under `conformance/` (`zig build conformance` locally)
+on pull requests and merge or release dispatches, not on pushes to `main`. The merge and release
+tiers also run the Debug suite on Zig master on Ubuntu; it never blocks.
 
 ## Licence
 

@@ -15,7 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Every public function that returned an unnamed error set returns a named one: `CheckTextError`, `PrintableError`, `StripError`, `DecodeClipboardError`, `Event.CopyError`, `Reply.CopyError` and `Capability.DecodeError`. The errors in them are unchanged.
-- `zig build bench` runs morse's own speed ceilings, in `bench/`; `zig build check`, and so CI, compiles them and never runs them.
+- `zig build bench` builds morse's own speed ceilings, in `bench/`, in ReleaseFast under `zig-out/bench` and runs them; `zig build test` runs each point once at its smallest size.
 - `Probe` asks the terminal's colour count, `Co`, through XTGETTCAP, and routes its answer or refusal as `color_count`.
 - `querySixelGraphics` and `parseSixelGraphics` ask and read XTSMGRAPHICS, how many colour registers a sixel image may use and how big it may be, as `Reply.sixel_graphics`; `sixelCursorRight` is mode 8452; `Probe` asks all three, as `sixel_registers`, `sixel_geometry` and `sixel_cursor_right`.
 - `sixel` writes an image as a sixel string, from palette indices or from RGBA drawn in the nearest colour of a palette of up to 256, with the DECSIXEL parameters the caller gives and a band at a time from a fixed block of stack; `itermImage` and `itermImageMultipart` send a file as an iTerm2 inline image in one `OSC 1337` or as `MultipartFile`, `FilePart`s and `FileEnd`; `cost` counts all three.
@@ -34,6 +34,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- morse's manifest no longer names the terminal emulator its conformance build feeds: that build has a manifest of its own under `conformance/`. A program that depends on morse never fetches or compiles the emulator, with `--fetch=all` too, so a Zig the emulator's build script refuses can no longer fail that program's build once the emulator is in the package cache.
+- A fetched morse holds only what building it needs: `build.zig`, `build.zig.zon`, `src`, `LICENSE`, `README.md` and `CHANGELOG.md`; the benchmarks, examples, conformance build and CI files stay in the repository.
 - `KeyParser`'s own state is documented `Private:` field by field; `report_key_up` and `mouse_pixels` are the fields a caller sets.
 - Safe builds assert buffer, UTF-8, base64 and SGR bounds.
 - Encode base64 for OSC 52 and kitty graphics straight into the writer's buffer with the standard library's encoder, as many groups as fit at a time, rather than four characters per write; the chunks and bytes written are unchanged.

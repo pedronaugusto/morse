@@ -5,6 +5,9 @@
   "test_roots": [
     "src/tests.zig"
   ],
+  "test_dependencies": [
+    "shakedown"
+  ],
   "function_exceptions": {},
   "layout_exceptions": {},
   "docs": {
