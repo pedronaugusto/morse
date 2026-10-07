@@ -15,7 +15,7 @@
 
 const std = @import("std");
 const base64 = @import("base64.zig");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -372,14 +372,14 @@ test "fuzz parseClipboardReply and decodeClipboard" {
             try std.testing.expectEqualSlices(u8, plain, try decodeClipboard(again, &redecoded));
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b]52;c;aGk=\x1b\\"),
-        corpus.seed("\x1b]52;p;Zm9vYmFy\x07"),
-        corpus.seed("\x1b]52;pc;\x1b\\"),
-        corpus.seed("\x1b]52;7;Zg==\x1b\\"),
-        corpus.seed("\x1b]52;c;?\x1b\\"),
-        corpus.seed("\x1b]52;c;aB==\x1b\\"),
-        corpus.seed("\x1b]52;c;a=k=\x1b\\"),
-        corpus.seed("\x1b]52;z;aGk=\x1b\\"),
-        corpus.seed("\x1b]52;c;aGk="),
+        corpus.entry("\x1b]52;c;aGk=\x1b\\"),
+        corpus.entry("\x1b]52;p;Zm9vYmFy\x07"),
+        corpus.entry("\x1b]52;pc;\x1b\\"),
+        corpus.entry("\x1b]52;7;Zg==\x1b\\"),
+        corpus.entry("\x1b]52;c;?\x1b\\"),
+        corpus.entry("\x1b]52;c;aB==\x1b\\"),
+        corpus.entry("\x1b]52;c;a=k=\x1b\\"),
+        corpus.entry("\x1b]52;z;aGk=\x1b\\"),
+        corpus.entry("\x1b]52;c;aGk="),
     } });
 }

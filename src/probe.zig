@@ -34,7 +34,7 @@
 //! because only the caller owns its timeout or quiescence timer.
 
 const std = @import("std");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const device = @import("device.zig");
 const graphics = @import("graphics.zig");
 const key = @import("key.zig");
@@ -679,20 +679,20 @@ test "fuzz matches" {
             try std.testing.expect(hits <= 1);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[?62;52;c"),
-        corpus.seed("\x1b[>1;4000;48c"),
-        corpus.seed("\x1b[?2026;1$y"),
-        corpus.seed("\x1b[?2027;0$y"),
-        corpus.seed("\x1b[12;40R"),
-        corpus.seed("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\"),
-        corpus.seed("\x1b[?29u"),
-        corpus.seed("\x1b[>4;2m"),
-        corpus.seed("\x1b_Gi=31;OK\x1b\\"),
-        corpus.seed("\x1b[8;24;80t"),
-        corpus.seed("\x1b[6;16;8t"),
-        corpus.seed("\x1bP>|name(390)\x1b\\"),
-        corpus.seed("\x1b[>1;29 q"),
-        corpus.seed("\x1b[?997;1n"),
+        corpus.entry("\x1b[?62;52;c"),
+        corpus.entry("\x1b[>1;4000;48c"),
+        corpus.entry("\x1b[?2026;1$y"),
+        corpus.entry("\x1b[?2027;0$y"),
+        corpus.entry("\x1b[12;40R"),
+        corpus.entry("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\"),
+        corpus.entry("\x1b[?29u"),
+        corpus.entry("\x1b[>4;2m"),
+        corpus.entry("\x1b_Gi=31;OK\x1b\\"),
+        corpus.entry("\x1b[8;24;80t"),
+        corpus.entry("\x1b[6;16;8t"),
+        corpus.entry("\x1bP>|name(390)\x1b\\"),
+        corpus.entry("\x1b[>1;29 q"),
+        corpus.entry("\x1b[?997;1n"),
     } });
 }
 

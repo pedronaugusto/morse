@@ -23,7 +23,7 @@
 //! the caller framed itself.
 
 const std = @import("std");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 const style = @import("style.zig");
 
@@ -952,13 +952,13 @@ test "fuzz parseExtraCursors" {
             try std.testing.expectEqual(seen, twice);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[>100 q"),
-        corpus.seed("\x1b[>100;1:2:7:1:7:3 q"),
-        corpus.seed("\x1b[>100;29:0;2:2:4:5;3:4:1:1:2:2 q"),
-        corpus.seed("\x1b[>100;1:2:7:1:9 q"),
-        corpus.seed("\x1b[>100;9:2:3:4 q"),
-        corpus.seed("\x1b[>100;1:2:4294967296 q"),
-        corpus.seed("\x1b[>101;30:0;40:1 q"),
+        corpus.entry("\x1b[>100 q"),
+        corpus.entry("\x1b[>100;1:2:7:1:7:3 q"),
+        corpus.entry("\x1b[>100;29:0;2:2:4:5;3:4:1:1:2:2 q"),
+        corpus.entry("\x1b[>100;1:2:7:1:9 q"),
+        corpus.entry("\x1b[>100;9:2:3:4 q"),
+        corpus.entry("\x1b[>100;1:2:4294967296 q"),
+        corpus.entry("\x1b[>101;30:0;40:1 q"),
     } });
 }
 
@@ -984,11 +984,11 @@ test "fuzz parseExtraCursorColors" {
             try std.testing.expectEqualDeep(colors, again);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[>101;30:0;40:1 q"),
-        corpus.seed("\x1b[>101;30:2:255:0:0;40:5:9 q"),
-        corpus.seed("\x1b[>101;30:3;40:1 q"),
-        corpus.seed("\x1b[>101;30:2:256:0:0;40:1 q"),
-        corpus.seed("\x1b[>100;1:2:3:4 q"),
+        corpus.entry("\x1b[>101;30:0;40:1 q"),
+        corpus.entry("\x1b[>101;30:2:255:0:0;40:5:9 q"),
+        corpus.entry("\x1b[>101;30:3;40:1 q"),
+        corpus.entry("\x1b[>101;30:2:256:0:0;40:1 q"),
+        corpus.entry("\x1b[>100;1:2:3:4 q"),
     } });
 }
 
@@ -1004,11 +1004,11 @@ test "fuzz parseExtraCursorSupport" {
             try std.testing.expectEqualDeep(support, parseExtraCursorSupport(bytes).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[>1;2;3;29;30;40;100;101 q"),
-        corpus.seed("\x1b[> q"),
-        corpus.seed("\x1b[>1;7;102 q"),
-        corpus.seed("\x1b[>1;2; q"),
-        corpus.seed("\x1b[>4294967296 q"),
+        corpus.entry("\x1b[>1;2;3;29;30;40;100;101 q"),
+        corpus.entry("\x1b[> q"),
+        corpus.entry("\x1b[>1;7;102 q"),
+        corpus.entry("\x1b[>1;2; q"),
+        corpus.entry("\x1b[>4294967296 q"),
     } });
 }
 

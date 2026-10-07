@@ -7,7 +7,7 @@
 //! through byte for byte. `printable` strips controls only when asked.
 
 const std = @import("std");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const framing = @import("framing.zig");
 const seq = @import("seq.zig");
 const strings = @import("strings.zig");
@@ -624,14 +624,14 @@ test "fuzz parseTextSize and parseHyperlink" {
             try std.testing.expectEqual(read, readTextSize(bytes).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b]66;;hi\x1b\\"),
-        corpus.seed("\x1b]66;s=2;Double sized text\x1b\\"),
-        corpus.seed("\x1b]66;w=1:n=1:d=2;lf\x1b\\"),
-        corpus.seed("\x1b]66;s=7:w=3:n=5:d=15:v=2:h=1;x\x07"),
-        corpus.seed("\x1b]66;s=2:s=3;x\x1b\\"),
-        corpus.seed("\x1b]66;s=2\x1b\\"),
-        corpus.seed("8;id=log;file:///tmp/log"),
-        corpus.seed("8;;"),
+        corpus.entry("\x1b]66;;hi\x1b\\"),
+        corpus.entry("\x1b]66;s=2;Double sized text\x1b\\"),
+        corpus.entry("\x1b]66;w=1:n=1:d=2;lf\x1b\\"),
+        corpus.entry("\x1b]66;s=7:w=3:n=5:d=15:v=2:h=1;x\x07"),
+        corpus.entry("\x1b]66;s=2:s=3;x\x1b\\"),
+        corpus.entry("\x1b]66;s=2\x1b\\"),
+        corpus.entry("8;id=log;file:///tmp/log"),
+        corpus.entry("8;;"),
     } });
 }
 

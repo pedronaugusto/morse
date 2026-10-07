@@ -22,7 +22,7 @@
 //! Read against the VT330/VT340 programmer reference, chapter 14.
 
 const std = @import("std");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 const style = @import("style.zig");
 
@@ -613,12 +613,12 @@ test "fuzz parseSixelGraphics" {
             try testing.expectEqual(report, parseSixelGraphics(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[?1;0;256S"),
-        corpus.seed("\x1b[?2;0;1000;1000S"),
-        corpus.seed("\x1b[?2;3;0S"),
-        corpus.seed("\x1b[?1;1S"),
-        corpus.seed("\x1b[?2;0;4294967296;1S"),
-        corpus.seed("\x1b[?1;0;256;1S"),
-        corpus.seed("\x1b[?3;0;640;480S"),
+        corpus.entry("\x1b[?1;0;256S"),
+        corpus.entry("\x1b[?2;0;1000;1000S"),
+        corpus.entry("\x1b[?2;3;0S"),
+        corpus.entry("\x1b[?1;1S"),
+        corpus.entry("\x1b[?2;0;4294967296;1S"),
+        corpus.entry("\x1b[?1;0;256;1S"),
+        corpus.entry("\x1b[?3;0;640;480S"),
     } });
 }

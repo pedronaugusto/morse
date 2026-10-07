@@ -9,7 +9,7 @@
 //! and that silence is also an answer, is the caller's to arrange.
 
 const std = @import("std");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -448,14 +448,14 @@ test "fuzz parseModeReply" {
             try std.testing.expectEqual(report, parseModeReply(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[?2026;1$y"),
-        corpus.seed("\x1b[?0;0$y"),
-        corpus.seed("\x1b[?65535;4$y"),
-        corpus.seed("\x1b[?2026;5$y"),
-        corpus.seed("\x1b[?65536;1$y"),
-        corpus.seed("\x1b[?2026;1$p"),
-        corpus.seed("\x1b[2026;1$y"),
-        corpus.seed("\x1b[?2026;1$yy"),
+        corpus.entry("\x1b[?2026;1$y"),
+        corpus.entry("\x1b[?0;0$y"),
+        corpus.entry("\x1b[?65535;4$y"),
+        corpus.entry("\x1b[?2026;5$y"),
+        corpus.entry("\x1b[?65536;1$y"),
+        corpus.entry("\x1b[?2026;1$p"),
+        corpus.entry("\x1b[2026;1$y"),
+        corpus.entry("\x1b[?2026;1$yy"),
     } });
 }
 
@@ -475,14 +475,14 @@ test "fuzz parseCursorPosition" {
             try std.testing.expectEqual(position, parseCursorPosition(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[12;40R"),
-        corpus.seed("\x1b[1;1R"),
-        corpus.seed("\x1b[4294967295;4294967295R"),
-        corpus.seed("\x1b[4294967296;1R"),
-        corpus.seed("\x1b[0000000012;0000000040R"),
-        corpus.seed("\x1b[?12;40R"),
-        corpus.seed("\x1b[12;40;1R"),
-        corpus.seed("\x1b[12;40"),
+        corpus.entry("\x1b[12;40R"),
+        corpus.entry("\x1b[1;1R"),
+        corpus.entry("\x1b[4294967295;4294967295R"),
+        corpus.entry("\x1b[4294967296;1R"),
+        corpus.entry("\x1b[0000000012;0000000040R"),
+        corpus.entry("\x1b[?12;40R"),
+        corpus.entry("\x1b[12;40;1R"),
+        corpus.entry("\x1b[12;40"),
     } });
 }
 
@@ -506,15 +506,15 @@ test "fuzz parseExtendedCursorPosition" {
             try std.testing.expectEqual(position, parseExtendedCursorPosition(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[?12;40;1R"),
-        corpus.seed("\x1b[?1;1;1R"),
-        corpus.seed("\x1b[?4294967295;4294967295;4294967295R"),
-        corpus.seed("\x1b[?4294967296;1;1R"),
-        corpus.seed("\x1b[?0000000012;0000000040;0000000001R"),
-        corpus.seed("\x1b[12;40R"),
-        corpus.seed("\x1b[?12;40R"),
-        corpus.seed("\x1b[?12;40;1;1R"),
-        corpus.seed("\x1b[?12;40;1"),
+        corpus.entry("\x1b[?12;40;1R"),
+        corpus.entry("\x1b[?1;1;1R"),
+        corpus.entry("\x1b[?4294967295;4294967295;4294967295R"),
+        corpus.entry("\x1b[?4294967296;1;1R"),
+        corpus.entry("\x1b[?0000000012;0000000040;0000000001R"),
+        corpus.entry("\x1b[12;40R"),
+        corpus.entry("\x1b[?12;40R"),
+        corpus.entry("\x1b[?12;40;1;1R"),
+        corpus.entry("\x1b[?12;40;1"),
     } });
 }
 
@@ -579,12 +579,12 @@ test "fuzz parseColorSchemeReply" {
             try std.testing.expectEqual(scheme, parseColorSchemeReply(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[?997;1n"),
-        corpus.seed("\x1b[?997;2n"),
-        corpus.seed("\x1b[?997;0n"),
-        corpus.seed("\x1b[?997;3n"),
-        corpus.seed("\x1b[?996n"),
-        corpus.seed("\x1b[?997;1nn"),
-        corpus.seed("\x1b[?997;256n"),
+        corpus.entry("\x1b[?997;1n"),
+        corpus.entry("\x1b[?997;2n"),
+        corpus.entry("\x1b[?997;0n"),
+        corpus.entry("\x1b[?997;3n"),
+        corpus.entry("\x1b[?996n"),
+        corpus.entry("\x1b[?997;1nn"),
+        corpus.entry("\x1b[?997;256n"),
     } });
 }

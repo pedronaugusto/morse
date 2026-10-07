@@ -26,7 +26,7 @@
 
 const std = @import("std");
 const base64 = @import("base64.zig");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -2126,10 +2126,10 @@ test "fuzz the animation round trip" {
             }
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x01\x00\x00\x00\x07\x00\x00\x00\x02\x00\x00\x00" ++
+        corpus.entry("\x01\x00\x00\x00\x07\x00\x00\x00\x02\x00\x00\x00" ++
             "\x03\x00\x00\x00\x30\x00\x00\x00"),
-        corpus.seed(corpus.repeat("\x00", 20)),
-        corpus.seed(corpus.repeat("\xff", 20)),
+        corpus.entry(corpus.repeat("\x00", 20)),
+        corpus.entry(corpus.repeat("\xff", 20)),
     } });
 }
 
@@ -2283,14 +2283,14 @@ test "fuzz readCommand" {
             try std.testing.expectEqual(command.count(), again.count());
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b_Gi=31,s=1,v=1;YWJj\x1b\\"),
-        corpus.seed("\x1b_Ga=p,q=2,i=6,p=1,c=78,r=26,z=-3,C=1\x1b\\"),
-        corpus.seed("\x1b_Ga=d,d=i,i=10,p=7\x1b\\"),
-        corpus.seed("\x1b_Gm=0;\x1b\\"),
-        corpus.seed("\x1b_G;\x1b\\"),
-        corpus.seed("\x1b_Gi=1,i=2;\x1b\\"),
-        corpus.seed("\x1b_Gi=1;a\x1b\\"),
-        corpus.seed("\x1b_Ga=d,d=i,i=10\x07"),
+        corpus.entry("\x1b_Gi=31,s=1,v=1;YWJj\x1b\\"),
+        corpus.entry("\x1b_Ga=p,q=2,i=6,p=1,c=78,r=26,z=-3,C=1\x1b\\"),
+        corpus.entry("\x1b_Ga=d,d=i,i=10,p=7\x1b\\"),
+        corpus.entry("\x1b_Gm=0;\x1b\\"),
+        corpus.entry("\x1b_G;\x1b\\"),
+        corpus.entry("\x1b_Gi=1,i=2;\x1b\\"),
+        corpus.entry("\x1b_Gi=1;a\x1b\\"),
+        corpus.entry("\x1b_Ga=d,d=i,i=10\x07"),
     } });
 }
 
@@ -2335,11 +2335,11 @@ test "fuzz the transmit round trip" {
             try std.testing.expectEqualSlices(u8, data, try base64.decode(joined.items, decoded));
         }
     }.one, .{ .corpus = &.{
-        corpus.seed(""),
-        corpus.seed("a"),
-        corpus.seed("ab"),
-        corpus.seed("abc"),
-        corpus.seed("the quick brown fox"),
+        corpus.entry(""),
+        corpus.entry("a"),
+        corpus.entry("ab"),
+        corpus.entry("abc"),
+        corpus.entry("the quick brown fox"),
     } });
 }
 
@@ -2461,18 +2461,18 @@ test "fuzz parseGraphicsResponse" {
             try std.testing.expectEqual(response.ok(), again.ok());
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b_Gi=31;OK\x1b\\"),
-        corpus.seed("\x1b_Gi=1,I=2,p=3;OK\x1b\\"),
-        corpus.seed("\x1b_Gi=31;ENOENT:No such file\x1b\\"),
-        corpus.seed("\x1b_GI=99;EBADF:bad\x07"),
-        corpus.seed("\x1b_G;OK\x1b\\"),
-        corpus.seed("\x1b_Gi=31;\x1b\\"),
-        corpus.seed("\x1b_Gi=31,q=2,z=0,p=7;OK\x1b\\"),
-        corpus.seed("\x1b_Gi=1,i=2;OK\x1b\\"),
-        corpus.seed("\x1b_Gi=4294967296;OK\x1b\\"),
-        corpus.seed("\x1b_Gii=31;OK\x1b\\"),
-        corpus.seed("\x1b_Gi=1,;OK\x1b\\"),
-        corpus.seed("\x1b_Gi=31;OK"),
+        corpus.entry("\x1b_Gi=31;OK\x1b\\"),
+        corpus.entry("\x1b_Gi=1,I=2,p=3;OK\x1b\\"),
+        corpus.entry("\x1b_Gi=31;ENOENT:No such file\x1b\\"),
+        corpus.entry("\x1b_GI=99;EBADF:bad\x07"),
+        corpus.entry("\x1b_G;OK\x1b\\"),
+        corpus.entry("\x1b_Gi=31;\x1b\\"),
+        corpus.entry("\x1b_Gi=31,q=2,z=0,p=7;OK\x1b\\"),
+        corpus.entry("\x1b_Gi=1,i=2;OK\x1b\\"),
+        corpus.entry("\x1b_Gi=4294967296;OK\x1b\\"),
+        corpus.entry("\x1b_Gii=31;OK\x1b\\"),
+        corpus.entry("\x1b_Gi=1,;OK\x1b\\"),
+        corpus.entry("\x1b_Gi=31;OK"),
     } });
 }
 

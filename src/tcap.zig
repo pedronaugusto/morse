@@ -25,7 +25,7 @@
 //! ship, or keep up to date.
 
 const std = @import("std");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -530,17 +530,17 @@ test "fuzz parseCapabilityReply" {
             try std.testing.expectEqualStrings(reply.entries, again.entries);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1bP1+r436f=323536\x1b\\"),
-        corpus.seed("\x1bP1+r6b656e64=1b4f46\x1b\\"),
-        corpus.seed("\x1bP1+r436f=323536;544e=7874657270\x07"),
-        corpus.seed("\x1bP0+r6e6f7065\x1b\\"),
-        corpus.seed("\x1bP1+r4B454E44=1B4F46\x1b\\"),
-        corpus.seed("\x1bP1+r436f=\x1b\\"),
-        corpus.seed("\x1bP0+r\x1b\\"),
-        corpus.seed("\x1bP1+r436\x1b\\"),
-        corpus.seed("\x1bP1+r436g\x1b\\"),
-        corpus.seed("\x1bP1+r;436f\x1b\\"),
-        corpus.seed("\x1bP2+r436f\x1b\\"),
-        corpus.seed("\x1bP1+r436f=323536"),
+        corpus.entry("\x1bP1+r436f=323536\x1b\\"),
+        corpus.entry("\x1bP1+r6b656e64=1b4f46\x1b\\"),
+        corpus.entry("\x1bP1+r436f=323536;544e=7874657270\x07"),
+        corpus.entry("\x1bP0+r6e6f7065\x1b\\"),
+        corpus.entry("\x1bP1+r4B454E44=1B4F46\x1b\\"),
+        corpus.entry("\x1bP1+r436f=\x1b\\"),
+        corpus.entry("\x1bP0+r\x1b\\"),
+        corpus.entry("\x1bP1+r436\x1b\\"),
+        corpus.entry("\x1bP1+r436g\x1b\\"),
+        corpus.entry("\x1bP1+r;436f\x1b\\"),
+        corpus.entry("\x1bP2+r436f\x1b\\"),
+        corpus.entry("\x1bP1+r436f=323536"),
     } });
 }

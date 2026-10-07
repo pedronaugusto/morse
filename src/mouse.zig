@@ -32,7 +32,7 @@
 //! anything.
 
 const std = @import("std");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -648,17 +648,17 @@ test "fuzz parseMouse" {
         }
     }.one, .{
         .corpus = &.{
-            corpus.seed("\x1b[<0;10;5M"),
-            corpus.seed("\x1b[<62;7;9m"),
-            corpus.seed("\x1b[<64;1;1M"),
-            corpus.seed("\x1b[<131;4294967295;4294967295m"),
-            corpus.seed("\x1b[<192;1;1M"),
-            corpus.seed("\x1b[<0;99999999999;5M"),
-            corpus.seed("\x1b[<0;10;5"),
-            corpus.seed("\x1b[0;10;5M"),
+            corpus.entry("\x1b[<0;10;5M"),
+            corpus.entry("\x1b[<62;7;9m"),
+            corpus.entry("\x1b[<64;1;1M"),
+            corpus.entry("\x1b[<131;4294967295;4294967295m"),
+            corpus.entry("\x1b[<192;1;1M"),
+            corpus.entry("\x1b[<0;99999999999;5M"),
+            corpus.entry("\x1b[<0;10;5"),
+            corpus.entry("\x1b[0;10;5M"),
             // A pixel of 0, which lands in the first cell: what the fuzzer found
             // the old property got wrong.
-            corpus.seed("\x1b[<0;0;0M"),
+            corpus.entry("\x1b[<0;0;0M"),
         },
     });
 }
@@ -785,14 +785,14 @@ test "fuzz parseMouseX10" {
             try std.testing.expectEqual(ev, parseMouseX10(&round).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[M\x20\x21\x21"),
-        corpus.seed("\x1b[M\x23\x21\x21"),
-        corpus.seed("\x1b[M\x60\x21\x21"),
-        corpus.seed("\x1b[M\xa0\xff\xff"),
-        corpus.seed("\x1b[M\x20\x20\x20"),
-        corpus.seed("\x1b[M\x1f\x21\x21"),
-        corpus.seed("\x1b[M\x20\x21"),
-        corpus.seed("\x1b[<0;1;1M"),
+        corpus.entry("\x1b[M\x20\x21\x21"),
+        corpus.entry("\x1b[M\x23\x21\x21"),
+        corpus.entry("\x1b[M\x60\x21\x21"),
+        corpus.entry("\x1b[M\xa0\xff\xff"),
+        corpus.entry("\x1b[M\x20\x20\x20"),
+        corpus.entry("\x1b[M\x1f\x21\x21"),
+        corpus.entry("\x1b[M\x20\x21"),
+        corpus.entry("\x1b[<0;1;1M"),
     } });
 }
 
@@ -946,18 +946,18 @@ test "fuzz parseMouseRxvt" {
             try std.testing.expect(parseMouseX10(bytes) == null);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[32;33;34M"),
-        corpus.seed("\x1b[35;33;33M"),
-        corpus.seed("\x1b[96;33;33M"),
-        corpus.seed("\x1b[160;1032;1032M"),
-        corpus.seed("\x1b[32;32;32M"),
-        corpus.seed("\x1b[31;33;33M"),
-        corpus.seed("\x1b[288;33;33M"),
-        corpus.seed("\x1b[224;33;33M"),
-        corpus.seed("\x1b[32;33;33m"),
-        corpus.seed("\x1b[32;33;33"),
-        corpus.seed("\x1b[<0;1;1M"),
-        corpus.seed("\x1b[M\x20\x21\x21"),
+        corpus.entry("\x1b[32;33;34M"),
+        corpus.entry("\x1b[35;33;33M"),
+        corpus.entry("\x1b[96;33;33M"),
+        corpus.entry("\x1b[160;1032;1032M"),
+        corpus.entry("\x1b[32;32;32M"),
+        corpus.entry("\x1b[31;33;33M"),
+        corpus.entry("\x1b[288;33;33M"),
+        corpus.entry("\x1b[224;33;33M"),
+        corpus.entry("\x1b[32;33;33m"),
+        corpus.entry("\x1b[32;33;33"),
+        corpus.entry("\x1b[<0;1;1M"),
+        corpus.entry("\x1b[M\x20\x21\x21"),
     } });
 }
 

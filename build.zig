@@ -29,6 +29,18 @@ pub fn build(b: *std.Build) !void {
         }),
     });
 
+    // The tests' corpus entries and repeated text come from shakedown, a
+    // lazy, test-only dependency asked for only in morse's own tree: a
+    // program that depends on morse neither builds these tests nor fetches
+    // it. A dependency still to fetch is kept and returned last, so one
+    // configure pass asks for every one of them.
+    var needed: error{LazyDependencyNeeded}!void = {};
+    if (b.pkg_hash.len == 0) {
+        if (b.dependencyLazy("shakedown", .{ .target = target, .optimize = optimize })) |shakedown| {
+            tests.root_module.addImport("shakedown", shakedown.module("shakedown"));
+        } else |err| needed = err;
+    }
+
     const test_step = b.step("test", "Run the morse tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
@@ -103,12 +115,10 @@ pub fn build(b: *std.Build) !void {
     // a dependency needed for the whole invocation rather than for the step
     // that called it, and a program that merely depends on morse must not
     // fetch a terminal emulator to build. Its error is kept and returned last,
-    // so one configure pass asks for preflight as well and both are fetched
-    // together.
+    // as shakedown's is.
     //=====================================================================
 
     const conformance_step = b.step("conformance", "Run the writers through a terminal emulator");
-    var needed: error{LazyDependencyNeeded}!void = {};
     if (b.pkg_hash.len != 0) {
         conformance_step.dependOn(&b.addFail(
             "the conformance step runs in morse's own tree, not from a package that depends on it",

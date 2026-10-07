@@ -20,7 +20,7 @@
 //! make of that is the caller's.
 
 const std = @import("std");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const mode = @import("mode.zig");
 const seq = @import("seq.zig");
 const style = @import("style.zig");
@@ -1171,12 +1171,12 @@ test "fuzz parseModifyKeysReply" {
             try std.testing.expectEqual(report.value, again.value);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[>4;2m"),
-        corpus.seed("\x1b[>0;0m"),
-        corpus.seed("\x1b[>4m"),
-        corpus.seed("\x1b[>4;m"),
-        corpus.seed("\x1b[>5;2m"),
-        corpus.seed("\x1b[?4m"),
+        corpus.entry("\x1b[>4;2m"),
+        corpus.entry("\x1b[>0;0m"),
+        corpus.entry("\x1b[>4m"),
+        corpus.entry("\x1b[>4;m"),
+        corpus.entry("\x1b[>5;2m"),
+        corpus.entry("\x1b[?4m"),
     } });
 }
 
@@ -1392,17 +1392,17 @@ test "fuzz parseDeviceAttributes" {
             try std.testing.expectEqual(da, parseDeviceAttributes(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[?1;2c"),
-        corpus.seed("\x1b[?62;1;6;9;15;22;29c"),
-        corpus.seed("\x1b[?6c"),
-        corpus.seed("\x1b[?0;0c"),
-        corpus.seed("\x1b[?65535;65535c"),
-        corpus.seed("\x1b[?62;65536c"),
-        corpus.seed("\x1b[?62;;1c"),
-        corpus.seed("\x1b[?62;52;c"),
-        corpus.seed("\x1b[?62;"),
-        corpus.seed("\x1b[62;1c"),
-        corpus.seed("\x1b[?62;1cc"),
+        corpus.entry("\x1b[?1;2c"),
+        corpus.entry("\x1b[?62;1;6;9;15;22;29c"),
+        corpus.entry("\x1b[?6c"),
+        corpus.entry("\x1b[?0;0c"),
+        corpus.entry("\x1b[?65535;65535c"),
+        corpus.entry("\x1b[?62;65536c"),
+        corpus.entry("\x1b[?62;;1c"),
+        corpus.entry("\x1b[?62;52;c"),
+        corpus.entry("\x1b[?62;"),
+        corpus.entry("\x1b[62;1c"),
+        corpus.entry("\x1b[?62;1cc"),
     } });
 }
 
@@ -1423,14 +1423,14 @@ test "fuzz parseSecondaryDeviceAttributes" {
             try std.testing.expectEqual(da, parseSecondaryDeviceAttributes(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[>0;276;0c"),
-        corpus.seed("\x1b[>1;4000c"),
-        corpus.seed("\x1b[>41;357;0c"),
-        corpus.seed("\x1b[>65535;4294967295;65535c"),
-        corpus.seed("\x1b[>0;4294967296;0c"),
-        corpus.seed("\x1b[>0;276;0;1c"),
-        corpus.seed("\x1b[?0;276;0c"),
-        corpus.seed("\x1b[>0;276;0"),
+        corpus.entry("\x1b[>0;276;0c"),
+        corpus.entry("\x1b[>1;4000c"),
+        corpus.entry("\x1b[>41;357;0c"),
+        corpus.entry("\x1b[>65535;4294967295;65535c"),
+        corpus.entry("\x1b[>0;4294967296;0c"),
+        corpus.entry("\x1b[>0;276;0;1c"),
+        corpus.entry("\x1b[?0;276;0c"),
+        corpus.entry("\x1b[>0;276;0"),
     } });
 }
 
@@ -1450,14 +1450,14 @@ test "fuzz parseVersion" {
             try std.testing.expectEqualStrings(name, parseVersion(bytes).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1bP>|xterm(390)\x1b\\"),
-        corpus.seed("\x1bP>|name(1.16.2)\x07"),
-        corpus.seed("\x1bP>|\x1b\\"),
-        corpus.seed("\x1bP>|99999999999999999999\x1b\\"),
-        corpus.seed("\x1bP>|xterm(390)"),
-        corpus.seed("\x1bP>xterm(390)\x1b\\"),
-        corpus.seed("\x1b[>|xterm(390)\x1b\\"),
-        corpus.seed("\x1bP>|"),
+        corpus.entry("\x1bP>|xterm(390)\x1b\\"),
+        corpus.entry("\x1bP>|name(1.16.2)\x07"),
+        corpus.entry("\x1bP>|\x1b\\"),
+        corpus.entry("\x1bP>|99999999999999999999\x1b\\"),
+        corpus.entry("\x1bP>|xterm(390)"),
+        corpus.entry("\x1bP>xterm(390)\x1b\\"),
+        corpus.entry("\x1b[>|xterm(390)\x1b\\"),
+        corpus.entry("\x1bP>|"),
     } });
 }
 
@@ -1478,15 +1478,15 @@ test "fuzz parseKittyKeyboardReply" {
             try std.testing.expectEqual(flags, parseKittyKeyboardReply(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[?0u"),
-        corpus.seed("\x1b[?1u"),
-        corpus.seed("\x1b[?31u"),
-        corpus.seed("\x1b[?32u"),
-        corpus.seed("\x1b[?255u"),
-        corpus.seed("\x1b[?256u"),
-        corpus.seed("\x1b[?1;2u"),
-        corpus.seed("\x1b[>1u"),
-        corpus.seed("\x1b[?1"),
+        corpus.entry("\x1b[?0u"),
+        corpus.entry("\x1b[?1u"),
+        corpus.entry("\x1b[?31u"),
+        corpus.entry("\x1b[?32u"),
+        corpus.entry("\x1b[?255u"),
+        corpus.entry("\x1b[?256u"),
+        corpus.entry("\x1b[?1;2u"),
+        corpus.entry("\x1b[>1u"),
+        corpus.entry("\x1b[?1"),
     } });
 }
 
@@ -1509,18 +1509,18 @@ test "fuzz parseColorReply" {
             try std.testing.expectEqual(report, parseColorReply(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b]11;rgb:0000/0000/0000\x1b\\"),
-        corpus.seed("\x1b]10;rgb:ffff/ffff/ffff\x1b\\"),
-        corpus.seed("\x1b]12;rgb:1c1c/1c1c/1c1c\x07"),
-        corpus.seed("\x1b]11;rgb:f/0/0\x1b\\"),
-        corpus.seed("\x1b]11;rgb:80/00/00\x1b\\"),
-        corpus.seed("\x1b]11;rgb:f/00/8080\x1b\\"),
-        corpus.seed("\x1b]11;rgb:AB/CD/EF\x1b\\"),
-        corpus.seed("\x1b]11;rgb:00000/00/00\x1b\\"),
-        corpus.seed("\x1b]11;rgb:0/0/0/0\x1b\\"),
-        corpus.seed("\x1b]13;rgb:0/0/0\x1b\\"),
-        corpus.seed("\x1b]11;#ff0000\x1b\\"),
-        corpus.seed("\x1b]11;?\x1b\\"),
+        corpus.entry("\x1b]11;rgb:0000/0000/0000\x1b\\"),
+        corpus.entry("\x1b]10;rgb:ffff/ffff/ffff\x1b\\"),
+        corpus.entry("\x1b]12;rgb:1c1c/1c1c/1c1c\x07"),
+        corpus.entry("\x1b]11;rgb:f/0/0\x1b\\"),
+        corpus.entry("\x1b]11;rgb:80/00/00\x1b\\"),
+        corpus.entry("\x1b]11;rgb:f/00/8080\x1b\\"),
+        corpus.entry("\x1b]11;rgb:AB/CD/EF\x1b\\"),
+        corpus.entry("\x1b]11;rgb:00000/00/00\x1b\\"),
+        corpus.entry("\x1b]11;rgb:0/0/0/0\x1b\\"),
+        corpus.entry("\x1b]13;rgb:0/0/0\x1b\\"),
+        corpus.entry("\x1b]11;#ff0000\x1b\\"),
+        corpus.entry("\x1b]11;?\x1b\\"),
     } });
 }
 
@@ -1546,18 +1546,18 @@ test "fuzz parsePaletteReply" {
             try std.testing.expect(parseColorReply(bytes) == null);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b]4;0;rgb:0000/0000/0000\x1b\\"),
-        corpus.seed("\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\"),
-        corpus.seed("\x1b]4;1;rgb:cdcd/0000/0000\x07"),
-        corpus.seed("\x1b]4;9;rgb:f/0/0\x1b\\"),
-        corpus.seed("\x1b]4;9;rgb:AB/cd/ef00\x1b\\"),
-        corpus.seed("\x1b]4;256;rgb:0/0/0\x1b\\"),
-        corpus.seed("\x1b]4;;rgb:0/0/0\x1b\\"),
-        corpus.seed("\x1b]4;1;rgb:0/0/0/0\x1b\\"),
-        corpus.seed("\x1b]4;1;#ff0000\x1b\\"),
-        corpus.seed("\x1b]4;1;?\x1b\\"),
-        corpus.seed("\x1b]104;1\x1b\\"),
-        corpus.seed("\x1b]11;rgb:0/0/0\x1b\\"),
+        corpus.entry("\x1b]4;0;rgb:0000/0000/0000\x1b\\"),
+        corpus.entry("\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\"),
+        corpus.entry("\x1b]4;1;rgb:cdcd/0000/0000\x07"),
+        corpus.entry("\x1b]4;9;rgb:f/0/0\x1b\\"),
+        corpus.entry("\x1b]4;9;rgb:AB/cd/ef00\x1b\\"),
+        corpus.entry("\x1b]4;256;rgb:0/0/0\x1b\\"),
+        corpus.entry("\x1b]4;;rgb:0/0/0\x1b\\"),
+        corpus.entry("\x1b]4;1;rgb:0/0/0/0\x1b\\"),
+        corpus.entry("\x1b]4;1;#ff0000\x1b\\"),
+        corpus.entry("\x1b]4;1;?\x1b\\"),
+        corpus.entry("\x1b]104;1\x1b\\"),
+        corpus.entry("\x1b]11;rgb:0/0/0\x1b\\"),
     } });
 }
 
@@ -1649,13 +1649,13 @@ test "fuzz parseWindowSize" {
             try std.testing.expectEqual(size, parseWindowSize(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[8;24;80t"),
-        corpus.seed("\x1b[6;16;8t"),
-        corpus.seed("\x1b[4;0;0t"),
-        corpus.seed("\x1b[9;4294967295;4294967295t"),
-        corpus.seed("\x1b[8;4294967296;80t"),
-        corpus.seed("\x1b[7;24;80t"),
-        corpus.seed("\x1b[48;24;80t"),
-        corpus.seed("\x1b[8;24;80"),
+        corpus.entry("\x1b[8;24;80t"),
+        corpus.entry("\x1b[6;16;8t"),
+        corpus.entry("\x1b[4;0;0t"),
+        corpus.entry("\x1b[9;4294967295;4294967295t"),
+        corpus.entry("\x1b[8;4294967296;80t"),
+        corpus.entry("\x1b[7;24;80t"),
+        corpus.entry("\x1b[48;24;80t"),
+        corpus.entry("\x1b[8;24;80"),
     } });
 }

@@ -37,7 +37,7 @@
 
 const std = @import("std");
 const utf8 = @import("utf8.zig");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 const framing = @import("framing.zig");
 const mouse = @import("mouse.zig");
 const query = @import("query.zig");
@@ -2539,36 +2539,36 @@ test "fuzz KeyParser" {
             try std.testing.expectEqualStrings(whole.buffered(), split.buffered());
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[97:65:97;2:3;65u"),
-        corpus.seed("\x1b[27u"),
-        corpus.seed("\x1b[1;5A"),
-        corpus.seed("\x1b[[A"),
-        corpus.seed("\x1b[[B"),
-        corpus.seed("\x1b[[C"),
-        corpus.seed("\x1b[[D"),
-        corpus.seed("\x1b[[E"),
-        corpus.seed("\x1b[2$"),
-        corpus.seed("\x1b[5^"),
-        corpus.seed("\x1b[3@"),
-        corpus.seed("\x1b[a\x1bOa"),
-        corpus.seed("\x1b[3;2~"),
-        corpus.seed("\x1b[27;5;9~"),
-        corpus.seed("\x1b[200~pasted\x1b[201~"),
-        corpus.seed("\x1b[I\x1b[O"),
-        corpus.seed("\x1bOP\x1bOy"),
-        corpus.seed("\x1b[<0;40;12M"),
-        corpus.seed("\x1b]52;c;aGk=\x1b\\"),
-        corpus.seed("\x1b_Gi=31;OK\x1b\\"),
-        corpus.seed("\x1b\x1b[A"),
-        corpus.seed("\x1b"),
-        corpus.seed("\x1b["),
-        corpus.seed("\xf0\x9f\x99\x82"),
-        corpus.seed("\x1b[1;2;3;4;5;6;7;8;9A"),
-        corpus.seed("\x1b[99999999999u"),
-        corpus.seed("hello world"),
-        corpus.seed("\x1b[200~a much longer pasted run\x1b[201~"),
-        corpus.seed("text\x01text\x7ftext"),
-        corpus.seed("\u{4e2d}\u{6587}\u{1f642}ab"),
+        corpus.entry("\x1b[97:65:97;2:3;65u"),
+        corpus.entry("\x1b[27u"),
+        corpus.entry("\x1b[1;5A"),
+        corpus.entry("\x1b[[A"),
+        corpus.entry("\x1b[[B"),
+        corpus.entry("\x1b[[C"),
+        corpus.entry("\x1b[[D"),
+        corpus.entry("\x1b[[E"),
+        corpus.entry("\x1b[2$"),
+        corpus.entry("\x1b[5^"),
+        corpus.entry("\x1b[3@"),
+        corpus.entry("\x1b[a\x1bOa"),
+        corpus.entry("\x1b[3;2~"),
+        corpus.entry("\x1b[27;5;9~"),
+        corpus.entry("\x1b[200~pasted\x1b[201~"),
+        corpus.entry("\x1b[I\x1b[O"),
+        corpus.entry("\x1bOP\x1bOy"),
+        corpus.entry("\x1b[<0;40;12M"),
+        corpus.entry("\x1b]52;c;aGk=\x1b\\"),
+        corpus.entry("\x1b_Gi=31;OK\x1b\\"),
+        corpus.entry("\x1b\x1b[A"),
+        corpus.entry("\x1b"),
+        corpus.entry("\x1b["),
+        corpus.entry("\xf0\x9f\x99\x82"),
+        corpus.entry("\x1b[1;2;3;4;5;6;7;8;9A"),
+        corpus.entry("\x1b[99999999999u"),
+        corpus.entry("hello world"),
+        corpus.entry("\x1b[200~a much longer pasted run\x1b[201~"),
+        corpus.entry("text\x01text\x7ftext"),
+        corpus.entry("\u{4e2d}\u{6587}\u{1f642}ab"),
     } });
 }
 
@@ -2612,15 +2612,15 @@ test "fuzz the parameter scanner" {
             }
         }
     }.one, .{ .corpus = &.{
-        corpus.seed(""),
-        corpus.seed("1"),
-        corpus.seed("1;5"),
-        corpus.seed("97:65:97;2:3;65"),
-        corpus.seed(";5"),
-        corpus.seed("1;2;3;4;5;6;7;8;9"),
-        corpus.seed("1:2:3:4:5"),
-        corpus.seed("99999999999"),
-        corpus.seed("1;a"),
+        corpus.entry(""),
+        corpus.entry("1"),
+        corpus.entry("1;5"),
+        corpus.entry("97:65:97;2:3;65"),
+        corpus.entry(";5"),
+        corpus.entry("1;2;3;4;5;6;7;8;9"),
+        corpus.entry("1:2:3:4:5"),
+        corpus.entry("99999999999"),
+        corpus.entry("1;a"),
     } });
 }
 
@@ -2955,15 +2955,15 @@ test "fuzz the framing against a second framer" {
             _ = try checkFraming(chosen);
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x00\x01\x02\x03\x04\x05\x06\x07"),
-        corpus.seed("\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f"),
-        corpus.seed("\x10\x11\x12\x13\x14\x15\x16\x17"),
-        corpus.seed("\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f"),
-        corpus.seed("\x20\x21\x22"),
-        corpus.seed("\x04\x05\x06\xff\xfe\x1b\x1c"),
-        corpus.seed("\x19\x1a\x19\x1a\x19\x1a"),
-        corpus.seed("\x11\x91\x92\x11\x93"),
-        corpus.seed("\x13\x14\x15\x16\x17\x18"),
+        corpus.entry("\x00\x01\x02\x03\x04\x05\x06\x07"),
+        corpus.entry("\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f"),
+        corpus.entry("\x10\x11\x12\x13\x14\x15\x16\x17"),
+        corpus.entry("\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f"),
+        corpus.entry("\x20\x21\x22"),
+        corpus.entry("\x04\x05\x06\xff\xfe\x1b\x1c"),
+        corpus.entry("\x19\x1a\x19\x1a\x19\x1a"),
+        corpus.entry("\x11\x91\x92\x11\x93"),
+        corpus.entry("\x13\x14\x15\x16\x17\x18"),
     } });
 }
 
@@ -3592,18 +3592,18 @@ test "fuzz the win32 input mode decoder" {
             }
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[65;30;97;1;0;1_"),
-        corpus.seed("\x1b[65;30;97;0;0;1_"),
-        corpus.seed("\x1b[65;30;97;1;0;3_"),
-        corpus.seed("\x1b[37;0;0;1;16;1_"),
-        corpus.seed("\x1b[112;0;0;1;8;1_"),
-        corpus.seed("\x1b[;;;;;_"),
-        corpus.seed("\x1b[_"),
-        corpus.seed("\x1b[0;0;55357;1;0;1_"),
-        corpus.seed("\x1b[65536;0;0;1;0;1_"),
-        corpus.seed("\x1b[65;0;97;1;0;65535_"),
-        corpus.seed("\x1b[65;0;97;1;0;1;1_"),
-        corpus.seed("\x1b[65;30;97;1;0;2_b"),
+        corpus.entry("\x1b[65;30;97;1;0;1_"),
+        corpus.entry("\x1b[65;30;97;0;0;1_"),
+        corpus.entry("\x1b[65;30;97;1;0;3_"),
+        corpus.entry("\x1b[37;0;0;1;16;1_"),
+        corpus.entry("\x1b[112;0;0;1;8;1_"),
+        corpus.entry("\x1b[;;;;;_"),
+        corpus.entry("\x1b[_"),
+        corpus.entry("\x1b[0;0;55357;1;0;1_"),
+        corpus.entry("\x1b[65536;0;0;1;0;1_"),
+        corpus.entry("\x1b[65;0;97;1;0;65535_"),
+        corpus.entry("\x1b[65;0;97;1;0;1;1_"),
+        corpus.entry("\x1b[65;30;97;1;0;2_b"),
     } });
 }
 
@@ -3990,9 +3990,9 @@ test "fuzz the encoder against the parser" {
             }
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[97:65:98;2:3;65u"),
-        corpus.seed("\x1b[1;129A\x1b[3;5:2~"),
-        corpus.seed("a\x01\x1bb\x1b[27;6;97~"),
-        corpus.seed("\x1b[57399:65;2;48u\x1b[1u"),
+        corpus.entry("\x1b[97:65:98;2:3;65u"),
+        corpus.entry("\x1b[1;129A\x1b[3;5:2~"),
+        corpus.entry("a\x01\x1bb\x1b[27;6;97~"),
+        corpus.entry("\x1b[57399:65;2;48u\x1b[1u"),
     } });
 }

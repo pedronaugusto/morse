@@ -20,7 +20,7 @@ const std = @import("std");
 const utf8 = @import("utf8.zig");
 const framing = @import("framing.zig");
 const seq = @import("seq.zig");
-const corpus = @import("testing/corpus.zig");
+const corpus = @import("shakedown").corpus;
 
 const Writer = std.Io.Writer;
 
@@ -451,8 +451,8 @@ test "fuzz Stripper" {
             try testing.expectEqualStrings(expected, w.buffered());
         }
     }.one, .{ .corpus = &.{
-        corpus.seed("\x1b[1mbold\x1b[0m"),
-        corpus.seed("\x1b]8;;u\x1b\\t\x1b]8;;\x1b\\"),
-        corpus.seed("\u{9b}\xc2\x9b\x9b\xe2\x82"),
+        corpus.entry("\x1b[1mbold\x1b[0m"),
+        corpus.entry("\x1b]8;;u\x1b\\t\x1b]8;;\x1b\\"),
+        corpus.entry("\u{9b}\xc2\x9b\x9b\xe2\x82"),
     } });
 }
