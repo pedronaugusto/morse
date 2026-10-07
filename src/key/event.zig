@@ -543,7 +543,7 @@ const named_codes = [_]u21{
 };
 
 comptime {
-    const tags = @typeInfo(Key).@"union".fields;
+    const tags = @typeInfo(Key).@"union".field_names;
     std.debug.assert(named_codes.len == tags.len - @backingInt(std.meta.Tag(Key).caps_lock));
 }
 
@@ -574,11 +574,11 @@ fn firstCodepoint(bytes: []const u8) ?u21 {
 }
 
 test "protocolCode and protocolKey are one table read both ways" {
-    const tags = @typeInfo(Key).@"union".fields;
-    inline for (tags) |field| {
-        const key: Key = if (field.type == void) @unionInit(Key, field.name, {}) else switch (field.type) {
-            u21 => @unionInit(Key, field.name, 'a'),
-            u8 => @unionInit(Key, field.name, 20),
+    const info = @typeInfo(Key).@"union";
+    inline for (info.field_names, info.field_types) |name, T| {
+        const key: Key = if (T == void) @unionInit(Key, name, {}) else switch (T) {
+            u21 => @unionInit(Key, name, 'a'),
+            u8 => @unionInit(Key, name, 20),
             else => unreachable,
         };
         if (protocolCode(key)) |code| try std.testing.expectEqual(key, protocolKey(code).?);

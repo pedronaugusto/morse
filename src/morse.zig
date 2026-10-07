@@ -967,8 +967,8 @@ test "the root module re-exports what the README promises" {
     try std.testing.expect(parseControlString("\x1b]8;;\x1b\\").?.terminated);
 
     // Every length in `cost` is named for a writer the root exports.
-    inline for (@typeInfo(cost).@"struct".decls) |decl| {
-        if (!@hasDecl(Self, decl.name)) @compileError("cost." ++ decl.name ++ " has no writer");
+    inline for (@typeInfo(cost).@"struct".decl_names) |name| {
+        if (!@hasDecl(Self, name)) @compileError("cost." ++ name ++ " has no writer");
     }
 
     try queryDeviceAttributes(w);

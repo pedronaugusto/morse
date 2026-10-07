@@ -246,8 +246,8 @@ fn plainInput(allocator: std.mem.Allocator, size: usize) ![]u8 {
 
 /// Text runs count as their individual keys, so changing the read or buffer
 /// size can change batching without changing what the input means.
-fn inputCounts(input: []const u8, storage: []u8, read: usize) ![std.meta.fields(key.Event).len]usize {
-    var counts: [std.meta.fields(key.Event).len]usize = @splat(0);
+fn inputCounts(input: []const u8, storage: []u8, read: usize) ![@typeInfo(key.Event).@"union".field_names.len]usize {
+    var counts: [@typeInfo(key.Event).@"union".field_names.len]usize = @splat(0);
     var parser: key.KeyParser = .init(storage);
     var offset: usize = 0;
     while (offset < input.len) {

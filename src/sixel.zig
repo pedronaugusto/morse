@@ -158,12 +158,12 @@ const Block = struct {
     /// The register of each pixel; `undrawn` for one not drawn.
     cells: [6][block_columns]u16,
     /// Which registers the block uses.
-    used: std.StaticBitSet(sixel_palette_max),
+    used: std.bit_set.Static(sixel_palette_max),
 
     const undrawn: u16 = 0xffff;
 
     fn read(b: *Block, image: Sixel, nearest: *Nearest, y: u32, rows: u32, x0: u32, columns: u32) void {
-        b.used = .initEmpty();
+        b.used = .empty;
         for (0..6) |r| {
             if (r >= rows) {
                 @memset(&b.cells[r], undrawn);

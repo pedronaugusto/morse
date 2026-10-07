@@ -1156,7 +1156,7 @@ const Commands = struct {
 
     fn next(it: *Commands) ?Command {
         if (it.rest.len == 0) return null;
-        const end = std.mem.indexOfPos(u8, it.rest, 0, seq.st) orelse return null;
+        const end = std.mem.findPos(u8, it.rest, 0, seq.st) orelse return null;
         const one = it.rest[0 .. end + seq.st.len];
         it.rest = it.rest[end + seq.st.len ..];
         return readCommand(one);
@@ -1779,7 +1779,7 @@ test "a frame with every key writes them in the documented order" {
 test "an animation command image cannot represent no image" {
     inline for (.{ Frame, Animate, Compose }) |CommandType| {
         const image_type = @FieldType(CommandType, "image");
-        try std.testing.expectEqual(@as(usize, 2), @typeInfo(image_type).@"union".fields.len);
+        try std.testing.expectEqual(@as(usize, 2), @typeInfo(image_type).@"union".field_names.len);
     }
 }
 

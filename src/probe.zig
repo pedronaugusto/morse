@@ -415,7 +415,7 @@ test "a whole probe is one write, with DA1 last" {
     try std.testing.expect(std.mem.endsWith(u8, bytes, "\x1b[c"));
     try std.testing.expectEqual(
         @as(usize, bytes.len - 3),
-        std.mem.lastIndexOf(u8, bytes, "\x1b[c").?,
+        std.mem.findLast(u8, bytes, "\x1b[c").?,
     );
 
     // The cursor position report is asked for first, ahead of everything
@@ -439,7 +439,7 @@ test "the order is the order the questions are declared in" {
         defer one.deinit();
         try writeOne(&one.writer, question, probe.graphics_id);
 
-        const found = std.mem.indexOfPos(u8, bytes, at, one.written()) orelse
+        const found = std.mem.findPos(u8, bytes, at, one.written()) orelse
             return error.TestExpectedEqual;
         at = found;
     }
@@ -614,7 +614,7 @@ test "a probe routes a forwarded reply that arrives after DA1" {
     var storage: [256]u8 = undefined;
     var parser: key.KeyParser = .init(&storage);
 
-    var seen: [@typeInfo(Probe.Question).@"enum".fields.len]bool = @splat(false);
+    var seen: [@typeInfo(Probe.Question).@"enum".field_names.len]bool = @splat(false);
     var keys: usize = 0;
     var input_path_works = false;
 

@@ -770,7 +770,7 @@ const MouseModel = struct {
         while (rest.len != 0) {
             try std.testing.expect(std.mem.startsWith(u8, rest, seq.csi ++ "?"));
             rest = rest[3..];
-            const end = std.mem.indexOfAny(u8, rest, "hl").?;
+            const end = std.mem.findAny(u8, rest, "hl").?;
             const mode = try std.fmt.parseInt(u16, rest[0..end], 10);
             const on = rest[end] == 'h';
             rest = rest[end + 1 ..];
@@ -902,7 +902,7 @@ test "kittyKeyboardSet writes every flag combination the five bits can spell" {
         try kittyKeyboardSet(&out.writer, flags, .add);
 
         var expected: [16]u8 = undefined;
-        const bytes = try std.fmt.bufPrint(&expected, "\x1b[={d};2u", .{value});
+        const bytes = try std.mem.print(&expected, "\x1b[={d};2u", .{value});
         try std.testing.expectEqualStrings(bytes, out.written());
     }
 }
@@ -1073,7 +1073,7 @@ test "no writer here puts two modes in one sequence" {
     var count: usize = 0;
     while (std.mem.find(u8, rest, seq.csi ++ "?")) |at| : (count += 1) {
         const body = rest[at + 3 ..];
-        const end = std.mem.indexOfAny(u8, body, "hl").?;
+        const end = std.mem.findAny(u8, body, "hl").?;
         // One mode number and nothing else: no `;`, no second parameter.
         try std.testing.expect(std.mem.findScalar(u8, body[0..end], ';') == null);
         rest = body[end + 1 ..];

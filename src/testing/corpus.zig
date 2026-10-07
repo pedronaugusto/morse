@@ -24,12 +24,12 @@ pub fn seed(comptime bytes: []const u8) []const u8 {
 
 /// `pattern` written `count` times over, as a comptime string.
 pub fn repeat(comptime pattern: []const u8, comptime count: usize) *const [pattern.len * count]u8 {
-    comptime {
-        var bytes: [pattern.len * count]u8 = undefined;
-        for (0..count) |i| @memcpy(bytes[i * pattern.len ..][0..pattern.len], pattern);
-        const final = bytes;
-        return &final;
-    }
+    const bytes = comptime blk: {
+        var out: [pattern.len * count]u8 = undefined;
+        for (0..count) |i| @memcpy(out[i * pattern.len ..][0..pattern.len], pattern);
+        break :blk out;
+    };
+    return &bytes;
 }
 
 test "a repeated pattern is the pattern count times over" {

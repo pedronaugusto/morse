@@ -1064,7 +1064,7 @@ test "parseKittyKeyboardReply reads every value the five bits can spell" {
     var buffer: [16]u8 = undefined;
     for (0..32) |value| {
         const bits: u5 = @intCast(value);
-        const bytes = try std.fmt.bufPrint(&buffer, "\x1b[?{d}u", .{value});
+        const bytes = try std.mem.print(&buffer, "\x1b[?{d}u", .{value});
         try std.testing.expectEqual(bits, parseKittyKeyboardReply(bytes).?.bits());
     }
 }

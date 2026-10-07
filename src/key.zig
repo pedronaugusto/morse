@@ -1727,11 +1727,11 @@ test "every legacy modifier parameter decodes to its modifiers" {
     };
     var buffer: [32]u8 = undefined;
     for (cases) |case| {
-        const arrow = try std.fmt.bufPrint(&buffer, "\x1b[1;{s}A", .{case.param});
+        const arrow = try std.mem.print(&buffer, "\x1b[1;{s}A", .{case.param});
         try std.testing.expectEqual(case.mods, oneKey(arrow).?.mods);
     }
     for (cases) |case| {
-        const del = try std.fmt.bufPrint(&buffer, "\x1b[3;{s}~", .{case.param});
+        const del = try std.mem.print(&buffer, "\x1b[3;{s}~", .{case.param});
         const ev = oneKey(del).?;
         try std.testing.expectEqual(Key.delete, ev.key);
         try std.testing.expectEqual(case.mods, ev.mods);
@@ -1841,7 +1841,7 @@ test "every kitty functional codepoint this package names decodes" {
     };
     var buffer: [32]u8 = undefined;
     for (cases) |case| {
-        const bytes = try std.fmt.bufPrint(&buffer, "\x1b[{d}u", .{case.cp});
+        const bytes = try std.mem.print(&buffer, "\x1b[{d}u", .{case.cp});
         try std.testing.expectEqual(case.key, oneKey(bytes).?.key);
     }
 }
@@ -3167,7 +3167,7 @@ test "win32 input mode carries every modifier combination the encoding has" {
             const composing = state == alt and case.vk >= 0x60 and case.vk <= 0x69;
             if (composing) continue;
 
-            const bytes = try std.fmt.bufPrint(
+            const bytes = try std.mem.print(
                 &buffer,
                 "\x1b[{d};0;0;1;{d};1_",
                 .{ case.vk, state },
@@ -3408,7 +3408,7 @@ test "win32 input mode reads the character composed with Alt and the keypad" {
 
     const alt = 0x0002;
     var buffer: [128]u8 = undefined;
-    const digits = try std.fmt.bufPrint(
+    const digits = try std.mem.print(
         &buffer,
         "\x1b[18;0;0;1;{d};1_\x1b[97;0;0;1;{d};1_\x1b[103;0;0;1;{d};1_",
         .{ alt, alt, alt },
@@ -3451,7 +3451,7 @@ test "win32 input mode reads AltGr as the character, not as control and alt" {
     const left_ctrl = 0x0008;
 
     var buffer: [64]u8 = undefined;
-    const altgr = try std.fmt.bufPrint(
+    const altgr = try std.mem.print(
         &buffer,
         "\x1b[81;0;64;1;{d};1_",
         .{right_alt | left_ctrl},
@@ -3462,7 +3462,7 @@ test "win32 input mode reads AltGr as the character, not as control and alt" {
     try std.testing.expectEqualStrings("@", ev.text());
 
     // The same bits with no character are still control and alt.
-    const chord = try std.fmt.bufPrint(
+    const chord = try std.mem.print(
         &buffer,
         "\x1b[112;0;0;1;{d};1_",
         .{right_alt | left_ctrl},
@@ -3473,7 +3473,7 @@ test "win32 input mode reads AltGr as the character, not as control and alt" {
 
     // And left alt with control is control and alt however it is spelled.
     const left_alt = 0x0002;
-    const both = try std.fmt.bufPrint(
+    const both = try std.mem.print(
         &buffer,
         "\x1b[81;0;64;1;{d};1_",
         .{left_alt | left_ctrl},
@@ -3492,7 +3492,7 @@ test "a win32 sequence and a console record decode to the same key" {
             // composition in both shapes, and neither reports it.
             if (state == 0x02 and case.vk >= 0x60 and case.vk <= 0x69) continue;
 
-            const bytes = try std.fmt.bufPrint(
+            const bytes = try std.mem.print(
                 &buffer,
                 "\x1b[{d};0;0;1;{d};1_",
                 .{ case.vk, state },
@@ -3536,7 +3536,7 @@ test "the unsided Ctrl and Alt are the right-hand keys when the enhanced bit say
     };
     var buffer: [64]u8 = undefined;
     for (cases) |case| {
-        const bytes = try std.fmt.bufPrint(&buffer, "\x1b[{d};0;0;1;{d};1_", .{ case.vk, case.state });
+        const bytes = try std.mem.print(&buffer, "\x1b[{d};0;0;1;{d};1_", .{ case.vk, case.state });
         const from_bytes = oneKey(bytes) orelse return error.TestExpectedEqual;
         try std.testing.expectEqual(case.key, from_bytes.key);
         var records: win32.ConsoleDecoder = .{};
@@ -3763,7 +3763,7 @@ fn keyCorpus(comptime visit: anytype, context: anytype) !void {
     var buffer: [96]u8 = undefined;
     const Print = struct {
         fn go(comptime fmt: []const u8, b: []u8, args: anytype) []const u8 {
-            return std.fmt.bufPrint(b, fmt, args) catch unreachable; // unreachable: the corpus uses a 96-byte buffer for bounded numeric key sequences
+            return std.mem.print(b, fmt, args) catch unreachable; // unreachable: the corpus uses a 96-byte buffer for bounded numeric key sequences
         }
     };
 

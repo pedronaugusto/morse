@@ -475,7 +475,7 @@ test "parseMouse reads every button this package names" {
     };
     var buffer: [32]u8 = undefined;
     for (cases) |case| {
-        const bytes = try std.fmt.bufPrint(&buffer, "\x1b[<{s};1;1M", .{case.code});
+        const bytes = try std.mem.print(&buffer, "\x1b[<{s};1;1M", .{case.code});
         try std.testing.expectEqual(case.button, parseMouse(bytes).?.button);
     }
 }
@@ -823,7 +823,7 @@ test "parseMouseRxvt reads every button the encoding can name" {
     };
     var buffer: [32]u8 = undefined;
     for (cases) |case| {
-        const bytes = try std.fmt.bufPrint(&buffer, "\x1b[{d};33;33M", .{
+        const bytes = try std.mem.print(&buffer, "\x1b[{d};33;33M", .{
             @as(u32, case.code) + x10_bias,
         });
         const ev = parseMouseRxvt(bytes).?;

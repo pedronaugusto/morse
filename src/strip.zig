@@ -117,7 +117,7 @@ pub const Stripper = struct {
                     else => s.state = .text,
                 },
                 .string => {
-                    const at = std.mem.indexOfAny(u8, bytes[i..], &.{ seq.bel, seq.esc }) orelse return;
+                    const at = std.mem.findAny(u8, bytes[i..], &.{ seq.bel, seq.esc }) orelse return;
                     i += at + 1;
                     s.state = if (bytes[i - 1] == seq.bel) .text else .string_escape;
                 },

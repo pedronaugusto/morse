@@ -198,7 +198,9 @@ pub const Color = extern struct {
     /// two that can disagree on the very type whose layout exists for the
     /// byte one.
     pub fn eql(a: Color, b: Color) bool {
-        return @as(u32, @bitCast(a)) == @as(u32, @bitCast(b));
+        const a_bits: u32 = @bitCast(std.mem.asBytes(&a).*);
+        const b_bits: u32 = @bitCast(std.mem.asBytes(&b).*);
+        return a_bits == b_bits;
     }
 
     /// How many colours a terminal shows, which is what `fit` is told.
@@ -726,7 +728,7 @@ comptime {
     // anywhere but the front, would open a hole and quietly make that
     // comparison read it.
     var total: usize = 0;
-    for (@typeInfo(Style).@"struct".fields) |field| total += @sizeOf(field.type);
+    for (@typeInfo(Style).@"struct".field_types) |T| total += @sizeOf(T);
     std.debug.assert(total == @sizeOf(Style));
     std.debug.assert(@alignOf(Style) == 1);
     std.debug.assert(@sizeOf(Color) == 4);
@@ -1704,7 +1706,7 @@ test "a colour is four bytes in every form, and no form has padding" {
 
     // Three colours and ten one-byte fields, with nothing in between.
     var total: usize = 0;
-    inline for (@typeInfo(Style).@"struct".fields) |field| total += @sizeOf(field.type);
+    inline for (@typeInfo(Style).@"struct".field_types) |T| total += @sizeOf(T);
     try std.testing.expectEqual(@sizeOf(Style), total);
 }
 
@@ -1788,6 +1790,10 @@ test "a colour a constructor made has no rubbish in the channels it does not use
     try std.testing.expect(!Color.ansi(.red).eql(Color.palette(1)));
     try std.testing.expect(Color.rgb(1, 2, 3).eql(Color.rgb(1, 2, 3)));
     try std.testing.expect(!Color.rgb(1, 2, 3).eql(Color.rgb(1, 2, 4)));
+
+    // The comparison runs at comptime, like the constructors it compares.
+    comptime std.debug.assert(Color.rgb(1, 2, 3).eql(Color.rgb(1, 2, 3)));
+    comptime std.debug.assert(!Color.ansi(.red).eql(Color.palette(1)));
 }
 
 test "a row of cells holding a style compares with memcmp" {

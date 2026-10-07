@@ -1431,7 +1431,7 @@ test "the startup probe is one write and a stream of answers" {
     var keys: morse.KeyParser = .init(&input);
     var events = keys.feed(v.replies());
 
-    var answered: std.EnumSet(morse.Probe.Question) = .initEmpty();
+    var answered: std.EnumSet(morse.Probe.Question) = .empty;
     while (events.next()) |event| {
         // Every answer the emulator sent is read as an answer: nothing it
         // says back to the probe is left as bytes for the program.
@@ -1850,7 +1850,7 @@ const Difference = enum {
 fn difference(case: KeyCase, enc: morse.KeyEncoding, ours: []const u8, theirs: []const u8) ?Difference {
     const kitty = enc.kitty.bits() != 0;
     if (kitty) {
-        if (enc.kitty.report_alternate_keys and std.mem.indexOf(u8, theirs, "::") != null) switch (case.key) {
+        if (enc.kitty.report_alternate_keys and std.mem.find(u8, theirs, "::") != null) switch (case.key) {
             .kp_0, .kp_1, .kp_2, .kp_3, .kp_4, .kp_5, .kp_6, .kp_7, .kp_8, .kp_9 => return .keypad_base_layout_key,
             .kp_decimal, .kp_divide, .kp_multiply, .kp_subtract, .kp_add, .kp_equal, .kp_separator => return .keypad_base_layout_key,
             else => {},
@@ -1892,9 +1892,10 @@ test "every key is written as the emulator's encoder writes it, or the differenc
     n_keys += 1;
     keys[n_keys] = .{ .key = .{ .char = 0xe9 }, .mods = .{}, .kind = .press };
     n_keys += 1;
-    inline for (@typeInfo(morse.Key).@"union".fields) |field| {
-        if (field.type == void) {
-            const k = @unionInit(morse.Key, field.name, {});
+    const key_info = @typeInfo(morse.Key).@"union";
+    inline for (key_info.field_names, key_info.field_types) |name, T| {
+        if (T == void) {
+            const k = @unionInit(morse.Key, name, {});
             if (ghosttyNamed(k) != null) {
                 keys[n_keys] = .{ .key = k, .mods = .{}, .kind = .press };
                 n_keys += 1;
