@@ -67,6 +67,28 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(examples_step);
 
     //=====================================================================
+    // Benchmarks
+    //
+    // Speed ceilings with a clock in them, run by hand on a quiet machine:
+    // `zig build bench`, usually with -Doptimize=ReleaseFast. `check`
+    // compiles them, so CI keeps them building, and nothing in CI runs
+    // them: a timing on a shared runner says more about the runner.
+    //=====================================================================
+
+    const bench = b.addTest(.{
+        .name = "morse-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/budgets.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "morse", .module = module }},
+        }),
+    });
+    const bench_step = b.step("bench", "Run the speed ceilings in bench/ (by hand, on a quiet machine)");
+    bench_step.dependOn(&b.addRunArtifact(bench).step);
+    check_step.dependOn(&bench.step);
+
+    //=====================================================================
     // Conformance
     //
     // The suite above pins every writer to its exact bytes, which says morse
