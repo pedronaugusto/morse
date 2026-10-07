@@ -231,7 +231,7 @@ test "clipboardWrite agrees with the standard library encoder on every byte" {
 test "clipboardWrite streams past the writer's buffer without a scratch buffer" {
     // The payload is far larger than the writer's buffer, so the drain path
     // runs many times mid-encode.
-    const plain = "0123456789abcdef" ** 512;
+    const plain = corpus.repeat("0123456789abcdef", 512);
     var backing: [64]u8 = undefined;
     var counting: Writer.Discarding = .init(&backing);
 

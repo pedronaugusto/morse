@@ -2070,7 +2070,7 @@ test "an abandoned iterator exposes the unread tail for a later feed" {
     var storage: [KeyParser.min_buffer]u8 = undefined;
     var parser: KeyParser = .init(&storage);
 
-    const input = "a" ** KeyParser.min_buffer ++ "b";
+    const input = corpus.repeat("a", KeyParser.min_buffer) ++ "b";
     var first = parser.feed(input);
     const run = first.next().?.text;
     try std.testing.expectEqual(@as(usize, KeyParser.min_buffer), run.len);
@@ -2282,7 +2282,7 @@ test "an overflowing control string keeps the escape at the buffer boundary" {
 test "flushing an overflowing string counts its undecided escape" {
     var buffer: [KeyParser.min_buffer]u8 = undefined;
     var parser = KeyParser.init(&buffer);
-    var first = parser.feed("\x1b]" ++ "x" ** 62);
+    var first = parser.feed("\x1b]" ++ corpus.repeat("x", 62));
     try std.testing.expect(first.next() == null);
     var tail = parser.feed("x\x1b");
     try std.testing.expect(tail.next() == null);

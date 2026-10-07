@@ -824,9 +824,9 @@ test "DeviceAttributes.has finds what the terminal claimed and nothing else" {
 }
 
 test "parseDeviceAttributes accepts exactly DeviceAttributes.max_attributes and no more" {
-    const full = parseDeviceAttributes("\x1b[?62" ++ (";1" ** DeviceAttributes.max_attributes) ++ "c").?;
+    const full = parseDeviceAttributes("\x1b[?62" ++ corpus.repeat(";1", DeviceAttributes.max_attributes) ++ "c").?;
     try std.testing.expectEqual(@as(u8, DeviceAttributes.max_attributes), full.attribute_count);
-    try std.testing.expect(parseDeviceAttributes("\x1b[?62" ++ (";1" ** (DeviceAttributes.max_attributes + 1)) ++ "c") == null);
+    try std.testing.expect(parseDeviceAttributes("\x1b[?62" ++ corpus.repeat(";1", DeviceAttributes.max_attributes + 1) ++ "c") == null);
 }
 
 test "two DeviceAttributes carrying the same reply compare equal" {

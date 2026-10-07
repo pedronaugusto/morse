@@ -1428,7 +1428,7 @@ test "a payload that fits writes one sequence and no m key" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const data = [_]u8{0xab} ** chunk_bytes;
+    const data: [chunk_bytes]u8 = @splat(0xab);
     try transmitImage(&out.writer, .{ .image = .{ .id = 1 } }, &data);
 
     var commands: Commands = .{ .rest = out.written() };
@@ -1442,7 +1442,7 @@ test "a payload one byte too long is split, and the chunks obey the rule" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const data = [_]u8{0xcd} ** (chunk_bytes + 1);
+    const data: [chunk_bytes + 1]u8 = @splat(0xcd);
     try transmitImage(&out.writer, .{ .image = .{ .id = 1 }, .quiet = .silent }, &data);
 
     var commands: Commands = .{ .rest = out.written() };
@@ -1833,7 +1833,7 @@ test "a chunked frame carries a=f on every sequence" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const data = [_]u8{0xcd} ** (chunk_bytes + 1);
+    const data: [chunk_bytes + 1]u8 = @splat(0xcd);
     try transmitFrame(&out.writer, .{ .image = .{ .id = 1 }, .quiet = .silent }, &data);
 
     var commands: Commands = .{ .rest = out.written() };
@@ -1856,7 +1856,7 @@ test "a frame that fits writes one sequence and no m key" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const data = [_]u8{0xab} ** chunk_bytes;
+    const data: [chunk_bytes]u8 = @splat(0xab);
     try transmitFrame(&out.writer, .{ .image = .{ .id = 1 } }, &data);
 
     var commands: Commands = .{ .rest = out.written() };
@@ -2122,8 +2122,8 @@ test "fuzz the animation round trip" {
     }.one, .{ .corpus = &.{
         corpus.seed("\x01\x00\x00\x00\x07\x00\x00\x00\x02\x00\x00\x00" ++
             "\x03\x00\x00\x00\x30\x00\x00\x00"),
-        corpus.seed("\x00" ** 20),
-        corpus.seed("\xff" ** 20),
+        corpus.seed(corpus.repeat("\x00", 20)),
+        corpus.seed(corpus.repeat("\xff", 20)),
     } });
 }
 

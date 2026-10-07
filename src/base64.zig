@@ -23,7 +23,7 @@ pub const invalid: u8 = 0xff;
 
 /// The reverse of `alphabet`: a byte to its six bits, or `invalid`.
 pub const index: [256]u8 = blk: {
-    var table = [_]u8{invalid} ** 256;
+    var table: [256]u8 = @splat(invalid);
     for (alphabet, 0..) |c, i| table[c] = i;
     break :blk table;
 };

@@ -986,7 +986,7 @@ test "an image is transmitted, placed and taken away" {
     defer v.deinit();
 
     // Two by two, four bytes a pixel.
-    const pixels = [_]u8{0xff} ** 16;
+    const pixels: [16]u8 = @splat(0xff);
     try morse.transmitImage(v.w(), .{
         .image = .{ .id = 7 },
         .format = .rgba,
@@ -1044,7 +1044,7 @@ test "a graphics command that asks for an answer gets one" {
     try v.init(80, 24);
     defer v.deinit();
 
-    const pixels = [_]u8{0xff} ** 4;
+    const pixels: [4]u8 = @splat(0xff);
     v.resetReplies();
     try morse.transmitImage(v.w(), .{
         .image = .{ .id = 31 },
@@ -1080,7 +1080,7 @@ test "an animation is built out of frames, played, and composed" {
     defer v.deinit();
 
     // The image the frames belong to: two by two, RGBA, all white.
-    const white = [_]u8{0xff} ** 16;
+    const white: [16]u8 = @splat(0xff);
     try morse.transmitImage(v.w(), .{
         .image = .{ .id = 9 },
         .format = .rgba,
@@ -1097,7 +1097,12 @@ test "an animation is built out of frames, played, and composed" {
     try check(images.imageById(9).?.animation == null);
 
     // Two frames on top of it, each a full-size rectangle with a gap.
-    const red = [_]u8{ 0xff, 0x00, 0x00, 0xff } ** 4;
+    const red = [_]u8{
+        0xff, 0x00, 0x00, 0xff,
+        0xff, 0x00, 0x00, 0xff,
+        0xff, 0x00, 0x00, 0xff,
+        0xff, 0x00, 0x00, 0xff,
+    };
     try morse.transmitFrame(v.w(), .{
         .image = .{ .id = 9 },
         .format = .rgba,
@@ -1108,7 +1113,12 @@ test "an animation is built out of frames, played, and composed" {
     }, &red);
     v.feed();
 
-    const blue = [_]u8{ 0x00, 0x00, 0xff, 0xff } ** 4;
+    const blue = [_]u8{
+        0x00, 0x00, 0xff, 0xff,
+        0x00, 0x00, 0xff, 0xff,
+        0x00, 0x00, 0xff, 0xff,
+        0x00, 0x00, 0xff, 0xff,
+    };
     try morse.transmitFrame(v.w(), .{
         .image = .{ .id = 9 },
         .format = .rgba,
@@ -1187,7 +1197,7 @@ test "a frame command is answered, and a chunked one is answered once" {
     try v.init(80, 24);
     defer v.deinit();
 
-    const pixels = [_]u8{0xff} ** 16;
+    const pixels: [16]u8 = @splat(0xff);
     try morse.transmitImage(v.w(), .{
         .image = .{ .id = 11 },
         .format = .rgba,
@@ -1199,7 +1209,7 @@ test "a frame command is answered, and a chunked one is answered once" {
 
     // A frame large enough to need two sequences, which is where the
     // protocol asks for `a=f` on the continuation chunk as well.
-    const frame = [_]u8{0x40} ** (morse.graphics_chunk_bytes + 4);
+    const frame: [morse.graphics_chunk_bytes + 4]u8 = @splat(0x40);
     v.resetReplies();
     try morse.transmitFrame(&v.writer, .{
         .image = .{ .id = 11 },
@@ -1900,7 +1910,7 @@ test "every key is written as the emulator's encoder writes it, or the differenc
     var counts = std.EnumArray(Difference, usize).initFill(0);
     var same: usize = 0;
     var unexplained: usize = 0;
-    var seen = [_]bool{false} ** 1024;
+    var seen: [1024]bool = @splat(false);
     for (keys[0..n_keys]) |base_case| {
         var mods_bits: u8 = 0;
         while (mods_bits < 64) : (mods_bits += 1) {

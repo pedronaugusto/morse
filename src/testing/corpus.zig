@@ -1,4 +1,4 @@
-//! Seed inputs for the fuzz tests.
+//! Test inputs: the fuzz tests' seeds and repeated byte runs.
 //!
 //! Test support only: nothing here is re-exported by `morse.zig`, and nothing
 //! outside a `test` block references it, so it is never compiled into a
@@ -20,6 +20,22 @@ pub fn seed(comptime bytes: []const u8) []const u8 {
         @truncate(bytes.len >> 24),
     };
     return prefix ++ bytes;
+}
+
+/// `pattern` written `count` times over, as a comptime string.
+pub fn repeat(comptime pattern: []const u8, comptime count: usize) *const [pattern.len * count]u8 {
+    comptime {
+        var bytes: [pattern.len * count]u8 = undefined;
+        for (0..count) |i| @memcpy(bytes[i * pattern.len ..][0..pattern.len], pattern);
+        const final = bytes;
+        return &final;
+    }
+}
+
+test "a repeated pattern is the pattern count times over" {
+    try std.testing.expectEqualStrings(";1;1;1", repeat(";1", 3));
+    try std.testing.expectEqualStrings("", repeat("ab", 0));
+    try std.testing.expectEqual(@as(usize, 8192), repeat("0123456789abcdef", 512).len);
 }
 
 test "a seeded entry is its length and then itself" {
