@@ -234,7 +234,7 @@ pub const Mouse = packed struct(u32) {
         /// The DEC private mode that asks for this motion, ready to hand to
         /// `queryMode`.
         pub fn number(m: Mouse.Motion) u16 {
-            return @intFromEnum(m);
+            return @backingInt(m);
         }
     };
 
@@ -263,7 +263,7 @@ pub const Mouse = packed struct(u32) {
         /// The DEC private mode that asks for this encoding, ready to hand to
         /// `queryMode`.
         pub fn number(e: Mouse.Encoding) u16 {
-            return @intFromEnum(e);
+            return @backingInt(e);
         }
     };
 };
@@ -417,7 +417,7 @@ pub fn kittyKeyboardSet(w: *Writer, flags: KittyFlags, how: KittyFlagChange) Wri
     try w.writeAll(seq.csi ++ "=");
     try seq.writeInt(w, flags.bits());
     try w.writeByte(';');
-    try seq.writeInt(w, @intFromEnum(how));
+    try seq.writeInt(w, @backingInt(how));
     try w.writeByte('u');
 }
 
@@ -477,7 +477,7 @@ pub const ModifyKeys = enum(u8) {
 /// timeout or explicit quiescence period decide whether it went unanswered.
 pub fn modifyKeys(w: *Writer, resource: ModifyKeys, value: ?u8) Writer.Error!void {
     try w.writeAll(seq.csi ++ ">");
-    try seq.writeInt(w, @intFromEnum(resource));
+    try seq.writeInt(w, @backingInt(resource));
     if (value) |level| {
         try w.writeByte(';');
         try seq.writeInt(w, level);
@@ -499,7 +499,7 @@ pub fn modifyKeysReset(w: *Writer) Writer.Error!void {
 /// found.
 pub fn queryModifyKeys(w: *Writer, resource: ModifyKeys) Writer.Error!void {
     try w.writeAll(seq.csi ++ "?");
-    try seq.writeInt(w, @intFromEnum(resource));
+    try seq.writeInt(w, @backingInt(resource));
     try w.writeByte('m');
 }
 
@@ -527,7 +527,7 @@ pub const CursorShape = enum(u8) {
 /// should set `.default` again on the way out.
 pub fn cursorShape(w: *Writer, shape: CursorShape) Writer.Error!void {
     try w.writeAll(seq.csi);
-    try seq.writeInt(w, @intFromEnum(shape));
+    try seq.writeInt(w, @backingInt(shape));
     try w.writeAll(" q");
 }
 

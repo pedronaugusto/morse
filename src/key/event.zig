@@ -524,8 +524,8 @@ pub fn protocolCode(key: Key) ?u21 {
         else => blk: {
             // Every other named key has a codepoint in the protocol's block,
             // in the order `Key` declares them from caps lock on.
-            const first = @intFromEnum(std.meta.Tag(Key).caps_lock);
-            const at = @intFromEnum(std.meta.activeTag(key)) - first;
+            const first = @backingInt(std.meta.Tag(Key).caps_lock);
+            const at = @backingInt(std.meta.activeTag(key)) - first;
             break :blk named_codes[at];
         },
     };
@@ -544,7 +544,7 @@ const named_codes = [_]u21{
 
 comptime {
     const tags = @typeInfo(Key).@"union".fields;
-    std.debug.assert(named_codes.len == tags.len - @intFromEnum(std.meta.Tag(Key).caps_lock));
+    std.debug.assert(named_codes.len == tags.len - @backingInt(std.meta.Tag(Key).caps_lock));
 }
 
 /// Records the bytes a key produced, when it produced any.

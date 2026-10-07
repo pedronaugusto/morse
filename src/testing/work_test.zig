@@ -255,10 +255,10 @@ fn inputCounts(input: []const u8, storage: []u8, read: usize) ![std.meta.fields(
         var batch = parser.feed(input[offset..end]);
         while (batch.next()) |event| {
             switch (event) {
-                .text => |text| counts[@intFromEnum(std.meta.Tag(key.Event).key)] +=
+                .text => |text| counts[@backingInt(std.meta.Tag(key.Event).key)] +=
                     try std.unicode.utf8CountCodepoints(text),
                 .overflow, .unhandled => return error.UnexpectedEvent,
-                else => counts[@intFromEnum(event)] += 1,
+                else => counts[@backingInt(event)] += 1,
             }
             try std.testing.expect(parser.pending().len <= storage.len);
         }
@@ -282,7 +282,7 @@ test "work: input counts and bounds hold across buffer and read sizes" {
     for ([_][]const u8{ text, mixed }) |input| {
         const expected = try inputCounts(input, &storage, block);
         if (input.ptr == text.ptr) {
-            try std.testing.expectEqual(block, expected[@intFromEnum(std.meta.Tag(key.Event).key)]);
+            try std.testing.expectEqual(block, expected[@backingInt(std.meta.Tag(key.Event).key)]);
         }
         for (buffers) |size| {
             for (reads) |read| {

@@ -183,7 +183,7 @@ pub const CursorColor = extern struct {
 /// and does nothing.
 pub fn extraCursors(w: *Writer, shape: ExtraCursorShape, spans: []const CursorSpan) Writer.Error!void {
     try w.writeAll(introducer);
-    try seq.writeInt(w, @intFromEnum(shape));
+    try seq.writeInt(w, @backingInt(shape));
     for (spans) |span| {
         try w.writeByte(';');
         switch (span) {
@@ -232,10 +232,10 @@ pub fn extraCursorColor(
     color: CursorColor,
 ) Writer.Error!void {
     try w.writeAll(introducer);
-    try seq.writeInt(w, @intFromEnum(which));
+    try seq.writeInt(w, @backingInt(which));
     try w.writeByte(';');
     switch (color.space) {
-        .unset, .special => try seq.writeInt(w, @intFromEnum(color.space)),
+        .unset, .special => try seq.writeInt(w, @backingInt(color.space)),
         .rgb => {
             try w.writeAll("2:");
             try seq.writeInt(w, color.r);
@@ -445,7 +445,7 @@ pub const ExtraCursors = struct {
         // `parseExtraCursors` has already checked the shape and the type, so
         // both scans here are reads rather than validation.
         const shape = seq.scanInt(u8, block).?;
-        it.shape = @enumFromInt(shape.value);
+        it.shape = @fromBackingInt(@intCast(shape.value));
         block = block[shape.len + 1 ..];
         const kind = seq.scanInt(u8, block).?;
         it.stride = switch (kind.value) {
@@ -1020,7 +1020,7 @@ test "fuzz parseExtraCursorSupport" {
 /// arrangement `parseModeReply` and `parseCursorPosition` are tested under.
 fn writeReplyBlock(w: *Writer, shape: ExtraCursorShape, span: CursorSpan) Writer.Error!void {
     try w.writeByte(';');
-    try seq.writeInt(w, @intFromEnum(shape));
+    try seq.writeInt(w, @backingInt(shape));
     switch (span) {
         .main_cursor => try w.writeAll(":0"),
         .cells => |cells| {
@@ -1054,10 +1054,10 @@ fn writeReplyBlock(w: *Writer, shape: ExtraCursorShape, span: CursorSpan) Writer
 /// `extraCursorColor` with its introducer trimmed off.
 fn writeReplyColor(w: *Writer, which: CursorColorTarget, color: CursorColor) Writer.Error!void {
     try w.writeByte(';');
-    try seq.writeInt(w, @intFromEnum(which));
+    try seq.writeInt(w, @backingInt(which));
     try w.writeByte(':');
     switch (color.space) {
-        .unset, .special => try seq.writeInt(w, @intFromEnum(color.space)),
+        .unset, .special => try seq.writeInt(w, @backingInt(color.space)),
         .rgb => {
             try w.writeAll("2:");
             try seq.writeInt(w, color.r);
@@ -1086,7 +1086,7 @@ test "a cursor colour is four bytes, and its tag is the protocol's number" {
     for (cases) |case| {
         try std.testing.expectEqualSlices(u8, &case.bytes, std.mem.asBytes(&case.color));
         // The first byte is the COLOR_SPACE the protocol names.
-        try std.testing.expectEqual(case.bytes[0], @intFromEnum(case.color.space));
+        try std.testing.expectEqual(case.bytes[0], @backingInt(case.color.space));
     }
 
     try std.testing.expectEqual(@as(u8, 9), CursorColor.indexed(9).index());

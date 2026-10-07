@@ -230,8 +230,8 @@ fn spellTextSize(w: anytype, size: TextSize, text: []const u8) !void {
     if (size.width != 0) try writeSizeKey(w, &any, 'w', size.width);
     if (size.numerator != 0) try writeSizeKey(w, &any, 'n', size.numerator);
     if (size.denominator != 0) try writeSizeKey(w, &any, 'd', size.denominator);
-    if (size.vertical != .top) try writeSizeKey(w, &any, 'v', @intFromEnum(size.vertical));
-    if (size.horizontal != .left) try writeSizeKey(w, &any, 'h', @intFromEnum(size.horizontal));
+    if (size.vertical != .top) try writeSizeKey(w, &any, 'v', @backingInt(size.vertical));
+    if (size.horizontal != .left) try writeSizeKey(w, &any, 'h', @backingInt(size.horizontal));
 
     try w.writeByte(';');
     try w.writeAll(text);
@@ -573,8 +573,8 @@ test "every hyperlink and sized text the writers write reads back as written" {
             .width = random.int(u3),
             .numerator = random.int(u4),
             .denominator = random.int(u4),
-            .vertical = @enumFromInt(random.uintLessThan(u8, 3)),
-            .horizontal = @enumFromInt(random.uintLessThan(u8, 3)),
+            .vertical = @fromBackingInt(@intCast(random.uintLessThan(u8, 3))),
+            .horizontal = @fromBackingInt(@intCast(random.uintLessThan(u8, 3))),
         };
 
         out.clearRetainingCapacity();
@@ -783,8 +783,8 @@ test "every hyperlink and text-size cost is the length its writer writes" {
             .width = random.int(u3),
             .numerator = random.int(u4),
             .denominator = random.int(u4),
-            .vertical = @enumFromInt(random.uintLessThan(u8, 3)),
-            .horizontal = @enumFromInt(random.uintLessThan(u8, 3)),
+            .vertical = @fromBackingInt(@intCast(random.uintLessThan(u8, 3))),
+            .horizontal = @fromBackingInt(@intCast(random.uintLessThan(u8, 3))),
         };
 
         var w: Writer = .fixed(&buffer);

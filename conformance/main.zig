@@ -362,7 +362,7 @@ fn mouseState(v: *Vt) MouseState {
 fn mouseExpected(m: morse.Mouse) MouseState {
     var modes: [8]bool = @splat(false);
     for (mouse_modes, &modes) |mode, *on| {
-        const number = @intFromEnum(mode);
+        const number = @backingInt(mode);
         on.* = number == m.motion.number() or number == m.encoding.number();
     }
     return .{
@@ -387,7 +387,7 @@ const mouse_off: MouseState = .{ .event = .none, .format = .x10, .modes = @splat
 fn mouseLeftovers(v: *Vt, subset: usize) !void {
     try morse.mouseOff(v.w());
     for (mouse_modes, 0..) |mode, i| {
-        if (subset & (@as(usize, 1) << @intCast(i)) != 0) try morse.setMode(v.w(), @intFromEnum(mode), true);
+        if (subset & (@as(usize, 1) << @intCast(i)) != 0) try morse.setMode(v.w(), @backingInt(mode), true);
     }
     v.feed();
 }
@@ -556,7 +556,7 @@ fn expectedStyle(style: morse.Style) vt.Style {
             .invisible = style.hidden,
             .strikethrough = style.strikethrough,
             .overline = style.overline,
-            .underline = @enumFromInt(@intFromEnum(style.underline)),
+            .underline = @fromBackingInt(@intCast(@backingInt(style.underline))),
         },
     };
 }
@@ -1742,7 +1742,7 @@ fn ghosttyNamed(k: morse.Key) ?GhosttyKey {
         .right_ctrl => .control_right,
         .right_alt => .alt_right,
         .right_super => .meta_right,
-        .f => |n| if (n >= 1 and n <= 25) @enumFromInt(@intFromEnum(GhosttyKey.f1) + @as(c_int, n - 1)) else null,
+        .f => |n| if (n >= 1 and n <= 25) @fromBackingInt(@intCast(@backingInt(GhosttyKey.f1) + @as(c_int, n - 1))) else null,
         else => null,
     };
 }
@@ -1964,7 +1964,7 @@ test "every key is written as the emulator's encoder writes it, or the differenc
                     }
                     const why = difference(case, enc, ours.buffered(), theirs.buffered()) orelse {
                         unexplained += 1;
-                        const sig = @as(usize, @intFromEnum(std.meta.activeTag(case.key))) * 8 + @as(usize, @intFromEnum(case.kind)) * 2 + @intFromBool(state >= 16);
+                        const sig = @as(usize, @backingInt(std.meta.activeTag(case.key))) * 8 + @as(usize, @backingInt(case.kind)) * 2 + @intFromBool(state >= 16);
                         if (!seen[sig % seen.len]) {
                             seen[sig % seen.len] = true;
                             std.log.info("{s} {any} {any} mods={x} kitty={b} state={d}\n  morse   {any}\n  ghostty {any}\n", .{ @tagName(case.key), case.key, case.kind, case.mods.bits(), enc.kitty.bits(), state, ours.buffered(), theirs.buffered() });

@@ -111,7 +111,7 @@ fn spellSixel(w: anytype, image: Sixel) !void {
     try w.writeAll(seq.dcs);
     try seq.writeInt(w, image.aspect);
     try w.writeByte(';');
-    try seq.writeInt(w, @intFromEnum(image.background));
+    try seq.writeInt(w, @backingInt(image.background));
     try w.writeByte(';');
     try seq.writeInt(w, image.grid);
     try w.writeAll("q\"1;1;");
@@ -294,9 +294,9 @@ pub const SixelGraphicsQuery = enum(u8) {
 /// without the question, says nothing.
 pub fn querySixelGraphics(w: *Writer, item: SixelGraphicsItem, which: SixelGraphicsQuery) Writer.Error!void {
     try w.writeAll(seq.csi ++ "?");
-    try seq.writeInt(w, @intFromEnum(item));
+    try seq.writeInt(w, @backingInt(item));
     try w.writeByte(';');
-    try seq.writeInt(w, @intFromEnum(which));
+    try seq.writeInt(w, @backingInt(which));
     try w.writeAll(";0S");
 }
 
@@ -354,7 +354,7 @@ pub fn parseSixelGraphics(bytes: []const u8) ?SixelGraphicsReport {
     const status_scan = seq.scanInt(u8, rest) orelse return null;
     rest = rest[status_scan.len..];
     if (status_scan.value > 3) return null;
-    var report: SixelGraphicsReport = .{ .item = item, .status = @enumFromInt(status_scan.value) };
+    var report: SixelGraphicsReport = .{ .item = item, .status = @fromBackingInt(@intCast(status_scan.value)) };
 
     const most: usize = if (item == .geometry) 2 else 1;
     var values: [2]u32 = .{ 0, 0 };
@@ -607,7 +607,7 @@ test "fuzz parseSixelGraphics" {
 
             var output: [64]u8 = undefined;
             var w: Writer = .fixed(&output);
-            try w.print("\x1b[?{d};{d};{d}", .{ @intFromEnum(report.item), @intFromEnum(report.status), report.value });
+            try w.print("\x1b[?{d};{d};{d}", .{ @backingInt(report.item), @backingInt(report.status), report.value });
             if (report.item == .geometry) try w.print(";{d}", .{report.height});
             try w.writeByte('S');
             try testing.expectEqual(report, parseSixelGraphics(w.buffered()).?);

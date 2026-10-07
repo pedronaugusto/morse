@@ -153,7 +153,7 @@ pub const Color = extern struct {
 
     /// One of the sixteen theme colours.
     pub fn ansi(which: Ansi) Color {
-        return .{ .kind = .ansi, .r = @intFromEnum(which) };
+        return .{ .kind = .ansi, .r = @backingInt(which) };
     }
 
     /// One entry of the 256-colour palette.
@@ -181,7 +181,7 @@ pub const Color = extern struct {
     /// The theme slot of an `.ansi` colour. Meaningful only when `kind` is
     /// `.ansi`.
     pub fn toAnsi(color: Color) Ansi {
-        return @enumFromInt(color.r);
+        return @fromBackingInt(@intCast(color.r));
     }
 
     /// The three channels of an `.rgb` colour. Meaningful only when `kind`
@@ -270,13 +270,13 @@ pub const Color = extern struct {
             },
             .ansi => return switch (color.kind) {
                 .default, .ansi => color,
-                .palette => .ansi(@enumFromInt(if (color.index() < 16)
+                .palette => .ansi(@fromBackingInt(@intCast(if (color.index() < 16)
                     color.index()
                 else if (slots) |s|
                     nearestSlot(paletteRgb(color.index()).?, s)
                 else
-                    xterm_entry_slots[color.index() - 16])),
-                .rgb => .ansi(@enumFromInt(nearestSlot(color.toRgb(), slots orelse &xterm_slots))),
+                    xterm_entry_slots[color.index() - 16]))),
+                .rgb => .ansi(@fromBackingInt(@intCast(nearestSlot(color.toRgb(), slots orelse &xterm_slots)))),
             },
         }
     }
@@ -873,9 +873,9 @@ fn applyCode(style: *Style, code: u32) void {
         27 => style.reverse = false,
         28 => style.hidden = false,
         29 => style.strikethrough = false,
-        30...37 => style.fg = .ansi(@enumFromInt(code - 30)),
+        30...37 => style.fg = .ansi(@fromBackingInt(@intCast(code - 30))),
         39 => style.fg = .default,
-        40...47 => style.bg = .ansi(@enumFromInt(code - 40)),
+        40...47 => style.bg = .ansi(@fromBackingInt(@intCast(code - 40))),
         49 => style.bg = .default,
         53 => style.overline = true,
         55 => style.overline = false,
@@ -883,8 +883,8 @@ fn applyCode(style: *Style, code: u32) void {
         73 => style.script = .superscript,
         74 => style.script = .subscript,
         75 => style.script = .none,
-        90...97 => style.fg = .ansi(@enumFromInt(code - 90 + 8)),
-        100...107 => style.bg = .ansi(@enumFromInt(code - 100 + 8)),
+        90...97 => style.fg = .ansi(@fromBackingInt(@intCast(code - 90 + 8))),
+        100...107 => style.bg = .ansi(@fromBackingInt(@intCast(code - 100 + 8))),
         else => {},
     }
 }
@@ -906,7 +906,7 @@ fn sgrByte(field: []const u8) ?u8 {
 /// by terminals as the plain one, so it reads as that.
 fn underlineOf(sub: []const u8) Underline {
     const n = sgrNumber(sub) orelse return .single;
-    return if (n <= 5) @enumFromInt(n) else .single;
+    return if (n <= 5) @fromBackingInt(@intCast(n)) else .single;
 }
 
 /// The colon spelling of an extended colour, from the sub-parameters after
@@ -1011,7 +1011,7 @@ fn spell(out: anytype, from: Style, to: Style, reset: bool) bool {
             params.code(4);
         } else {
             params.compound("4:");
-            params.number(@intFromEnum(to.underline));
+            params.number(@backingInt(to.underline));
         }
     }
     if (to.blink and !base.blink) params.code(5);
@@ -1020,7 +1020,7 @@ fn spell(out: anytype, from: Style, to: Style, reset: bool) bool {
     if (to.strikethrough and !base.strikethrough) params.code(9);
     if (to.overline and !base.overline) params.code(53);
     if (to.script != base.script and to.script != .none) {
-        params.code(@intFromEnum(to.script));
+        params.code(@backingInt(to.script));
     }
 
     if (!base.fg.eql(to.fg)) writeFgBg(&params, to.fg, 39, 30, 90, 38);
@@ -1729,7 +1729,7 @@ test "every constructor writes the fields its kind uses and no others" {
 
 test "every Ansi slot round trips through a colour" {
     for (0..16) |i| {
-        const slot: Ansi = @enumFromInt(i);
+        const slot: Ansi = @fromBackingInt(@intCast(i));
         const color: Color = .ansi(slot);
         try std.testing.expectEqual(slot, color.toAnsi());
         try std.testing.expectEqual(@as(u8, @intCast(i)), color.index());
@@ -1746,7 +1746,7 @@ test "eql and a byte comparison agree on every colour a constructor makes" {
     colors[n] = .default;
     n += 1;
     for (0..16) |i| {
-        colors[n] = .ansi(@enumFromInt(i));
+        colors[n] = .ansi(@fromBackingInt(@intCast(i)));
         n += 1;
     }
     for (0..256) |i| {
@@ -2013,7 +2013,7 @@ test "fitting twice is fitting once, and the result is canonical" {
             for ([_]Color.Profile{ .none, .ansi, .palette, .rgb }) |profile| {
                 const once = Color.fromRgb(c).fit(profile, &fit_oracle.mocha);
                 try std.testing.expectEqual(once, once.fit(profile, &fit_oracle.mocha));
-                try std.testing.expect(@intFromEnum(once.kind) <= @intFromEnum(profile));
+                try std.testing.expect(@backingInt(once.kind) <= @backingInt(profile));
                 // The same four bytes a constructor would have made.
                 const remade: Color = switch (once.kind) {
                     .default => .default,
@@ -2183,7 +2183,7 @@ const oracle = struct {
                 try params.code(4);
             } else {
                 try params.compound("4:");
-                try seq.writeInt(w, @intFromEnum(to.underline));
+                try seq.writeInt(w, @backingInt(to.underline));
             }
         }
         if (to.blink and !base.blink) try params.code(5);
@@ -2192,7 +2192,7 @@ const oracle = struct {
         if (to.strikethrough and !base.strikethrough) try params.code(9);
         if (to.overline and !base.overline) try params.code(53);
         if (to.script != base.script and to.script != .none) {
-            try params.code(@intFromEnum(to.script));
+            try params.code(@backingInt(to.script));
         }
 
         if (!base.fg.eql(to.fg)) try formatFgBg(&params, to.fg, 39, 30, 90, 38);
@@ -2210,7 +2210,7 @@ const oracle = struct {
 fn randomColor(random: std.Random) Color {
     return switch (random.uintLessThan(u8, 4)) {
         0 => .default,
-        1 => .ansi(@enumFromInt(random.uintLessThan(u8, 16))),
+        1 => .ansi(@fromBackingInt(@intCast(random.uintLessThan(u8, 16)))),
         2 => .palette(random.int(u8)),
         else => .rgb(random.int(u8), random.int(u8), random.int(u8)),
     };
@@ -2226,7 +2226,7 @@ fn randomStyle(random: std.Random) Style {
         .bold = random.boolean(),
         .dim = random.boolean(),
         .italic = random.boolean(),
-        .underline = @enumFromInt(random.uintLessThan(u8, 6)),
+        .underline = @fromBackingInt(@intCast(random.uintLessThan(u8, 6))),
         .blink = random.boolean(),
         .reverse = random.boolean(),
         .hidden = random.boolean(),

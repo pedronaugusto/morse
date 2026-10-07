@@ -357,7 +357,7 @@ pub const Rgb16 = extern struct {
 /// reads. Terminals that do not implement the query answer nothing.
 pub fn queryColor(w: *Writer, target: ColorTarget) Writer.Error!void {
     try w.writeAll(seq.osc);
-    try seq.writeInt(w, @intFromEnum(target));
+    try seq.writeInt(w, @backingInt(target));
     try w.writeAll(";?");
     try w.writeAll(seq.st);
 }
@@ -370,7 +370,7 @@ pub fn queryColor(w: *Writer, target: ColorTarget) Writer.Error!void {
 /// choose.
 pub fn setColor(w: *Writer, target: ColorTarget, color: Rgb16) Writer.Error!void {
     try w.writeAll(seq.osc);
-    try seq.writeInt(w, @intFromEnum(target));
+    try seq.writeInt(w, @backingInt(target));
     try w.writeByte(';');
     try writeRgb(w, color);
     try w.writeAll(seq.st);
@@ -385,7 +385,7 @@ pub fn setColor(w: *Writer, target: ColorTarget, color: Rgb16) Writer.Error!void
 /// it again with `setColor`.
 pub fn resetColor(w: *Writer, target: ColorTarget) Writer.Error!void {
     try w.writeAll(seq.osc);
-    try seq.writeInt(w, @as(u16, @intFromEnum(target)) + 100);
+    try seq.writeInt(w, @as(u16, @backingInt(target)) + 100);
     try w.writeByte(';');
     try w.writeAll(seq.st);
 }
@@ -627,7 +627,7 @@ pub const SizeQuery = enum(u8) {
 /// hand should prefer it and keep this for the cases where it has none.
 pub fn queryWindowSize(w: *Writer, what: SizeQuery) Writer.Error!void {
     try w.writeAll(seq.csi);
-    try seq.writeInt(w, @intFromEnum(what));
+    try seq.writeInt(w, @backingInt(what));
     try w.writeByte('t');
 }
 
@@ -1642,7 +1642,7 @@ test "fuzz parseWindowSize" {
             var output: [64]u8 = undefined;
             var w: Writer = .fixed(&output);
             try w.print("\x1b[{d};{d};{d}t", .{
-                @intFromEnum(size.what),
+                @backingInt(size.what),
                 size.height,
                 size.width,
             });

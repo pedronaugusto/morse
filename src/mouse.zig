@@ -105,7 +105,7 @@ pub const MouseEvent = extern struct {
 /// This is what a terminal emulator writes; a program reading a terminal
 /// wants `parseMouse`.
 pub fn encodeMouse(w: *Writer, ev: MouseEvent) Writer.Error!void {
-    var code: u8 = @intFromEnum(ev.button);
+    var code: u8 = @backingInt(ev.button);
     if (ev.shift) code |= 4;
     if (ev.alt) code |= 8;
     if (ev.ctrl) code |= 16;
@@ -768,7 +768,7 @@ test "fuzz parseMouseX10" {
             try std.testing.expect(ev.x <= x10_max and ev.y <= x10_max);
             try std.testing.expect(!ev.pixels);
 
-            var code: u8 = @intFromEnum(ev.button);
+            var code: u8 = @backingInt(ev.button);
             if (ev.shift) code |= 4;
             if (ev.alt) code |= 8;
             if (ev.ctrl) code |= 16;
@@ -926,7 +926,7 @@ test "fuzz parseMouseRxvt" {
             try std.testing.expect(ev.x <= std.math.maxInt(u32) - x10_bias);
             try std.testing.expect(ev.y <= std.math.maxInt(u32) - x10_bias);
 
-            var code: u8 = @intFromEnum(ev.button);
+            var code: u8 = @backingInt(ev.button);
             if (ev.shift) code |= 4;
             if (ev.alt) code |= 8;
             if (ev.ctrl) code |= 16;

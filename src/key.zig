@@ -1128,8 +1128,8 @@ fn colorSchemeEvent(params: Params) ?Event {
     if (params.get(0, 1) != null or params.get(1, 1) != null) return null;
     if (params.get(0, 0) != 997) return null;
     return switch (params.get(1, 0) orelse return null) {
-        @intFromEnum(ColorScheme.dark) => .{ .color_scheme = .dark },
-        @intFromEnum(ColorScheme.light) => .{ .color_scheme = .light },
+        @backingInt(ColorScheme.dark) => .{ .color_scheme = .dark },
+        @backingInt(ColorScheme.light) => .{ .color_scheme = .light },
         else => null,
     };
 }

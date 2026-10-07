@@ -539,8 +539,8 @@ fn writeAnimationImage(k: *Keys, image: AnimationImage) Writer.Error!void {
 /// same seven keys under the same names, so they are spelled once here
 /// rather than twice.
 fn writeMedia(k: *Keys, cmd: anytype) Writer.Error!void {
-    if (cmd.format != .rgba) try k.int('f', @intFromEnum(cmd.format));
-    if (cmd.medium != .direct) try k.char('t', @intFromEnum(cmd.medium));
+    if (cmd.format != .rgba) try k.int('f', @backingInt(cmd.format));
+    if (cmd.medium != .direct) try k.char('t', @backingInt(cmd.medium));
     if (cmd.width != 0) try k.int('s', cmd.width);
     if (cmd.height != 0) try k.int('v', cmd.height);
     if (cmd.size != 0) try k.int('S', cmd.size);
@@ -555,7 +555,7 @@ fn writeTransmit(k: *Keys, cmd: Transmit) Writer.Error!void {
         .display => try k.char('a', 'T'),
         .query => try k.char('a', 'q'),
     }
-    if (cmd.quiet != .answers) try k.int('q', @intFromEnum(cmd.quiet));
+    if (cmd.quiet != .answers) try k.int('q', @backingInt(cmd.quiet));
     try writeImage(k, cmd.image);
     try writeMedia(k, cmd);
     if (cmd.transient) try k.int('N', 1);
@@ -590,7 +590,7 @@ pub fn transmitImage(w: *Writer, cmd: Transmit, data: []const u8) Writer.Error!v
         if (first) {
             try writeTransmit(&keys, cmd);
         } else if (cmd.quiet != .answers) {
-            try keys.int('q', @intFromEnum(cmd.quiet));
+            try keys.int('q', @backingInt(cmd.quiet));
         }
         if (!first or !last) try keys.int('m', if (last) 0 else 1);
         try w.writeByte(';');
@@ -611,7 +611,7 @@ pub fn placeImage(w: *Writer, cmd: Place) Writer.Error!void {
     try w.writeAll(seq.apc ++ "G");
     var keys: Keys = .{ .w = w };
     try keys.char('a', 'p');
-    if (cmd.quiet != .answers) try keys.int('q', @intFromEnum(cmd.quiet));
+    if (cmd.quiet != .answers) try keys.int('q', @backingInt(cmd.quiet));
     try writeImage(&keys, cmd.image);
     try writePlacement(&keys, cmd.placement);
     try w.writeAll(seq.st);
@@ -622,7 +622,7 @@ pub fn deleteImage(w: *Writer, cmd: Delete) Writer.Error!void {
     try w.writeAll(seq.apc ++ "G");
     var keys: Keys = .{ .w = w };
     try keys.char('a', 'd');
-    if (cmd.quiet != .answers) try keys.int('q', @intFromEnum(cmd.quiet));
+    if (cmd.quiet != .answers) try keys.int('q', @backingInt(cmd.quiet));
     try writeDeleteTarget(&keys, cmd.target, cmd.free);
     try w.writeAll(seq.st);
 }
@@ -706,7 +706,7 @@ pub fn queryGraphics(w: *Writer, id: u32) Writer.Error!void {
 
 /// Writes the keys of the first sequence of a frame, after its `a=f`.
 fn writeFrame(k: *Keys, cmd: Frame) Writer.Error!void {
-    if (cmd.quiet != .answers) try k.int('q', @intFromEnum(cmd.quiet));
+    if (cmd.quiet != .answers) try k.int('q', @backingInt(cmd.quiet));
     try writeAnimationImage(k, cmd.image);
     try writeMedia(k, cmd);
     if (cmd.x != 0) try k.int('x', cmd.x);
@@ -714,7 +714,7 @@ fn writeFrame(k: *Keys, cmd: Frame) Writer.Error!void {
     if (cmd.base != 0) try k.int('c', cmd.base);
     if (cmd.edit != 0) try k.int('r', cmd.edit);
     if (cmd.gap != 0) try k.signed('z', cmd.gap);
-    if (cmd.compose != .blend) try k.int('X', @intFromEnum(cmd.compose));
+    if (cmd.compose != .blend) try k.int('X', @backingInt(cmd.compose));
     if (cmd.background.rgba() != 0) try k.int('Y', cmd.background.rgba());
 }
 
@@ -741,7 +741,7 @@ pub fn transmitFrame(w: *Writer, cmd: Frame, data: []const u8) Writer.Error!void
         if (first) {
             try writeFrame(&keys, cmd);
         } else if (cmd.quiet != .answers) {
-            try keys.int('q', @intFromEnum(cmd.quiet));
+            try keys.int('q', @backingInt(cmd.quiet));
         }
         if (!first or !last) try keys.int('m', if (last) 0 else 1);
         try w.writeByte(';');
@@ -763,9 +763,9 @@ pub fn animateImage(w: *Writer, cmd: Animate) Writer.Error!void {
     try w.writeAll(seq.apc ++ "G");
     var keys: Keys = .{ .w = w };
     try keys.char('a', 'a');
-    if (cmd.quiet != .answers) try keys.int('q', @intFromEnum(cmd.quiet));
+    if (cmd.quiet != .answers) try keys.int('q', @backingInt(cmd.quiet));
     try writeAnimationImage(&keys, cmd.image);
-    if (cmd.state != .unchanged) try keys.int('s', @intFromEnum(cmd.state));
+    if (cmd.state != .unchanged) try keys.int('s', @backingInt(cmd.state));
     if (cmd.frame != 0) try keys.int('r', cmd.frame);
     if (cmd.gap != 0) try keys.signed('z', cmd.gap);
     if (cmd.current != 0) try keys.int('c', cmd.current);
@@ -782,7 +782,7 @@ pub fn composeFrames(w: *Writer, cmd: Compose) Writer.Error!void {
     try w.writeAll(seq.apc ++ "G");
     var keys: Keys = .{ .w = w };
     try keys.char('a', 'c');
-    if (cmd.quiet != .answers) try keys.int('q', @intFromEnum(cmd.quiet));
+    if (cmd.quiet != .answers) try keys.int('q', @backingInt(cmd.quiet));
     try writeAnimationImage(&keys, cmd.image);
     if (cmd.destination != 0) try keys.int('c', cmd.destination);
     if (cmd.source != 0) try keys.int('r', cmd.source);
@@ -792,7 +792,7 @@ pub fn composeFrames(w: *Writer, cmd: Compose) Writer.Error!void {
     if (cmd.height != 0) try keys.int('h', cmd.height);
     if (cmd.source_x != 0) try keys.int('X', cmd.source_x);
     if (cmd.source_y != 0) try keys.int('Y', cmd.source_y);
-    if (cmd.compose != .blend) try keys.int('C', @intFromEnum(cmd.compose));
+    if (cmd.compose != .blend) try keys.int('C', @backingInt(cmd.compose));
     try w.writeAll(seq.st);
 }
 
@@ -2048,7 +2048,7 @@ test "fuzz the animation round trip" {
                 .{ .id = b }
             else
                 .{ .number = c };
-            const quiet: GraphicsQuiet = @enumFromInt(@as(u8, @truncate(a >> 2)) % 3);
+            const quiet: GraphicsQuiet = @fromBackingInt(@intCast(@as(u8, @truncate(a >> 2)) % 3));
             const mode: GraphicsCompose = if (a & 0x10 != 0) .overwrite else .blend;
 
             const commands = [_]Animation{
@@ -2086,7 +2086,7 @@ test "fuzz the animation round trip" {
                 } },
                 .{ .animate = .{
                     .image = image,
-                    .state = @enumFromInt(@as(u8, @truncate(a >> 10)) % 4),
+                    .state = @fromBackingInt(@intCast(@as(u8, @truncate(a >> 10)) % 4)),
                     .current = b,
                     .frame = c,
                     .gap = @bitCast(d),

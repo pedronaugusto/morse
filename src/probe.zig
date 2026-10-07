@@ -622,7 +622,7 @@ test "a probe routes a forwarded reply that arrives after DA1" {
     while (events.next()) |event| {
         if (event == .key) keys += 1;
         const question = answered(event) orelse continue;
-        seen[@intFromEnum(question)] = true;
+        seen[@backingInt(question)] = true;
         if (question == .device_attributes) input_path_works = true;
     }
 
@@ -631,11 +631,11 @@ test "a probe routes a forwarded reply that arrives after DA1" {
     try std.testing.expect(input_path_works);
     try std.testing.expectEqual(@as(usize, 1), keys);
     try std.testing.expectEqual(@as(usize, 5), std.mem.count(bool, &seen, &.{true}));
-    try std.testing.expect(seen[@intFromEnum(Probe.Question.cursor_position)]);
-    try std.testing.expect(seen[@intFromEnum(Probe.Question.background_color)]);
-    try std.testing.expect(seen[@intFromEnum(Probe.Question.sync_output)]);
-    try std.testing.expect(!seen[@intFromEnum(Probe.Question.foreground_color)]);
-    try std.testing.expect(!seen[@intFromEnum(Probe.Question.graphics)]);
+    try std.testing.expect(seen[@backingInt(Probe.Question.cursor_position)]);
+    try std.testing.expect(seen[@backingInt(Probe.Question.background_color)]);
+    try std.testing.expect(seen[@backingInt(Probe.Question.sync_output)]);
+    try std.testing.expect(!seen[@backingInt(Probe.Question.foreground_color)]);
+    try std.testing.expect(!seen[@backingInt(Probe.Question.graphics)]);
 }
 
 test "the question an event answers is the question its bytes match" {

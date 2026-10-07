@@ -140,7 +140,7 @@ fn keypadAsNormal(key: Key) Key {
         .kp_left => .left,
         .kp_right => .right,
         .kp_0, .kp_1, .kp_2, .kp_3, .kp_4, .kp_5, .kp_6, .kp_7, .kp_8, .kp_9 => .{
-            .char = '0' + @as(u21, @intFromEnum(std.meta.activeTag(key)) - @intFromEnum(std.meta.Tag(Key).kp_0)),
+            .char = '0' + @as(u21, @backingInt(std.meta.activeTag(key)) - @backingInt(std.meta.Tag(Key).kp_0)),
         },
         .kp_decimal => .{ .char = '.' },
         .kp_divide => .{ .char = '/' },
@@ -515,7 +515,7 @@ fn legacy(w: anytype, ev: KeyEvent, enc: KeyEncoding) !void {
             },
         },
         .kp_0, .kp_1, .kp_2, .kp_3, .kp_4, .kp_5, .kp_6, .kp_7, .kp_8, .kp_9 => {
-            const digit: u8 = @intCast(@intFromEnum(std.meta.activeTag(ev.key)) - @intFromEnum(std.meta.Tag(Key).kp_0));
+            const digit: u8 = @intCast(@backingInt(std.meta.activeTag(ev.key)) - @backingInt(std.meta.Tag(Key).kp_0));
             return keypad(w, enc, param, any, 'p' + digit, '0' + digit);
         },
         .kp_decimal => return keypad(w, enc, param, any, 'n', '.'),

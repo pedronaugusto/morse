@@ -82,9 +82,9 @@ pub fn parseModeReply(bytes: []const u8) ?ModeReport {
     const state = seq.scanParam(u8, rest, 0) orelse return null;
     rest = rest[state.len..];
     if (!std.mem.eql(u8, rest, "$y")) return null;
-    if (state.value > @intFromEnum(ModeState.permanently_reset)) return null;
+    if (state.value > @backingInt(ModeState.permanently_reset)) return null;
 
-    return .{ .mode = mode.value, .state = @enumFromInt(state.value) };
+    return .{ .mode = mode.value, .state = @fromBackingInt(@intCast(state.value)) };
 }
 
 /// Asks where the cursor is, CPR: `CSI 6 n`.
@@ -241,8 +241,8 @@ pub fn parseColorSchemeReply(bytes: []const u8) ?ColorScheme {
     if (!std.mem.eql(u8, rest, "n")) return null;
 
     return switch (value.value) {
-        @intFromEnum(ColorScheme.dark) => .dark,
-        @intFromEnum(ColorScheme.light) => .light,
+        @backingInt(ColorScheme.dark) => .dark,
+        @backingInt(ColorScheme.light) => .light,
         else => null,
     };
 }
@@ -444,7 +444,7 @@ test "fuzz parseModeReply" {
 
             var output: [64]u8 = undefined;
             var w: Writer = .fixed(&output);
-            try w.print("\x1b[?{d};{d}$y", .{ report.mode, @intFromEnum(report.state) });
+            try w.print("\x1b[?{d};{d}$y", .{ report.mode, @backingInt(report.state) });
             try std.testing.expectEqual(report, parseModeReply(w.buffered()).?);
         }
     }.one, .{ .corpus = &.{
@@ -574,7 +574,7 @@ test "fuzz parseColorSchemeReply" {
             var output: [32]u8 = undefined;
             var w: Writer = .fixed(&output);
             try w.writeAll("\x1b[?997;");
-            try seq.writeInt(&w, @intFromEnum(scheme));
+            try seq.writeInt(&w, @backingInt(scheme));
             try w.writeByte('n');
             try std.testing.expectEqual(scheme, parseColorSchemeReply(w.buffered()).?);
         }

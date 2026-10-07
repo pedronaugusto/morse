@@ -192,7 +192,7 @@ pub const ClearLine = enum(u8) {
 /// move, so the next thing written lands where it would have without the
 /// clear.
 pub fn clearLine(w: *Writer, what: ClearLine) Writer.Error!void {
-    try csi1(w, @intFromEnum(what), 'K');
+    try csi1(w, @backingInt(what), 'K');
 }
 
 /// How much of the screen `clearScreen` erases. The values are the parameter
@@ -216,7 +216,7 @@ pub const ClearScreen = enum(u8) {
 /// is `clearScreen(.all)` followed by `cursorTo(1, 1)`: clearing alone leaves
 /// the next write wherever the last one ended.
 pub fn clearScreen(w: *Writer, what: ClearScreen) Writer.Error!void {
-    try csi1(w, @intFromEnum(what), 'J');
+    try csi1(w, @backingInt(what), 'J');
 }
 
 /// Sets the scrolling region to rows `top` through `bottom`, DECSTBM:
@@ -374,12 +374,12 @@ pub const cost = struct {
 
     /// `clearLine`.
     pub fn clearLine(what: ClearLine) usize {
-        return seq.count(csi1, .{ @intFromEnum(what), 'K' });
+        return seq.count(csi1, .{ @backingInt(what), 'K' });
     }
 
     /// `clearScreen`.
     pub fn clearScreen(what: ClearScreen) usize {
-        return seq.count(csi1, .{ @intFromEnum(what), 'J' });
+        return seq.count(csi1, .{ @backingInt(what), 'J' });
     }
 
     /// `scrollRegion`.
