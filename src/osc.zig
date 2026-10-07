@@ -22,7 +22,7 @@ const Writer = std.Io.Writer;
 ///
 /// C0 controls and DEL in `text` return `error.ControlInText` before
 /// anything is written. Ordinary text, including UTF-8, is unchanged.
-pub fn title(w: *Writer, text: []const u8) strings.Error!void {
+pub fn title(w: *Writer, text: []const u8) strings.TextError!void {
     try strings.writeChecked(&.{ false, true, false }, w, .{ seq.osc ++ "2;", text, &.{seq.bel} });
 }
 
@@ -35,7 +35,7 @@ pub fn title(w: *Writer, text: []const u8) strings.Error!void {
 /// set only the title.
 ///
 /// Like `title`, refuses C0 controls and DEL before writing any bytes.
-pub fn iconName(w: *Writer, text: []const u8) strings.Error!void {
+pub fn iconName(w: *Writer, text: []const u8) strings.TextError!void {
     try strings.writeChecked(&.{ false, true, false }, w, .{ seq.osc ++ "1;", text, &.{seq.bel} });
 }
 
@@ -77,7 +77,7 @@ pub fn titlePop(w: *Writer) Writer.Error!void {
 ///
 /// A shell is the usual writer of this; a program that changes directory on
 /// the user's behalf is the other one.
-pub fn workingDirectory(w: *Writer, uri: []const u8) strings.Error!void {
+pub fn workingDirectory(w: *Writer, uri: []const u8) strings.TextError!void {
     try strings.writeChecked(&.{ false, true, false }, w, .{ seq.osc ++ "7;", uri, seq.st });
 }
 
@@ -90,7 +90,7 @@ pub fn workingDirectory(w: *Writer, uri: []const u8) strings.Error!void {
 /// C0 controls and DEL in either field are refused before writing.
 /// Percent-encode the URI as the spec requires; params must use its grammar,
 /// which has no `;`, or `parseHyperlink` reads them back cut at it.
-pub fn hyperlinkStart(w: *Writer, uri: []const u8, params: ?[]const u8) strings.Error!void {
+pub fn hyperlinkStart(w: *Writer, uri: []const u8, params: ?[]const u8) strings.TextError!void {
     try strings.writeChecked(&hyperlink_start_checked, w, hyperlinkStartParts(uri, params));
 }
 
@@ -130,7 +130,7 @@ fn spellHyperlinkEnd(w: anytype) !void {
 /// Writes `text` as a hyperlink to `uri`: `hyperlinkStart`, the text, then
 /// `hyperlinkEnd`. C0 controls and DEL in either field are refused before
 /// writing. Text keeps the attributes set before the call.
-pub fn hyperlink(w: *Writer, text: []const u8, uri: []const u8) strings.Error!void {
+pub fn hyperlink(w: *Writer, text: []const u8, uri: []const u8) strings.TextError!void {
     try strings.writeChecked(&hyperlink_checked, w, hyperlinkParts(text, uri));
 }
 
@@ -215,7 +215,7 @@ pub const text_size_max: usize = 4096;
 /// no longer than `text_size_max` bytes; those two limits are not checked.
 ///
 /// Read against the protocol text of 2026-09-18.
-pub fn textSize(w: *Writer, size: TextSize, text: []const u8) strings.Error!void {
+pub fn textSize(w: *Writer, size: TextSize, text: []const u8) strings.TextError!void {
     try strings.checkText(text);
     try spellTextSize(w, size, text);
 }

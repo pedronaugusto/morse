@@ -21,7 +21,7 @@ const Writer = std.Io.Writer;
 ///
 /// C0 controls and DEL in either field are refused before writing.
 /// Ordinary text is unchanged; neither field should contain the `;` separator.
-pub fn notify(w: *Writer, title: []const u8, body: []const u8) strings.Error!void {
+pub fn notify(w: *Writer, title: []const u8, body: []const u8) strings.TextError!void {
     try strings.writeChecked(&.{ false, true, false, true, false }, w, .{ seq.osc ++ "777;notify;", title, ";", body, seq.st });
 }
 
@@ -30,7 +30,7 @@ pub fn notify(w: *Writer, title: []const u8, body: []const u8) strings.Error!voi
 /// The older and simpler of the two forms, and the one some terminals
 /// implement instead of OSC 777. C0 controls and DEL in `body` are refused
 /// before writing; ordinary text is unchanged.
-pub fn notify9(w: *Writer, body: []const u8) strings.Error!void {
+pub fn notify9(w: *Writer, body: []const u8) strings.TextError!void {
     try strings.writeChecked(&.{ false, true, false }, w, .{ seq.osc ++ "9;", body, seq.st });
 }
 

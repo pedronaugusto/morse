@@ -57,7 +57,11 @@ pub const checkText = strings.checkText;
 /// Explicitly strips C0 controls and DEL into caller-owned storage.
 pub const printable = strings.printable;
 /// A string writer failure, including `ControlInText`.
-pub const TextError = strings.Error;
+pub const TextError = strings.TextError;
+/// `checkText` found a C0 control or DEL.
+pub const CheckTextError = strings.CheckTextError;
+/// `printable`'s buffer is too short for the text it keeps.
+pub const PrintableError = strings.PrintableError;
 
 /// Sets the window title: `OSC 2 ; text BEL`.
 pub const title = osc.title;
@@ -137,6 +141,8 @@ pub const ClipboardReply = clipboard.ClipboardReply;
 pub const parseClipboardReply = clipboard.parseClipboardReply;
 /// Decodes a reply's payload into a caller-owned buffer.
 pub const decodeClipboard = clipboard.decodeClipboard;
+/// `decodeClipboard`'s buffer is shorter than the decoded payload.
+pub const DecodeClipboardError = clipboard.DecodeClipboardError;
 
 //=========================================================================
 // Notifications.
@@ -397,6 +403,8 @@ pub const Stripper = stripping.Stripper;
 /// Strips control sequences and C1 controls from a whole string into a
 /// buffer, which may be the string itself.
 pub const strip = stripping.strip;
+/// `strip`'s buffer is shorter than the text it was given.
+pub const StripError = stripping.StripError;
 
 //=========================================================================
 // Lengths, counted without writing.
@@ -687,6 +695,8 @@ pub const Placeholder = graphics.Placeholder;
 pub const placeholderRow = graphics.placeholderRow;
 /// Writes one placeholder cell and its diacritics.
 pub const placeholderCell = graphics.placeholderCell;
+/// A placeholder writer failure, including `PlaceholderOutOfRange`.
+pub const PlaceholderError = graphics.PlaceholderError;
 /// The character that stands in for an image cell, U+10EEEE.
 pub const graphics_placeholder = graphics.placeholder;
 /// How many rows or columns a placeholder grid can address.

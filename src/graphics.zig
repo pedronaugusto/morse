@@ -815,6 +815,10 @@ pub const placeholder: u21 = 0x10EEEE;
 /// a row or column past it is refused with `error.PlaceholderOutOfRange`.
 pub const placeholder_max: u16 = diacritics.len;
 
+/// A placeholder writer can fail to write, or refuse a row or column past
+/// `placeholder_max`.
+pub const PlaceholderError = Writer.Error || error{PlaceholderOutOfRange};
+
 /// One row of a placeholder grid.
 pub const Placeholder = struct {
     /// The image to show. Its low 24 bits travel in the foreground colour
@@ -849,7 +853,8 @@ pub const Placeholder = struct {
 ///
 /// A `row.row` of `placeholder_max` or more, or `row.columns` past it, is
 /// refused with `error.PlaceholderOutOfRange` before anything is written.
-pub fn placeholderRow(w: *Writer, row: Placeholder) (Writer.Error || error{PlaceholderOutOfRange})!void {
+// ziglint-ignore: Z015 `PlaceholderError` is pub; ziglint counts a merged error set as no type
+pub fn placeholderRow(w: *Writer, row: Placeholder) PlaceholderError!void {
     if (row.row >= placeholder_max or row.columns > placeholder_max) return error.PlaceholderOutOfRange;
 
     try w.writeAll(seq.csi ++ "38;2;");
@@ -889,7 +894,8 @@ pub fn placeholderRow(w: *Writer, row: Placeholder) (Writer.Error || error{Place
 ///
 /// A `row` or `col` of `placeholder_max` or more is refused with
 /// `error.PlaceholderOutOfRange` before anything is written.
-pub fn placeholderCell(w: *Writer, row: u16, col: u16, id_top: u8) (Writer.Error || error{PlaceholderOutOfRange})!void {
+// ziglint-ignore: Z015 `PlaceholderError` is pub; ziglint counts a merged error set as no type
+pub fn placeholderCell(w: *Writer, row: u16, col: u16, id_top: u8) PlaceholderError!void {
     if (row >= placeholder_max or col >= placeholder_max) return error.PlaceholderOutOfRange;
     comptime std.debug.assert(std.math.maxInt(u8) < placeholder_max);
 

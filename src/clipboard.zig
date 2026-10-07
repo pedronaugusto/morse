@@ -167,13 +167,16 @@ pub fn parseClipboardReply(bytes: []const u8) ?ClipboardReply {
     return .{ .target = Clipboard.fromChar(selections[0]).?, .data = data };
 }
 
+/// `decodeClipboard`'s `out` is shorter than the decoded payload.
+pub const DecodeClipboardError = error{NoSpaceLeft};
+
 /// Decodes `reply`'s payload into `out` and returns the prefix of `out` that
 /// was written — always exactly `reply.decodedLen()` bytes.
 ///
 /// `out` stays the caller's; nothing is allocated. The only failure is an
 /// `out` too small, which `reply.decodedLen()` lets a caller rule out before
 /// calling.
-pub fn decodeClipboard(reply: ClipboardReply, out: []u8) error{NoSpaceLeft}![]u8 {
+pub fn decodeClipboard(reply: ClipboardReply, out: []u8) DecodeClipboardError![]u8 {
     return base64.decode(reply.data, out);
 }
 

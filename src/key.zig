@@ -187,11 +187,15 @@ pub const Event = union(enum) {
         };
     }
 
+    /// `copy`'s `out` is shorter than `copySize` says the event needs.
+    pub const CopyError = error{NoSpaceLeft};
+
     /// Copies borrowed text, sequences and reply fields into caller-owned
     /// `out`. The returned event is valid until `out` changes or is freed,
     /// even after the parser advances. No allocation; use `copySize` to
     /// allocate exactly when needed. `NoSpaceLeft` leaves `out` unchanged.
-    pub fn copy(ev: Event, out: []u8) error{NoSpaceLeft}!Event {
+    // ziglint-ignore: Z015 `Event.CopyError` is pub; ziglint does not look inside a tagged union for it
+    pub fn copy(ev: Event, out: []u8) CopyError!Event {
         switch (ev) {
             .reply => |r| return .{ .reply = try r.copy(out) },
             .text, .unhandled => |bytes| {
@@ -246,16 +250,16 @@ pub const KeyParser = struct {
     };
 
     // A caller sets `report_key_up` and `mouse_pixels`, and nothing else:
-    // every field whose name begins with `_` is the parser's own state, and
+    // every field documented `Private:` is the parser's own state, and
     // writing one breaks what the parser relies on.
 
-    /// The caller's buffer, given to `init`. Bytes between `_start` and
-    /// `_end` are what has arrived and not yet been read.
-    _buffer: []u8,
-    /// Where the unread bytes begin.
-    _start: usize = 0,
-    /// Where the unread bytes end.
-    _end: usize = 0,
+    /// Private: the caller's buffer, given to `init`. Bytes between `start` and
+    /// `end` are what has arrived and not yet been read.
+    buffer: []u8,
+    /// Private: where the unread bytes begin.
+    start: usize = 0,
+    /// Private: where the unread bytes end.
+    end: usize = 0,
     /// Report the key coming up as well as going down, in win32 input mode.
     /// One of the two fields a caller sets.
     ///
@@ -271,34 +275,34 @@ pub const KeyParser = struct {
     /// the parser marks each `MouseEvent` it reads as `pixels`. The other
     /// field a caller sets.
     mouse_pixels: bool = false,
-    /// A key still owed repeats, and how many. One win32 sequence can stand
+    /// Private: a key still owed repeats, and how many. One win32 sequence can stand
     /// for several keypresses.
-    _repeating: ?KeyEvent = null,
-    /// How many more times `_repeating` is still to be reported.
-    _repeat_left: u16 = 0,
-    /// Where a console character that takes more than one sequence is held
+    repeating: ?KeyEvent = null,
+    /// Private: how many more times `repeating` is still to be reported.
+    repeat_left: u16 = 0,
+    /// Private: where a console character that takes more than one sequence is held
     /// while the rest of it arrives: the halves of a surrogate pair, and the
     /// keypad digits of an Alt composition. Win32 input mode only; every
     /// other protocol spells a character in one sequence.
-    _console: win32.ConsoleState = .{},
-    /// The tail of a sequence too long for the buffer, still being skipped.
-    _skipping: ?Skipping = null,
-    /// How many bytes of that sequence have been dropped so far.
-    _dropped: usize = 0,
-    /// The last decode needs more bytes, rather than another decode of the
-    /// same prefix.
-    _waiting: bool = false,
+    console: win32.ConsoleState = .{},
+    /// Private: the tail of a sequence too long for the buffer, still being skipped.
+    skipping: ?Skipping = null,
+    /// Private: how many bytes of that sequence have been dropped so far.
+    dropped: usize = 0,
+    /// Private: the last decode needs more bytes, rather than another decode
+    /// of the same prefix.
+    waiting: bool = false,
 
     /// A parser over `buffer`, which must be at least `min_buffer` bytes.
     pub fn init(buffer: []u8) KeyParser {
         std.debug.assert(buffer.len >= min_buffer);
-        return .{ ._buffer = buffer };
+        return .{ .buffer = buffer };
     }
 
     fn assertValid(p: *const KeyParser) void {
-        std.debug.assert(p._buffer.len >= min_buffer);
-        std.debug.assert(p._start <= p._end);
-        std.debug.assert(p._end <= p._buffer.len);
+        std.debug.assert(p.buffer.len >= min_buffer);
+        std.debug.assert(p.start <= p.end);
+        std.debug.assert(p.end <= p.buffer.len);
     }
 
     /// Hands `bytes` to the parser and returns the events they complete.
@@ -329,7 +333,7 @@ pub const KeyParser = struct {
     /// `Event.unhandled`.
     pub fn pending(p: *const KeyParser) []const u8 {
         p.assertValid();
-        return p._buffer[p._start..p._end];
+        return p.buffer[p.start..p.end];
     }
 
     /// Decides what a pending sequence was, on the caller's timeout, and
@@ -353,16 +357,16 @@ pub const KeyParser = struct {
     pub fn flush(p: *KeyParser) ?Event {
         const held = p.pending();
         defer {
-            p._start = 0;
-            p._end = 0;
-            p._waiting = false;
+            p.start = 0;
+            p.end = 0;
+            p.waiting = false;
         }
         // A sequence too long for the buffer whose end never arrived. The
         // bytes are already gone; what is owed is the count.
-        if (p._skipping != null) {
-            p._skipping = null;
-            const dropped = p._dropped + held.len;
-            p._dropped = 0;
+        if (p.skipping != null) {
+            p.skipping = null;
+            const dropped = p.dropped + held.len;
+            p.dropped = 0;
             return .{ .overflow = dropped };
         }
         if (!p.undecided()) return null;
@@ -382,7 +386,7 @@ pub const KeyParser = struct {
     /// tail of an over-long sequence is being skipped, which `flush` reports
     /// as an overflow rather than as a key.
     pub fn undecided(p: *const KeyParser) bool {
-        if (p._skipping != null) return false;
+        if (p.skipping != null) return false;
         const held = p.pending();
         return switch (held.len) {
             1 => held[0] == seq.esc,
@@ -415,24 +419,24 @@ pub const KeyParser = struct {
     pub fn reset(p: *KeyParser) void {
         p.assertValid();
         defer p.assertValid();
-        p._start = 0;
-        p._end = 0;
-        p._repeating = null;
-        p._repeat_left = 0;
-        p._console.reset();
-        p._skipping = null;
-        p._dropped = 0;
-        p._waiting = false;
+        p.start = 0;
+        p.end = 0;
+        p.repeating = null;
+        p.repeat_left = 0;
+        p.console.reset();
+        p.skipping = null;
+        p.dropped = 0;
+        p.waiting = false;
     }
 
     /// Moves the unread bytes to the front, making room at the end.
     fn compact(p: *KeyParser) void {
         p.assertValid();
         defer p.assertValid();
-        if (p._start == 0) return;
-        @memmove(p._buffer[0 .. p._end - p._start], p._buffer[p._start..p._end]);
-        p._end -= p._start;
-        p._start = 0;
+        if (p.start == 0) return;
+        @memmove(p.buffer[0 .. p.end - p.start], p.buffer[p.start..p.end]);
+        p.end -= p.start;
+        p.start = 0;
     }
 };
 
@@ -461,7 +465,7 @@ pub const Events = struct {
         it.parser.assertValid();
         defer it.parser.assertValid();
         const p = it.parser;
-        if (p._repeating == null and p._skipping == null and p._start == p._end) {
+        if (p.repeating == null and p.skipping == null and p.start == p.end) {
             if (it.fresh.len == 0) return null;
             if (it.fresh.len == 1 and it.fresh[0] < 0x80 and it.fresh[0] != seq.esc) {
                 // A single ASCII key owns its text. Nothing needs to survive
@@ -472,15 +476,15 @@ pub const Events = struct {
                 return event;
             }
         }
-        if (p._waiting and it.fresh.len == 1 and p._end - p._start == 2 and
-            p._buffer[p._start] == seq.esc and p._buffer[p._start + 1] == '[')
+        if (p.waiting and it.fresh.len == 1 and p.end - p.start == 2 and
+            p.buffer[p.start] == seq.esc and p.buffer[p.start + 1] == '[')
         {
             if (bareCsiEvent(it.fresh[0])) |event| {
                 // This final completes a key or focus event, both values.
                 // The two-byte introducer no longer needs to be retained.
-                p._start = 0;
-                p._end = 0;
-                p._waiting = false;
+                p.start = 0;
+                p.end = 0;
+                p.waiting = false;
                 it.fresh = it.fresh[1..];
                 return event;
             }
@@ -491,9 +495,9 @@ pub const Events = struct {
 
         // A repeat owed from a win32 sequence comes before any new bytes, so
         // that a held key arrives in the order it was typed.
-        if (p._repeating) |held| {
-            p._repeat_left -= 1;
-            if (p._repeat_left == 0) p._repeating = null;
+        if (p.repeating) |held| {
+            p.repeat_left -= 1;
+            if (p.repeat_left == 0) p.repeating = null;
             var again = held;
             again.kind = .repeat;
             return .{ .key = again };
@@ -502,7 +506,7 @@ pub const Events = struct {
         while (true) {
             // The tail of a sequence that did not fit comes before anything
             // else: the stream is picked up at its end, not in its middle.
-            if (p._skipping != null) return it.skipOverflow();
+            if (p.skipping != null) return it.skipOverflow();
 
             // Topping up here rather than in `feed` is what lets one feed of
             // many kilobytes drain through a buffer of a few dozen bytes.
@@ -511,30 +515,30 @@ pub const Events = struct {
             // buffer per keypress and costs more the larger the buffer is.
             // The other place it is done is on `.incomplete`, which is the
             // only other time more bytes can change the answer.
-            if (p._waiting) {
+            if (p.waiting) {
                 if (it.fresh.len == 0) return null;
                 _ = it.fill();
-                p._waiting = false;
-            } else if (p._start == p._end and it.fresh.len != 0) {
+                p.waiting = false;
+            } else if (p.start == p.end and it.fresh.len != 0) {
                 _ = it.fill();
             }
 
-            if (p._start == p._end) return null;
+            if (p.start == p.end) return null;
 
-            switch (decode(p._buffer[p._start..p._end], p.report_key_up, &p._console)) {
+            switch (decode(p.buffer[p.start..p.end], p.report_key_up, &p.console)) {
                 .ready => |done| {
-                    p._start += done.len;
+                    p.start += done.len;
                     if (done.repeat > 1) switch (done.event) {
                         .key => |ev| {
-                            p._repeating = ev;
-                            p._repeat_left = done.repeat - 1;
+                            p.repeating = ev;
+                            p.repeat_left = done.repeat - 1;
                         },
                         else => {},
                     };
                     return p.read(done.event);
                 },
                 .skip => |n| {
-                    p._start += n;
+                    p.start += n;
                     continue;
                 },
                 .incomplete => {
@@ -548,21 +552,21 @@ pub const Events = struct {
                     // and the rest of it is skipped to its end -- which is
                     // the only place this parser drops bytes, and the one
                     // thing it reports rather than decodes.
-                    if (p._end - p._start == p._buffer.len) {
-                        p._skipping = overflowKind(p._buffer[p._start..p._end]);
+                    if (p.end - p.start == p.buffer.len) {
+                        p.skipping = overflowKind(p.buffer[p.start..p.end]);
                         // A final ESC in a string is undecided: it may be
                         // half of ST, or the start of the next sequence.
                         // Keep it in the same buffer until its next byte
                         // arrives, as skipOverflow does at later boundaries.
-                        const kept: usize = @intFromBool(p._skipping == .string and
-                            p._buffer[p._end - 1] == seq.esc);
-                        p._dropped = p._buffer.len - kept;
-                        if (kept != 0) p._buffer[0] = seq.esc;
-                        p._start = 0;
-                        p._end = kept;
+                        const kept: usize = @intFromBool(p.skipping == .string and
+                            p.buffer[p.end - 1] == seq.esc);
+                        p.dropped = p.buffer.len - kept;
+                        if (kept != 0) p.buffer[0] = seq.esc;
+                        p.start = 0;
+                        p.end = kept;
                         continue;
                     }
-                    p._waiting = true;
+                    p.waiting = true;
                     return null;
                 },
             }
@@ -577,44 +581,44 @@ pub const Events = struct {
     /// own end however many reads it spans.
     fn skipOverflow(it: *Events) ?Event {
         const p = it.parser;
-        const kind = p._skipping.?;
+        const kind = p.skipping.?;
         outer: while (true) {
-            while (p._start < p._end) {
-                const b = p._buffer[p._start];
+            while (p.start < p.end) {
+                const b = p.buffer[p.start];
                 switch (kind) {
                     .string => {
                         if (b == seq.bel) {
-                            p._start += 1;
-                            p._dropped += 1;
+                            p.start += 1;
+                            p.dropped += 1;
                             break :outer;
                         }
                         if (b == seq.esc) {
                             // `ST` ends the string; a bare `ESC` is the next
                             // sequence and is left where it is.
-                            if (p._end - p._start < 2) break;
-                            if (p._buffer[p._start + 1] == '\\') {
-                                p._start += 2;
-                                p._dropped += 2;
+                            if (p.end - p.start < 2) break;
+                            if (p.buffer[p.start + 1] == '\\') {
+                                p.start += 2;
+                                p.dropped += 2;
                             }
                             break :outer;
                         }
                     },
                     .sequence => if (b >= 0x40 and b <= 0x7e) {
-                        p._start += 1;
-                        p._dropped += 1;
+                        p.start += 1;
+                        p.dropped += 1;
                         break :outer;
                     },
                 }
-                p._start += 1;
-                p._dropped += 1;
+                p.start += 1;
+                p.dropped += 1;
             }
             if (it.fresh.len == 0) return null;
             _ = it.fill();
         }
 
-        p._skipping = null;
-        const dropped = p._dropped;
-        p._dropped = 0;
+        p.skipping = null;
+        const dropped = p.dropped;
+        p.dropped = 0;
         return .{ .overflow = dropped };
     }
 
@@ -626,13 +630,13 @@ pub const Events = struct {
     fn fill(it: *Events) usize {
         const p = it.parser;
         p.compact();
-        const take = @min(p._buffer.len - p._end, it.fresh.len);
+        const take = @min(p.buffer.len - p.end, it.fresh.len);
         if (take == 1) {
-            p._buffer[p._end] = it.fresh[0];
+            p.buffer[p.end] = it.fresh[0];
         } else {
-            @memcpy(p._buffer[p._end..][0..take], it.fresh[0..take]);
+            @memcpy(p.buffer[p.end..][0..take], it.fresh[0..take]);
         }
-        p._end += take;
+        p.end += take;
         it.fresh = it.fresh[take..];
         return take;
     }

@@ -6,86 +6,55 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
 - Requires Zig 0.17.0; Zig 0.16 no longer builds morse.
+- `ConsoleDecoder.altgr_window_ms`, the integer 50, is now `ConsoleDecoder.altgr_window`, a `std.Io.Duration`: the span a caller's timer waits before `flush` is a duration. `altgr_window.toMilliseconds()` is the old number.
+- `placeholderRow` and `placeholderCell` return `PlaceholderError`, which is `Writer.Error || error{PlaceholderOutOfRange}`, and refuse a row or column the diacritic table cannot spell before writing anything; past it they read out of bounds in ReleaseFast.
+
+### Added
+
+- Every public function that returned an unnamed error set returns a named one: `CheckTextError`, `PrintableError`, `StripError`, `DecodeClipboardError`, `Event.CopyError`, `Reply.CopyError` and `Capability.DecodeError`. The errors in them are unchanged.
+- `zig build bench` runs morse's own speed ceilings, in `bench/`; `zig build check`, and so CI, compiles them and never runs them.
+- `Probe` asks the terminal's colour count, `Co`, through XTGETTCAP, and routes its answer or refusal as `color_count`.
+- `querySixelGraphics` and `parseSixelGraphics` ask and read XTSMGRAPHICS, how many colour registers a sixel image may use and how big it may be, as `Reply.sixel_graphics`; `sixelCursorRight` is mode 8452; `Probe` asks all three, as `sixel_registers`, `sixel_geometry` and `sixel_cursor_right`.
+- `sixel` writes an image as a sixel string, from palette indices or from RGBA drawn in the nearest colour of a palette of up to 256, with the DECSIXEL parameters the caller gives and a band at a time from a fixed block of stack; `itermImage` and `itermImageMultipart` send a file as an iTerm2 inline image in one `OSC 1337` or as `MultipartFile`, `FilePart`s and `FileEnd`; `cost` counts all three.
+- `Color.fit` and `Style.fit` turn a colour into the nearest one a terminal of a given `Color.Profile` shows: direct colour onto the 256-colour cube and grey ramp, any colour onto the sixteen theme slots (the terminal's, as `Color.Slots`, or xterm's), or none at all with attributes kept. Nearest is the redmean distance with anstyle-lossy's tie-break, and agrees with an exhaustive search over every 24-bit colour.
+- `strip` and `Stripper` remove control sequences, control strings, short escapes and C1 controls from terminal output, whole or a read at a time with no buffer for a sequence cut between reads; the C0 controls stay, and the conformance step checks the result against the text the emulator prints.
+- `encodeKey` writes a `KeyEvent` as the bytes a terminal sends for it, in the kitty keyboard protocol for any set of flags and in the legacy encodings with `modifyOtherKeys`, DECCKM, DECKPAM and DECBKM, and `cost.encodeKey` counts them; with every kitty flag set `KeyParser` reads each key back as itself, and the conformance step compares the bytes with ghostty's encoder.
+- `parseHyperlink` and `parseTextSize` read the bodies of OSC 8 and OSC 66 back into a `Hyperlink` and a `SizedText`, the inverses of `hyperlinkStart` and `textSize`; the test-only OSC 66 reader is gone.
+- `paletteRgb` gives the colour of a 256-colour palette entry above the sixteen theme slots: the cube and the grey ramp terminals start with.
+- `KeyEvent.typed` builds the keypress that types a cluster with given modifiers, carrying its text on the parser's terms.
+- `toCellsAt` converts a mouse report into its cell and the position inside that cell for a fractional cell size, agreeing with `toCells` for whole-number sizes.
+- `KeyParser.undecided` says whether what is pending is the lone `ESC`, `ESC [` or `ESC O` that only a timeout settles; `flush` settles exactly those.
+- `applySgr` applies the parameters of a `CSI ... m` to a `Style`, reading back everything `diffStyle` writes, superscript and subscript included; `parseCsi` and `parseControlString` frame control sequences and control strings in a byte stream, and `KeyParser` frames its control strings with the latter.
+- `cost` counts the bytes the style, cursor, erase, repeat, mode, hyperlink and text-size writers write for given arguments, running the same spelling code into a counter.
+- `zig build test -Dtest-filter=...` runs the named part of the suite.
+- `examples/quickstart.zig`, compiled and run by `zig build examples`, is the README's usage block.
+
+### Changed
+
+- `KeyParser`'s own state is documented `Private:` field by field; `report_key_up` and `mouse_pixels` are the fields a caller sets.
+- Safe builds assert buffer, UTF-8, base64 and SGR bounds.
+- Encode base64 for OSC 52 and kitty graphics straight into the writer's buffer with the standard library's encoder, as many groups as fit at a time, rather than four characters per write; the chunks and bytes written are unchanged.
+- Spell the named modes, `mouse` and `mouseOff` at compile time and write each as one copy; `setMode` with a runtime number formats it as before, and the bytes written are unchanged.
+- Check text for controls a vector at a time, and have the title, icon name, working directory, hyperlink and notification writers copy their text into the writer's buffer in one pass that checks it; the bytes written are unchanged.
+- Spell style changes once into a stack buffer with a decimal table, pricing the reset spelling by counting instead of formatting it; the bytes written are unchanged.
+- Read single-byte ASCII and plain CSI values without copying them, and resume incomplete sequences after appending new input.
+
+### Fixed
 
 - `strip` works in place as documented: `strip(buf, buf)` panicked with `@memcpy arguments alias` in safe builds, and was undefined behaviour in ReleaseFast, once a run of text overlapped where it was written.
 - `KeyParser` frames `CSI Ps ; Pm $ y`, the ANSI-mode DECRPM reply, whole as `Event.unhandled`; `$` is rxvt's shifted-key final only after one number that names a key. It used to split into an unhandled `CSI Ps;Pm $` and a typed `y`.
 - `KeyParser` reads `ESC [` or `ESC O` followed by a control byte as alt+`[` or alt+`O` and then the control, as `flush` reads the same two bytes; the alt was dropped before.
 - The relative moves (`cursorUp`, `cursorDown`, `cursorRight`, `cursorLeft`, `cursorNextLine`, `cursorPrevLine`), the scrolls (`scrollUp`, `scrollDown`), the edits (`insertLines`, `deleteLines`, `insertChars`, `deleteChars`, `eraseChars`) and `repeatChar` write nothing for a count of 0, and `cost` gives 0 for them; they wrote `CSI 0 final`, which a terminal reads as a count of 1. Positions (`cursorTo`, `cursorColumn`, `cursorRow`) are still written as given, and 0 reads as 1.
-- `placeholderRow` and `placeholderCell` return `error.PlaceholderOutOfRange`, before writing anything, for a row or column the diacritic table cannot spell; past it they read out of bounds in ReleaseFast. Their error set is now `Writer.Error || error{PlaceholderOutOfRange}`.
-- `KeyParser`'s own state is in fields named with a leading `_` (`_buffer`, `_start`, `_end`, `_repeating`, `_repeat_left`, `_console`, `_skipping`, `_dropped`, `_waiting`); `report_key_up` and `mouse_pixels` are the fields a caller sets.
-
-- Safe builds assert buffer, UTF-8, base64 and SGR bounds.
-
-- `Probe` asks the terminal's colour count, `Co`, through XTGETTCAP, and routes its answer or refusal as `color_count`.
-
-- `querySixelGraphics` and `parseSixelGraphics` ask and read XTSMGRAPHICS, how many colour registers a sixel image may use and how big it may be, as `Reply.sixel_graphics`; `sixelCursorRight` is mode 8452; `Probe` asks all three, as `sixel_registers`, `sixel_geometry` and `sixel_cursor_right`.
-
-- `sixel` writes an image as a sixel string, from palette indices or from RGBA drawn in the nearest colour of a palette of up to 256, with the DECSIXEL parameters the caller gives and a band at a time from a fixed block of stack; `itermImage` and `itermImageMultipart` send a file as an iTerm2 inline image in one `OSC 1337` or as `MultipartFile`, `FilePart`s and `FileEnd`; `cost` counts all three.
-
-- `Color.fit` and `Style.fit` turn a colour into the nearest one a terminal of a given `Color.Profile` shows: direct colour onto the 256-colour cube and grey ramp, any colour onto the sixteen theme slots (the terminal's, as `Color.Slots`, or xterm's), or none at all with attributes kept. Nearest is the redmean distance with anstyle-lossy's tie-break, and agrees with an exhaustive search over every 24-bit colour.
-
-- `strip` and `Stripper` remove control sequences, control strings, short escapes and C1 controls from terminal output, whole or a read at a time with no buffer for a sequence cut between reads; the C0 controls stay, and the conformance step checks the result against the text the emulator prints.
-
-- `encodeKey` writes a `KeyEvent` as the bytes a terminal sends for it, in the kitty keyboard protocol for any set of flags and in the legacy encodings with `modifyOtherKeys`, DECCKM, DECKPAM and DECBKM, and `cost.encodeKey` counts them; with every kitty flag set `KeyParser` reads each key back as itself, and the conformance step compares the bytes with ghostty's encoder.
-
 - `KeyParser` reads F21 to F25 in the `CSI 42 ~` to `CSI 46 ~` form ghostty writes them in; they came back as unhandled sequences before.
-
-- Encode base64 for OSC 52 and kitty graphics straight into the writer's buffer with the standard library's encoder, as many groups as fit at a time, rather than four characters per write; the chunks and bytes written are unchanged.
-
-- Spell the named modes, `mouse` and `mouseOff` at compile time and write each as one copy; `setMode` with a runtime number formats it as before, and the bytes written are unchanged.
-
-- Check text for controls a vector at a time, and have the title, icon name, working directory, hyperlink and notification writers copy their text into the writer's buffer in one pass that checks it; the bytes written are unchanged.
-
-- `parseHyperlink` and `parseTextSize` read the bodies of OSC 8 and OSC 66 back into a `Hyperlink` and a `SizedText`, the inverses of `hyperlinkStart` and `textSize`; the test-only OSC 66 reader is gone.
-
-- `paletteRgb` gives the colour of a 256-colour palette entry above the sixteen theme slots: the cube and the grey ramp terminals start with.
-
-- `KeyEvent.typed` builds the keypress that types a cluster with given modifiers, carrying its text on the parser's terms.
-
-- `toCellsAt` converts a mouse report into its cell and the position inside that cell for a fractional cell size, agreeing with `toCells` for whole-number sizes.
-
-- `KeyParser.undecided` says whether what is pending is the lone `ESC`, `ESC [` or `ESC O` that only a timeout settles; `flush` settles exactly those.
-
-- `applySgr` applies the parameters of a `CSI ... m` to a `Style`, reading back everything `diffStyle` writes, superscript and subscript included; `parseCsi` and `parseControlString` frame control sequences and control strings in a byte stream, and `KeyParser` frames its control strings with the latter.
-
-- `cost` counts the bytes the style, cursor, erase, repeat, mode, hyperlink and text-size writers write for given arguments, running the same spelling code into a counter.
-
-- Spell style changes once into a stack buffer with a decimal table, pricing the reset spelling by counting instead of formatting it; the bytes written are unchanged.
-
-- Read single-byte ASCII and plain CSI values without copying them, and resume incomplete sequences after appending new input.
-
-- Reject undeclared dependencies, duplicate layer membership and imports of source executables.
-
-- Run the import gate in the source job that installs Zig.
-
-- Check named source layers, cycles, entry files and dependency owners during source CI.
-
-- Share key values below the stream and Windows console decoders, removing their import cycle.
-
-### Added
-
-- A compiled heading and split-input example supplies the README usage block.
-
-- Bound local Zig build caches before builds, retaining downloaded packages and tools.
-
-### Fixed
-
 - Astral characters composed with AltGr keep their text and ordinary modifiers in console records and win32 input mode.
-
-- Wall-clock measurements and speed ceilings live on the bench branch; the unit suite keeps exact byte counts, event counts and buffer bounds.
-
-- The console docs say which records settle a held Ctrl press and which keyboard protocols report releases.
-
-- The writer and layout docs describe calls that emit several sequences and the records with an extern layout.
-
-- The state-ownership docs distinguish the byte-stream parser from the Windows console-record decoder.
-
 - Overflow recovery retains an undecided ESC at the buffer boundary and counts it when flushed.
-
+- The console docs say which records settle a held Ctrl press and which keyboard protocols report releases.
+- The writer and layout docs describe calls that emit several sequences and the records with an extern layout.
+- The state-ownership docs distinguish the byte-stream parser from the Windows console-record decoder.
 - The key module docs direct mouse reports and query answers to Event.mouse and Event.reply.
-
-- The test build accepts -Dtest-filter to run the named part of the suite.
 
 ## [0.7.0] - 2026-09-30
 
@@ -813,9 +782,11 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
+[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.7.0
 [0.6.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.6.0
 [0.5.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.5.0
 [0.4.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.4.0
 [0.3.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.2.0
-[0.1.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.1.0
+[0.1.0]: https://github.com/pedronaugusto/morse/tree/1965b1852c5c33ec0805d4e5c12eb89d5752c37f

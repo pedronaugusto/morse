@@ -481,13 +481,13 @@ pub const ConsoleEvents = struct {
 /// copy each one into a `ConsoleRecord`, and hand it to `feed`.
 pub const ConsoleDecoder = struct {
     /// How long a caller holds a possible synthetic Ctrl press before
-    /// settling it with `flush`, in milliseconds.
+    /// settling it with `flush`.
     ///
     /// Microsoft's current terminal input source says an AltGr keyboard
     /// generates a fake left-Ctrl press and a right-Alt press, and treats the
     /// Ctrl as genuine only when they are more than 50 ms apart:
     /// https://github.com/microsoft/terminal/blob/main/src/terminal/input/terminalInput.cpp#L363-L375
-    pub const altgr_window_ms = 50;
+    pub const altgr_window: std.Io.Duration = .fromMilliseconds(50);
 
     /// What a half-arrived character is held in.
     state: ConsoleState = .{},
@@ -502,7 +502,7 @@ pub const ConsoleDecoder = struct {
     /// way: it rides a key-up record, but what it is is a keypress, so it
     /// comes out as one.
     report_key_up: bool = false,
-    /// A left-Ctrl press held for `altgr_window_ms` in case the right-Alt
+    /// A left-Ctrl press held for `altgr_window` in case the right-Alt
     /// half of AltGr follows it. Another key, mouse or size record settles
     /// it as a Ctrl press, reported before that record's own event. Menu and
     /// focus records (`ConsoleRecord.other`) leave it held.
@@ -522,7 +522,7 @@ pub const ConsoleDecoder = struct {
     }
 
     /// Settles a left-Ctrl press that no right-Alt press followed within
-    /// `altgr_window_ms`.
+    /// `altgr_window`.
     ///
     /// The decoder does no I/O and owns no clock. A caller that wants
     /// standalone modifier events calls this when its own timer expires,
@@ -1210,6 +1210,11 @@ test "ConsoleDecoder flush settles a Ctrl press outside the AltGr window" {
     try std.testing.expectEqual(key.Kind.press, event.kind);
     try std.testing.expect(event.mods.ctrl);
     try std.testing.expectEqual(@as(?ConsoleEvent, null), decoder.flush());
+}
+
+test "the AltGr window is the 50 ms Windows Terminal waits" {
+    try std.testing.expectEqual(@as(i64, 50), ConsoleDecoder.altgr_window.toMilliseconds());
+    try std.testing.expectEqual(@as(i96, 50 * std.time.ns_per_ms), ConsoleDecoder.altgr_window.nanoseconds);
 }
 
 /// Every event `records` stand for, through one decoder, then what `flush`

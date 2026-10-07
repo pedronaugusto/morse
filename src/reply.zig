@@ -76,11 +76,15 @@ pub const Reply = union(enum) {
         return reply.borrowed().len;
     }
 
+    /// `copy`'s `out` is shorter than `copySize` says the reply needs.
+    pub const CopyError = error{NoSpaceLeft};
+
     /// Copies every borrowed byte into caller-owned `out`. The returned
     /// reply remains valid until `out` is changed or freed, independently
     /// of the parser. No allocation. `NoSpaceLeft` leaves `out` unchanged.
     /// Replies holding only values need no storage.
-    pub fn copy(reply: Reply, out: []u8) error{NoSpaceLeft}!Reply {
+    // ziglint-ignore: Z015 `Reply.CopyError` is pub; ziglint does not look inside a tagged union for it
+    pub fn copy(reply: Reply, out: []u8) CopyError!Reply {
         const bytes = reply.borrowed();
         if (out.len < bytes.len) return error.NoSpaceLeft;
         @memmove(out[0..bytes.len], bytes);

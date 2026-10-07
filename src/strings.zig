@@ -4,10 +4,16 @@ const std = @import("std");
 const Writer = std.Io.Writer;
 
 /// A string writer can fail to write, or refuse unsafe caller text.
-pub const Error = Writer.Error || error{ControlInText};
+pub const TextError = Writer.Error || error{ControlInText};
+
+/// `checkText` found a C0 control or DEL.
+pub const CheckTextError = error{ControlInText};
+
+/// `printable`'s `out` is too short for the text it keeps.
+pub const PrintableError = error{NoSpaceLeft};
 
 /// Refuses C0 controls (0x00–0x1f) and DEL (0x7f). No text is edited.
-pub fn checkText(text: []const u8) error{ControlInText}!void {
+pub fn checkText(text: []const u8) CheckTextError!void {
     if (hasControl(text)) return error.ControlInText;
 }
 
@@ -20,7 +26,7 @@ pub fn checkText(text: []const u8) error{ControlInText}!void {
 /// clean, and a refusal leaves the buffer's contents as they were. Without
 /// that room the checked parts are read first and everything is then handed
 /// to the writer together.
-pub inline fn writeChecked(comptime checked: []const bool, w: *Writer, parts: [checked.len][]const u8) Error!void {
+pub inline fn writeChecked(comptime checked: []const bool, w: *Writer, parts: [checked.len][]const u8) TextError!void {
     var total: usize = 0;
     inline for (parts) |part| total += part.len;
     if (w.unusedCapacityLen() >= total) {
@@ -107,7 +113,7 @@ fn scanBlocks(comptime block_len: usize, comptime copy: bool, dest: []u8, text: 
 /// byte, including UTF-8. The returned slice borrows `out`; no allocation.
 /// `NoSpaceLeft` is returned before changing `out` when it cannot fit.
 /// `out` may be the same buffer as `text`, for stripping in place.
-pub fn printable(out: []u8, text: []const u8) error{NoSpaceLeft}![]u8 {
+pub fn printable(out: []u8, text: []const u8) PrintableError![]u8 {
     var needed: usize = 0;
     for (text) |b| if (!isControl(b)) {
         needed += 1;

@@ -280,12 +280,15 @@ fn codepoint(bytes: []const u8) Codepoint {
     return .{ .text = n };
 }
 
+/// `strip`'s `out` is shorter than the text it was given.
+pub const StripError = error{NoSpaceLeft};
+
 /// Strips control sequences and C1 controls from `text` into `out`, in one
 /// call, and returns the text left. `out` may be `text` itself; the result
 /// is never longer than `text`, and `NoSpaceLeft` is returned, before
 /// anything is written, when `out` is shorter than that. A sequence `text`
 /// ends inside is dropped, and a codepoint it cuts short is kept.
-pub fn strip(out: []u8, text: []const u8) error{NoSpaceLeft}![]u8 {
+pub fn strip(out: []u8, text: []const u8) StripError![]u8 {
     if (out.len < text.len) return error.NoSpaceLeft;
     var into: InPlace = .{ .out = out };
     var s: Stripper = .{};

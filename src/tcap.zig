@@ -97,19 +97,23 @@ pub const Capability = struct {
         return value.len / 2;
     }
 
+    /// `decodeName` or `decodeValue` was given an `out` shorter than what it
+    /// decodes.
+    pub const DecodeError = error{NoSpaceLeft};
+
     /// Decodes the name into `out` and returns the prefix of `out` written --
     /// always exactly `nameLen()` bytes.
     ///
     /// `out` stays the caller's; nothing is allocated. The only failure is an
     /// `out` too small.
-    pub fn decodeName(cap: Capability, out: []u8) error{NoSpaceLeft}![]u8 {
+    pub fn decodeName(cap: Capability, out: []u8) DecodeError![]u8 {
         return decodeHex(cap.name, out);
     }
 
     /// Decodes the value into `out`, as `decodeName` does the name. A
     /// capability whose `value` is null decodes to an empty slice, so check
     /// that field first if the difference matters.
-    pub fn decodeValue(cap: Capability, out: []u8) error{NoSpaceLeft}![]u8 {
+    pub fn decodeValue(cap: Capability, out: []u8) DecodeError![]u8 {
         const value: []const u8 = cap.value orelse "";
         return decodeHex(value, out);
     }

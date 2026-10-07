@@ -113,6 +113,15 @@ caller supplies deadlines because a terminal need not answer.
 
 <!-- performance: quiet pass -->
 
+## Built with
+
+- [Zig](https://ziglang.org) 0.17.0 and its standard library; nothing else is
+  linked into the module.
+- [preflight](https://github.com/pedronaugusto/preflight) runs the source checks,
+  the tests and CI.
+- [Ghostty](https://github.com/ghostty-org/ghostty)'s `libghostty-vt` is the
+  emulator the conformance step writes to, fetched only for that step.
+
 ## Testing
 
 Local build scripts clear `.zig-cache/{o,h,z,tmp}` above the measured cap through preflight; run `zig build cache` before direct Zig builds (only a rebuild is lost).
@@ -120,9 +129,13 @@ Local build scripts clear `.zig-cache/{o,h,z,tmp}` above the measured cap throug
 `zig build test` runs `zig build lint` first, then the unit suite and both examples, in
 Debug by default; `-Dci-lint=false` leaves the lint step out. Tests check writer bytes,
 malformed input, split framing, console records and parser round trips.
-`zig build examples` runs the examples separately; `zig build check` compiles the tests
-and examples without running them. `zig build check-consumer`, part of lint, builds a
+`zig build examples` runs the examples separately; `zig build check` compiles the tests,
+examples and benchmarks without running them. `zig build check-consumer`, part of lint, builds a
 project that depends on morse with no packages fetched.
+
+`zig build bench` runs the speed ceilings in `bench/` on this machine, best with
+`-Doptimize=ReleaseFast` and nothing else running. They are wide on purpose and catch a
+change that costs many times what it did; CI compiles them and never runs them.
 
 [CI](.github/workflows/ci.yml) runs in tiers. The fast tier runs the source checks and
 the Debug suite on `ubuntu-latest`; the merge tier, on the candidate for `main`, adds
