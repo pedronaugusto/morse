@@ -27,13 +27,14 @@ const Writer = std.Io.Writer;
 /// Strips control sequences from output that arrives a piece at a time.
 ///
 /// A value with no storage of its own: the most it holds across calls is
-/// the start of a codepoint the last piece cut in half.
+/// the start of a codepoint the last piece cut in half. Made with `.{}`;
+/// every field is its own state, and a caller writes none of them.
 pub const Stripper = struct {
-    /// Where the last piece ended: in text, or inside a sequence.
+    /// Private: where the last piece ended, in text or inside a sequence.
     state: State = .text,
-    /// The bytes of a codepoint the last piece ended inside.
+    /// Private: the bytes of a codepoint the last piece ended inside.
     held: [3]u8 = undefined,
-    /// How many of `held` there are.
+    /// Private: how many of `held` there are.
     held_len: u2 = 0,
 
     const State = enum {
@@ -428,6 +429,30 @@ test "a long control string costs no buffer" {
     try s.feed(&w, "\x1b\\b");
     try s.finish(&w);
     try testing.expectEqualStrings("ab", w.buffered());
+}
+
+test "a Stripper is its own state: every field is documented Private:" {
+    // A caller makes one with `.{}` and calls `feed` and `finish`; a field
+    // a caller wrote would break what `feed` relies on.
+    const gpa = std.testing.allocator;
+    var tree: std.zig.Ast = try .parse(gpa, @embedFile("strip.zig"), .{});
+    defer tree.deinit(gpa);
+    const stripper = for (tree.rootDecls()) |decl| {
+        const var_decl = tree.fullVarDecl(decl) orelse continue;
+        if (std.mem.eql(u8, tree.tokenSlice(var_decl.ast.mut_token + 1), "Stripper")) break var_decl.ast.init_node.unwrap().?;
+    } else return error.TestNoStripper;
+    var buffer: [2]std.zig.Ast.Node.Index = undefined;
+    var fields: usize = 0;
+    for (tree.fullContainerDecl(&buffer, stripper).?.ast.members) |member| {
+        const field = tree.fullContainerField(member) orelse continue;
+        fields += 1;
+        // The first line of the field's doc comment.
+        var token = field.firstToken();
+        while (token > 0 and tree.tokenTag(token - 1) == .doc_comment) token -= 1;
+        try std.testing.expect(tree.tokenTag(token) == .doc_comment);
+        try std.testing.expectStringStartsWith(tree.tokenSlice(token), "/// Private:");
+    }
+    try std.testing.expect(fields > 0);
 }
 
 test "fuzz Stripper" {
