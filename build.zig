@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -26,14 +26,6 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tests.zig"),
             .target = target,
             .optimize = optimize,
-            // Off so that `zig build test --fuzz` compiles. Zig 0.16.0's
-            // test runner hands `@errorReturnTrace()` to a function that
-            // takes the other `StackTrace`, which is a type error at every
-            // fuzz call site and only under `-ffuzz`. Error return traces
-            // are worth little in a fuzz run -- the input is the report --
-            // and the ordinary `zig build test` prints the same failures
-            // with the same messages.
-            .error_tracing = false,
         }),
     });
 
@@ -61,7 +53,7 @@ pub fn build(b: *std.Build) void {
     const examples_step = b.step("examples", "Build and run the examples");
     for (example_sources) |source| {
         const example = b.addExecutable(.{
-            .name = std.fs.path.stem(source),
+            .name = std.Io.Dir.path.stem(source),
             .root_module = b.createModule(.{
                 .root_source_file = b.path(source),
                 .target = target,
@@ -85,18 +77,21 @@ pub fn build(b: *std.Build) void {
     //
     // The dependency is lazy and pinned to a commit, because the step is a
     // claim about what one revision of one emulator accepted. It is also
-    // asked for only when morse is the root package: `lazyDependency` marks
+    // asked for only when morse is the root package: `dependencyLazy` marks
     // a dependency needed for the whole invocation rather than for the step
     // that called it, and a program that merely depends on morse must not
-    // fetch a terminal emulator to build.
+    // fetch a terminal emulator to build. Its error is kept and returned last,
+    // so one configure pass asks for preflight as well and both are fetched
+    // together.
     //=====================================================================
 
     const conformance_step = b.step("conformance", "Run the writers through a terminal emulator");
+    var needed: error{LazyDependencyNeeded}!void = {};
     if (b.pkg_hash.len != 0) {
         conformance_step.dependOn(&b.addFail(
             "the conformance step runs in morse's own tree, not from a package that depends on it",
         ).step);
-    } else if (b.lazyDependency("emulator", .{
+    } else if (b.dependencyLazy("emulator", .{
         .target = target,
         .optimize = optimize,
         // The emulator's SIMD paths are vendored C and C++, and nothing
@@ -118,13 +113,7 @@ pub fn build(b: *std.Build) void {
             }),
         });
         conformance_step.dependOn(&b.addRunArtifact(conformance).step);
-    } else {
-        // Reached only where the fetch cannot happen at all. A step that
-        // quietly does nothing would report a pass it did not earn.
-        conformance_step.dependOn(&b.addFail(
-            "the conformance step needs its emulator dependency, and it was not fetched",
-        ).step);
-    }
+    } else |err| needed = err;
 
     //=====================================================================
     // CI wiring
@@ -141,6 +130,7 @@ pub fn build(b: *std.Build) void {
         // The build a consumer gets: nothing morse fetches for itself.
         preflight.addConsumerCheck(b, .{ .package = "morse", .program = b.path("ci/consumer.zig") });
     }
+    return needed;
 }
 
 /// Every example, listed rather than globbed: a build graph that scans a

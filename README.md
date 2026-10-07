@@ -6,7 +6,7 @@ input split across reads.
 
 ## Install
 
-Requires Zig 0.16.0. Fetch with `zig fetch --save
+Requires Zig 0.17.0. Fetch with `zig fetch --save
 git+https://github.com/pedronaugusto/morse`, then obtain the `morse` module through
 `b.dependency` and add it to your executable's imports. Forward your target and optimize
 settings.
@@ -124,15 +124,17 @@ malformed input, split framing, console records and parser round trips.
 and examples without running them. `zig build check-consumer`, part of lint, builds a
 project that depends on morse with no packages fetched.
 
-[CI](.github/workflows/ci.yml) runs tests and examples in Debug and ReleaseSafe on
-`ubuntu-latest`, `macos-latest` and `windows-latest`, plus ReleaseFast on Ubuntu.
-ReleaseSmall is compile-only on Ubuntu. Source jobs check formatting, cast reasons and
+[CI](.github/workflows/ci.yml) runs in tiers. The fast tier runs the source checks and
+the Debug suite on `ubuntu-latest`; the merge tier, on the candidate for `main`, adds
+the Debug suite on `macos-latest` and `windows-latest`; the release tier, before a cut,
+runs tests and examples in Debug and ReleaseSafe on all three, plus ReleaseFast on Ubuntu,
+and compiles ReleaseSmall on Ubuntu. Source jobs check formatting, cast reasons and
 the clock policy. There is no ThreadSanitizer job.
 
 Compile-only jobs cover `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-windows-gnu`,
 `aarch64-windows-gnu`, `x86_64-macos` and `aarch64-macos`. Separate Ubuntu and macOS
-jobs run `zig build conformance` on pull requests and full dispatches, not on pushes to
-`main`.
+jobs run `zig build conformance` on pull requests and merge or release dispatches, not on
+pushes to `main`.
 
 ## Licence
 
