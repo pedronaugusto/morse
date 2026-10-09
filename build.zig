@@ -146,7 +146,12 @@ pub fn build(b: *std.Build) !void {
 /// Debug module.
 fn benchImports(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize) []const std.Build.Module.Import {
     const morse = b.createModule(.{ .root_source_file = b.path("src/morse.zig"), .target = target, .optimize = optimize });
-    return b.allocator.dupe(std.Build.Module.Import, &.{.{ .name = "morse", .module = morse }}) catch @panic("OOM");
+    // Select morse's published measuring pin rather than preflight's default.
+    const shakedown = b.dependency("shakedown", .{ .target = target, .optimize = optimize });
+    return b.allocator.dupe(std.Build.Module.Import, &.{
+        .{ .name = "morse", .module = morse },
+        .{ .name = "shakedown", .module = shakedown.module("shakedown") },
+    }) catch @panic("OOM");
 }
 
 /// Every example, listed rather than globbed: a build graph that scans a

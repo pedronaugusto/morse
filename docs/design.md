@@ -37,6 +37,7 @@ the checkout and are excluded from the fetched consumer's dependency graph.
 ## Measurement
 
 `bench/budgets.zig` owns terminal workload data, names and callbacks only.
+The benchmark imports callback selects morse's pinned shakedown module explicitly.
 `shakedown.bench` owns the monotonic clock, warmup, calibration, bounded batches,
 samples, statistics, JSONL and comparison. Preflight's `Config.bench` owns
 ReleaseFast builds, provenance, local smoke execution and interleaved A/B
