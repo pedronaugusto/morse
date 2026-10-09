@@ -2,7 +2,7 @@
 
 morse writes terminal control sequences and decodes terminal input in Zig. Typed writers
 and parsers cover screen commands, keys, mouse reports and query replies, including
-input split across reads.
+input split across reads. The Zig 0.17 changes are work in progress and unreleased.
 
 ## Install
 
@@ -118,6 +118,7 @@ caller supplies deadlines because a terminal need not answer.
 
 - [Zig](https://ziglang.org) 0.17.0 and its standard library; nothing else is
   linked into the module.
+- [shakedown](https://github.com/pedronaugusto/shakedown) supplies test support and benchmark measurement.
 - [preflight](https://github.com/pedronaugusto/preflight) runs the source checks,
   the tests and CI.
 - [Ghostty](https://github.com/ghostty-org/ghostty)'s `libghostty-vt` is the
@@ -134,10 +135,22 @@ malformed input, split framing, console records and parser round trips.
 and examples without running them. `zig build check-consumer`, part of lint, builds a
 project that depends on morse with no packages fetched.
 
-`zig build bench` builds the speed ceilings in `bench/` in ReleaseFast under
-`zig-out/bench` and runs them on this machine, best with nothing else running. They are
-wide on purpose and catch a change that costs many times what it did; `zig build test`
-runs each point once at its smallest size, with no clock read against a ceiling.
+`zig build bench` measures the workloads in `bench/` in ReleaseFast through
+`shakedown.bench`, emitting JSON lines with samples, best, median, p99, throughput
+and build provenance. `zig build bench-build` compiles them without running them.
+Local `zig build test` smoke-runs every row once with small inputs; hosted CI
+compiles the benchmarks and leaves timings to manual runs. Byte counts and buffer
+bounds remain unit tests. Timing results have no pass/fail ceilings.
+
+The executable accepts `--row <prefix>` and `--smoke`. Units name the work
+performed: calls, moves, images or bytes; sample values are always nanoseconds per
+unit. A smoke image is 32×32 RGBA; a measured image is 512×512. The parser grid
+keeps two input streams, three buffer sizes and four read sizes.
+
+`zig build bench-ab -- --base <commit> --program budgets --row <prefix> --pairs 5`
+uses preflight's interleaved runner and shakedown's comparison. Both revisions must
+already implement `bench-build` and JSONL row selection; revisions before this
+migration use the old tab-separated output and cannot be compared by that command.
 
 [CI](.github/workflows/ci.yml) runs in tiers. The fast tier runs the source checks and
 the Debug suite on `ubuntu-latest`; the merge tier, on the candidate for `main`, adds

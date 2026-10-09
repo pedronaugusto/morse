@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
+- Benchmark output is shakedown JSONL with nanoseconds per workload unit instead of tab-separated values and timing ceilings. Derived ratios and byte figures stay outside timed rows; byte budgets remain tests.
+
 - Requires Zig 0.17.0; Zig 0.16 no longer builds morse.
 - `ConsoleDecoder.altgr_window_ms`, the integer 50, is now `ConsoleDecoder.altgr_window`, a `std.Io.Duration`: the span a caller's timer waits before `flush` is a duration. `altgr_window.toMilliseconds()` is the old number.
 - `placeholderRow` and `placeholderCell` return `PlaceholderError`, which is `Writer.Error || error{PlaceholderOutOfRange}`, and refuse a row or column the diacritic table cannot spell before writing anything; past it they read out of bounds in ReleaseFast.
@@ -15,7 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Every public function that returned an unnamed error set returns a named one: `CheckTextError`, `PrintableError`, `StripError`, `DecodeClipboardError`, `Event.CopyError`, `Reply.CopyError` and `Capability.DecodeError`. The errors in them are unchanged.
-- `zig build bench` builds morse's own speed ceilings, in `bench/`, in ReleaseFast under `zig-out/bench` and runs them; `zig build test` runs each point once at its smallest size.
+- `zig build bench` measures morse workloads through `shakedown.bench` in ReleaseFast; `zig build bench-build` compiles them, and local `zig build test` smoke-runs each row.
 - `Probe` asks the terminal's colour count, `Co`, through XTGETTCAP, and routes its answer or refusal as `color_count`.
 - `querySixelGraphics` and `parseSixelGraphics` ask and read XTSMGRAPHICS, how many colour registers a sixel image may use and how big it may be, as `Reply.sixel_graphics`; `sixelCursorRight` is mode 8452; `Probe` asks all three, as `sixel_registers`, `sixel_geometry` and `sixel_cursor_right`.
 - `sixel` writes an image as a sixel string, from palette indices or from RGBA drawn in the nearest colour of a palette of up to 256, with the DECSIXEL parameters the caller gives and a band at a time from a fixed block of stack; `itermImage` and `itermImageMultipart` send a file as an iTerm2 inline image in one `OSC 1337` or as `MultipartFile`, `FilePart`s and `FileEnd`; `cost` counts all three.
@@ -33,6 +35,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `examples/quickstart.zig`, compiled and run by `zig build examples`, is the README's usage block.
 
 ### Changed
+
+- Benchmark timing, warmup, sampling, statistics, formatting and comparison come from published shakedown; build, smoke and A/B steps come from preflight. The original terminal workloads and parser grid remain.
 
 - morse's manifest no longer names the terminal emulator its conformance build feeds: that build has a manifest of its own under `conformance/`. A program that depends on morse never fetches or compiles the emulator, with `--fetch=all` too, so a Zig the emulator's build script refuses can no longer fail that program's build once the emulator is in the package cache.
 - A fetched morse holds only what building it needs: `build.zig`, `build.zig.zon`, `src`, `LICENSE`, `README.md` and `CHANGELOG.md`; the benchmarks, examples, conformance build and CI files stay in the repository.

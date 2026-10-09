@@ -1,436 +1,267 @@
-//! Wall-clock measurements for morse: `zig build bench` builds this in
-//! ReleaseFast under zig-out/bench and runs it, on a quiet machine.
-//!
-//! Each row is a measurement with the bytes that go with it, printed as
-//! `morse`, the row, the value, its unit and the ceiling it is held to,
-//! separated by tabs. The ceilings are wide, set for a Debug build, and
-//! catch a change that costs many times what it did, not one that costs a
-//! few percent; a row above its ceiling fails the run by name. The unit
-//! suite checks the same byte counts and buffer bounds without a clock
-//! (`src/testing/work_test.zig`).
-//!
-//! `--smoke` runs every point once at its smallest size and holds nothing
-//! to a ceiling: `zig build test` runs it that way, to check the program
-//! still works, and its numbers mean nothing.
-
+//! Terminal workloads measured through shakedown.bench. Input generation,
+//! allocation and byte checks happen before measurement; callbacks reuse them.
 const std = @import("std");
 const morse = @import("morse");
-
+const bench = @import("shakedown").bench;
+const provenance = @import("preflight_bench_options");
 const Writer = std.Io.Writer;
 
-/// What one run is: the full measurement, or every point once.
-const Run = struct {
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    out: *Writer,
-    smoke: bool,
-    /// Rows above their ceilings, counted so every row still prints.
-    over: usize = 0,
-
-    /// `full` iterations in a measurement, one in a smoke run.
-    fn iterations(run: *const Run, full: usize) usize {
-        return if (run.smoke) 1 else full;
+pub const OptionsError = error{ UnknownArgument, MissingRow, DuplicateArgument };
+pub fn options(args: []const []const u8) OptionsError!bench.Options {
+    var result: bench.Options = .{};
+    var i: usize = 1;
+    var row_seen = false;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--smoke")) {
+            if (result.smoke) return error.DuplicateArgument;
+            result.smoke = true;
+        } else if (std.mem.eql(u8, args[i], "--row")) {
+            if (row_seen) return error.DuplicateArgument;
+            row_seen = true;
+            i += 1;
+            if (i == args.len or std.mem.startsWith(u8, args[i], "--")) return error.MissingRow;
+            result.prefix = args[i];
+        } else return error.UnknownArgument;
     }
-
-    /// The monotonic clock. The package itself calls no operating system
-    /// API; a measurement needs a clock.
-    fn nowNanos(run: *const Run) i96 {
-        return std.Io.Clock.now(.awake, run.io).toNanoseconds();
-    }
-
-    /// How long `body` takes per iteration, in nanoseconds.
-    ///
-    /// A warm-up pass first, then the measured one, and the result is a
-    /// mean rather than a minimum: a mean is what a renderer actually pays.
-    fn nanosPer(run: *const Run, full: usize, context: anytype, comptime body: fn (@TypeOf(context)) anyerror!void) !f64 {
-        const n = run.iterations(full);
-        for (0..n / 8 + 1) |_| try body(context);
-
-        const start = run.nowNanos();
-        for (0..n) |_| try body(context);
-        const elapsed = run.nowNanos() - start;
-        return @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(n));
-    }
-
-    /// The least of three runs of `nanosPer`.
-    ///
-    /// For a measurement compared against another measurement rather than
-    /// against a ceiling, the least-disturbed run is the one that says which
-    /// of the two is faster; a mean on a machine shared with other work says
-    /// which of them the scheduler happened to interrupt.
-    fn bestNanosPer(run: *const Run, full: usize, context: anytype, comptime body: fn (@TypeOf(context)) anyerror!void) !f64 {
-        var best: f64 = std.math.floatMax(f64);
-        for (0..3) |_| best = @min(best, try run.nanosPer(full, context, body));
-        return best;
-    }
-
-    /// One row, held to its ceiling unless this is a smoke run.
-    fn row(run: *Run, name: []const u8, value: f64, unit: []const u8, ceiling: f64) !void {
-        try run.out.print("morse\t{s}\t{d:.6}\t{s}\t{d:.2}\n", .{ name, value, unit, ceiling });
-        if (!run.smoke and value >= ceiling) {
-            try run.out.print("over the ceiling: {s}\n", .{name});
-            run.over += 1;
-        }
-    }
-
-    /// A row with no ceiling: a figure that explains another.
-    fn figure(run: *Run, name: []const u8, value: anytype, unit: []const u8) !void {
-        if (@TypeOf(value) == f64)
-            try run.out.print("morse\t{s}\t{d:.6}\t{s}\t-\n", .{ name, value, unit })
-        else
-            try run.out.print("morse\t{s}\t{d}\t{s}\t-\n", .{ name, value, unit });
-    }
-};
-
-/// A fact about the bytes a measurement relies on. The run stops on the
-/// first one that does not hold, naming it: a timing of the wrong bytes
-/// times nothing.
-fn expect(ok: bool, what: []const u8) !void {
-    if (ok) return;
-    std.log.err("does not hold: {s}", .{what});
-    return error.ExpectationFailed;
+    return result;
 }
 
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    const smoke = switch (args.len) {
-        1 => false,
-        2 => if (std.mem.eql(u8, args[1], "--smoke")) true else return error.UnknownArgument,
-        else => return error.UnknownArgument,
+    const selected = try options(args);
+    var output_buffer: [4096]u8 = undefined;
+    var output = std.Io.File.stdout().writerStreaming(init.io, &output_buffer);
+    try measure(init.gpa, init.io, &output.interface, selected, .{
+        .commit = provenance.commit,
+        .cpu = provenance.cpu,
+        .os = provenance.os,
+    });
+    try output.interface.flush();
+}
+
+pub fn measure(gpa: std.mem.Allocator, io: std.Io, out: *Writer, selected: bench.Options, metadata: bench.Metadata) !void {
+    var context = try Context.init(gpa, selected.smoke);
+    defer context.deinit(gpa);
+    try context.check();
+    std.mem.doNotOptimizeAway(&context.numbers);
+    try bench.run(gpa, io, out, &context, &.{
+        .{ .name = "diffStyle, two calls", .unit = "two calls", .initial = 200_000, .run = Context.styleDiff },
+        .{ .name = "cursorTo", .unit = "move", .initial = 200_000, .run = Context.cursorMove },
+        .{ .name = "cursorTo, four moves", .unit = "four moves", .initial = 100_000, .run = Context.encoder },
+        .{ .name = "the formatter, the same four", .unit = "four moves", .initial = 100_000, .run = Context.formatter },
+        .{ .name = "transmit 1 MB", .unit = "image", .initial = 16, .run = Context.transmit },
+        .{ .name = "KeyParser, per byte", .unit = "byte", .initial = context.mixed.len, .smoke = context.mixed.len, .run = Context.decode },
+    }, metadata, selected);
+
+    // Keep the original two streams, three buffers and four read sizes.
+    const streams = [_]struct { name: []const u8, bytes: []const u8 }{
+        .{ .name = "text", .bytes = context.text },
+        .{ .name = "mixed", .bytes = context.grid_mixed },
     };
-
-    var buffer: [4096]u8 = undefined;
-    var stdout = std.Io.File.stdout().writerStreaming(init.io, &buffer);
-    defer stdout.interface.flush() catch {};
-    var run: Run = .{ .io = init.io, .gpa = init.gpa, .out = &stdout.interface, .smoke = smoke };
-
-    try styleDiff(&run);
-    try cursorMove(&run);
-    try encoderAgainstFormatter(&run);
-    try transmit(&run);
-    try mixedInputDecode(&run);
-    try parserGrid(&run);
-
-    if (run.over != 0) {
-        try run.out.flush();
-        return error.OverCeiling;
+    for (streams) |stream| {
+        context.stream = stream.bytes;
+        for ([_]usize{ 64, 1024, 16 * 1024 }) |size| {
+            context.buffer_size = size;
+            for ([_]usize{ 64, 977, 8192, 128 * 1024 }) |read| {
+                context.read_size = read;
+                var name_buffer: [128]u8 = undefined;
+                const name = try std.mem.print(&name_buffer, "KeyParser {s}, buffer {d}, read {d}", .{ stream.name, size, read });
+                try bench.run(gpa, io, out, &context, &.{.{ .name = name, .unit = "byte", .initial = stream.bytes.len, .smoke = stream.bytes.len, .run = Context.grid }}, metadata, selected);
+            }
+        }
     }
 }
 
-/// A style diff is five bytes and a few dozen nanoseconds.
-fn styleDiff(run: *Run) !void {
-    // The frame this stands for: a syntax-highlighted line, where the style
-    // changes at every token and almost nothing about it changes at once.
-    const Case = struct {
-        buffer: []u8,
-        const lit: morse.Style = .{ .bold = true, .fg = .ansi(.cyan) };
-        const plain: morse.Style = .{ .fg = .ansi(.cyan) };
-        fn one(c: @This()) !void {
-            var w: Writer = .fixed(c.buffer);
-            try morse.diffStyle(&w, lit, plain);
-            try morse.diffStyle(&w, plain, lit);
-            std.mem.doNotOptimizeAway(w.buffered().len);
+/// Only workload data and reusable output storage; measuring has no state here.
+pub const Context = struct {
+    pixels: []u8,
+    sink: []u8,
+    mixed: []u8,
+    grid_mixed: []u8,
+    text: []u8,
+    command: morse.Transmit,
+    numbers: [8]u32 = .{ 4294967295, 7, 1, 65535, 200, 300, 1, 128 },
+    buffer: [64]u8 = undefined,
+    storage: [16 * 1024]u8 = undefined,
+    stream: []const u8 = &.{},
+    buffer_size: usize = 0,
+    read_size: usize = 0,
+
+    const lit: morse.Style = .{ .bold = true, .fg = .ansi(.cyan) };
+    const plain: morse.Style = .{ .fg = .ansi(.cyan) };
+
+    pub fn init(gpa: std.mem.Allocator, smoke: bool) !Context {
+        const side: u32 = if (smoke) 32 else 512;
+        const pixels = try gpa.alloc(u8, side * side * 4);
+        errdefer gpa.free(pixels);
+        for (pixels, 0..) |*byte, i| byte.* = @truncate(i *% 131 +% 17);
+        const command: morse.Transmit = .{ .image = .{ .id = 1 }, .width = side, .height = side };
+        var output: Writer.Allocating = .init(gpa);
+        defer output.deinit();
+        try morse.transmitImage(&output.writer, command, pixels);
+        const sink = try gpa.alloc(u8, output.written().len + 64);
+        errdefer gpa.free(sink);
+        const mixed = try mixedInput(gpa, if (smoke) 4 * 1024 else 1024 * 1024);
+        errdefer gpa.free(mixed);
+        const grid_mixed = try mixedInput(gpa, if (smoke) 4 * 1024 else 128 * 1024);
+        errdefer gpa.free(grid_mixed);
+        const text = try plainInput(gpa, if (smoke) 4 * 1024 else 128 * 1024);
+        return .{ .pixels = pixels, .sink = sink, .mixed = mixed, .grid_mixed = grid_mixed, .text = text, .command = command };
+    }
+
+    pub fn deinit(context: *Context, gpa: std.mem.Allocator) void {
+        gpa.free(context.text);
+        gpa.free(context.grid_mixed);
+        gpa.free(context.mixed);
+        gpa.free(context.sink);
+        gpa.free(context.pixels);
+    }
+
+    pub fn check(context: *Context) !void {
+        var out: Writer = .fixed(&context.buffer);
+        try morse.diffStyle(&out, lit, plain);
+        try expect(std.mem.eql(u8, "\x1b[22m", out.buffered()));
+        out.end = 0;
+        try morse.diffStyle(&out, plain, plain);
+        try expect(out.end == 0);
+        try morse.cursorTo(&out, 1, 1);
+        try expect(std.mem.eql(u8, "\x1b[1;1H", out.buffered()));
+        out.end = 0;
+        try morse.cursorTo(&out, 200, 300);
+        try expect(std.mem.eql(u8, "\x1b[200;300H", out.buffered()));
+        out.end = 0;
+        try morse.cursorTo(&out, context.numbers[0], context.numbers[3]);
+        var formatted: [64]u8 = undefined;
+        var formatter_out: Writer = .fixed(&formatted);
+        try formatter_out.print("\x1b[{d};{d}H", .{ context.numbers[0], context.numbers[3] });
+        try expect(std.mem.eql(u8, out.buffered(), formatter_out.buffered()));
+        var image: Writer = .fixed(context.sink);
+        try morse.transmitImage(&image, context.command, context.pixels);
+        const payload = std.base64.standard.Encoder.calcSize(context.pixels.len);
+        const chunks = (context.pixels.len + morse.graphics_chunk_bytes - 1) / morse.graphics_chunk_bytes;
+        var first_keys: [64]u8 = undefined;
+        const first = try std.mem.print(&first_keys, "i=1,s={d},v={d},m=1", .{ context.command.width, context.command.height });
+        const framing = "\x1b_".len + 1 + 1 + "\x1b\\".len;
+        try expect(image.end == payload + chunks * (framing + "m=1".len) + (first.len - "m=1".len));
+        // Full-size byte budgets and cross-buffer event equivalence stay in
+        // src/testing/work_test.zig, independent of clocks and smoke sizing.
+        const counts = context.decodeOne();
+        try expect(counts.events > context.mixed.len / 10);
+        try expect(counts.keys > counts.events / 4);
+        try expect(counts.pending == 0);
+    }
+
+    pub fn styleDiff(context: *Context, units: u64) !void {
+        for (0..units) |_| {
+            var out: Writer = .fixed(&context.buffer);
+            try morse.diffStyle(&out, lit, plain);
+            try morse.diffStyle(&out, plain, lit);
+            std.mem.doNotOptimizeAway(out.buffered().len);
         }
-    };
+    }
 
-    var buffer: [64]u8 = undefined;
-    var out: Writer = .fixed(&buffer);
-    try morse.diffStyle(&out, Case.lit, Case.plain);
-    // Five bytes: `CSI 22 m`. A full `setStyle` of `plain` would be seven,
-    // and a reset and a repaint would be twelve.
-    try expect(std.mem.eql(u8, "\x1b[22m", out.buffered()), "a style diff that drops bold is CSI 22 m");
-
-    // And nothing at all when the two are equal, which is the case a
-    // renderer hits most.
-    var same: Writer = .fixed(&buffer);
-    try morse.diffStyle(&same, Case.plain, Case.plain);
-    try expect(same.buffered().len == 0, "equal styles write nothing");
-
-    const ns = try run.nanosPer(200_000, Case{ .buffer = &buffer }, Case.one);
-    try run.row("diffStyle, two calls", ns, "ns", 4000);
-}
-
-/// A cursor move is the digits and nothing else.
-fn cursorMove(run: *Run) !void {
-    const Case = struct {
-        buffer: []u8,
-        fn one(c: @This()) !void {
-            var w: Writer = .fixed(c.buffer);
-            try morse.cursorTo(&w, 200, 300);
-            std.mem.doNotOptimizeAway(w.buffered().len);
+    pub fn cursorMove(context: *Context, units: u64) !void {
+        for (0..units) |_| {
+            var out: Writer = .fixed(context.buffer[0..32]);
+            try morse.cursorTo(&out, 200, 300);
+            std.mem.doNotOptimizeAway(out.buffered().len);
         }
-    };
+    }
 
-    var buffer: [32]u8 = undefined;
-    var out: Writer = .fixed(&buffer);
-    try morse.cursorTo(&out, 1, 1);
-    try expect(std.mem.eql(u8, "\x1b[1;1H", out.buffered()), "cursorTo(1, 1) is CSI 1;1 H");
-    var far: Writer = .fixed(&buffer);
-    try morse.cursorTo(&far, 200, 300);
-    try expect(std.mem.eql(u8, "\x1b[200;300H", far.buffered()), "cursorTo(200, 300) is CSI 200;300 H");
-
-    const ns = try run.nanosPer(200_000, Case{ .buffer = &buffer }, Case.one);
-    try run.row("cursorTo", ns, "ns", 2000);
-}
-
-/// The hand integer encoder against the formatter.
-///
-/// Why the writers spell their numbers with a hand encoder rather than
-/// `w.print("{d}")`: here through `cursorTo`, against the formatter writing
-/// the same sequence. The numbers come out of memory the compiler cannot
-/// fold, or ReleaseFast would measure two constants instead of two encoders.
-///
-/// Measured on the encoder alone, on the machine this was written on: 2.24x
-/// in Debug, 1.31x in ReleaseSmall, and 0.92x and 0.94x in ReleaseSafe and
-/// ReleaseFast -- slower in the optimizing modes, because the optimiser
-/// inlines the formatter's own fast path. Debug and ReleaseSmall are where
-/// the suite and most development run, and a writer with no comptime format
-/// machinery in it is a smaller one; that is the whole of the case for it.
-///
-/// The ratio is a figure, not held to anything: two timing loops measured
-/// against each other are at the mercy of whichever core the scheduler
-/// hands them, and repeated runs on one machine spanned 0.72x to 10.34x in
-/// Debug alone. What the encoder owes is checked in src/seq.zig, which
-/// spells every value the sequences carry and agrees with the formatter on
-/// every value to ten thousand.
-fn encoderAgainstFormatter(run: *Run) !void {
-    const Mine = struct {
-        buffer: []u8,
-        numbers: []const u32,
-        fn one(c: @This()) !void {
-            var w: Writer = .fixed(c.buffer);
+    pub fn encoder(context: *Context, units: u64) !void {
+        for (0..units) |_| {
+            var out: Writer = .fixed(context.buffer[0..32]);
             var i: usize = 0;
-            while (i < c.numbers.len) : (i += 2) {
-                try morse.cursorTo(&w, c.numbers[i], c.numbers[i + 1]);
-                w.end = 0;
+            while (i < context.numbers.len) : (i += 2) {
+                try morse.cursorTo(&out, context.numbers[i], context.numbers[i + 1]);
+                out.end = 0;
             }
-            std.mem.doNotOptimizeAway(w.end);
+            std.mem.doNotOptimizeAway(out.end);
         }
-    };
-    const Theirs = struct {
-        buffer: []u8,
-        numbers: []const u32,
-        fn one(c: @This()) !void {
-            var w: Writer = .fixed(c.buffer);
+    }
+
+    pub fn formatter(context: *Context, units: u64) !void {
+        for (0..units) |_| {
+            var out: Writer = .fixed(context.buffer[0..32]);
             var i: usize = 0;
-            while (i < c.numbers.len) : (i += 2) {
-                try w.print("\x1b[{d};{d}H", .{ c.numbers[i], c.numbers[i + 1] });
-                w.end = 0;
+            while (i < context.numbers.len) : (i += 2) {
+                try out.print("\x1b[{d};{d}H", .{ context.numbers[i], context.numbers[i + 1] });
+                out.end = 0;
             }
-            std.mem.doNotOptimizeAway(w.end);
+            std.mem.doNotOptimizeAway(out.end);
         }
-    };
+    }
 
-    var buffer: [32]u8 = undefined;
-    var numbers = [_]u32{ 4294967295, 7, 1, 65535, 200, 300, 1, 128 };
-    std.mem.doNotOptimizeAway(&numbers);
+    pub fn transmit(context: *Context, units: u64) !void {
+        for (0..units) |_| {
+            var out: Writer = .fixed(context.sink);
+            try morse.transmitImage(&out, context.command, context.pixels);
+            std.mem.doNotOptimizeAway(out.buffered().len);
+        }
+    }
 
-    var check: [32]u8 = undefined;
-    var mine_out: Writer = .fixed(&buffer);
-    try morse.cursorTo(&mine_out, numbers[0], numbers[3]);
-    var theirs_out: Writer = .fixed(&check);
-    try theirs_out.print("\x1b[{d};{d}H", .{ numbers[0], numbers[3] });
-    try expect(std.mem.eql(u8, theirs_out.buffered(), mine_out.buffered()), "cursorTo spells its numbers as the formatter does");
+    pub fn decode(context: *Context, units: u64) !void {
+        if (units % context.mixed.len != 0) return error.PartialInput;
+        for (0..units / context.mixed.len) |_| std.mem.doNotOptimizeAway(context.decodeOne());
+    }
 
-    const mine = try run.bestNanosPer(100_000, Mine{ .buffer = &buffer, .numbers = &numbers }, Mine.one);
-    const theirs = try run.bestNanosPer(100_000, Theirs{ .buffer = &buffer, .numbers = &numbers }, Theirs.one);
-    try run.row("cursorTo, four moves", mine, "ns", 8000);
-    try run.figure("the formatter, the same four", theirs, "ns");
-    try run.figure("cursorTo against the formatter", theirs / mine, "x");
+    fn decodeOne(context: *Context) struct { events: usize, keys: usize, pending: usize } {
+        var parser: morse.KeyParser = .init(context.storage[0..morse.KeyParser.min_buffer]);
+        var events: usize = 0;
+        var keys: usize = 0;
+        var offset: usize = 0;
+        while (offset < context.mixed.len) {
+            const end = @min(offset + 977, context.mixed.len);
+            var batch = parser.feed(context.mixed[offset..end]);
+            while (batch.next()) |event| {
+                events += 1;
+                if (event == .key) keys += 1;
+            }
+            offset = end;
+        }
+        return .{ .events = events, .keys = keys, .pending = parser.pending().len };
+    }
+
+    pub fn grid(context: *Context, units: u64) !void {
+        if (units % context.stream.len != 0) return error.PartialInput;
+        for (0..units / context.stream.len) |_| {
+            var parser: morse.KeyParser = .init(context.storage[0..context.buffer_size]);
+            var offset: usize = 0;
+            while (offset < context.stream.len) {
+                const end = @min(offset + context.read_size, context.stream.len);
+                var batch = parser.feed(context.stream[offset..end]);
+                while (batch.next()) |_| {}
+                offset = end;
+            }
+            std.mem.doNotOptimizeAway(parser.pending().len);
+        }
+    }
+};
+
+fn expect(ok: bool) error{ExpectationFailed}!void {
+    if (!ok) return error.ExpectationFailed;
 }
 
-/// A megabyte of pixels costs a quarter of a percent in framing.
-fn transmit(run: *Run) !void {
-    // A 512 by 512 RGBA image, or 32 by 32 in a smoke run: still two
-    // chunks, so the framing between chunks is in it.
-    const side: u32 = if (run.smoke) 32 else 512;
-    const size = side * side * 4;
-    const pixels = try run.gpa.alloc(u8, size);
-    defer run.gpa.free(pixels);
-    for (pixels, 0..) |*b, i| b.* = @truncate(i *% 131 +% 17);
-
-    const command: morse.Transmit = .{ .image = .{ .id = 1 }, .width = side, .height = side };
-    var out: Writer.Allocating = .init(run.gpa);
-    defer out.deinit();
-    try morse.transmitImage(&out.writer, command, pixels);
-
-    const written = out.written().len;
-    const payload = std.base64.standard.Encoder.calcSize(size);
-    const overhead = written - payload;
-
-    // Every chunk but the last is exactly the protocol's maximum, so the
-    // number of sequences is fixed and so is the framing around them: the
-    // payload plus `APC G`, the keys, the `;` and the `ST` on each sequence,
-    // with no padding and no repeated header.
-    const chunks = (size + morse.graphics_chunk_bytes - 1) / morse.graphics_chunk_bytes;
-    var first_keys: [64]u8 = undefined;
-    const first = try std.mem.print(&first_keys, "i=1,s={d},v={d},m=1", .{ side, side });
-    const chunk_keys = "m=1".len;
-    const framing = "\x1b_".len + 1 + 1 + "\x1b\\".len;
-    try expect(written == payload + chunks * (framing + chunk_keys) + (first.len - chunk_keys), "an image is its payload and the framing of each chunk");
-
-    const ratio = @as(f64, @floatFromInt(overhead)) * 100 / @as(f64, @floatFromInt(payload));
-    try run.row("transmit 1 MB, framing overhead", ratio, "%", 0.25);
-    try run.figure("transmit 1 MB, total", written, "bytes");
-
-    const Case = struct {
-        command: morse.Transmit,
-        pixels: []const u8,
-        sink: []u8,
-        fn one(c: @This()) !void {
-            var w: Writer = .fixed(c.sink);
-            try morse.transmitImage(&w, c.command, c.pixels);
-            std.mem.doNotOptimizeAway(w.buffered().len);
-        }
-    };
-    const sink = try run.gpa.alloc(u8, written + 64);
-    defer run.gpa.free(sink);
-
-    const ns = try run.nanosPer(16, Case{ .command = command, .pixels = pixels, .sink = sink }, Case.one);
-    try run.row("transmit 1 MB", ns / 1_000_000, "ms", 400);
-    try run.figure("transmit throughput", @as(f64, @floatFromInt(size)) / ns * 1000, "MB/s");
-}
-
-/// The input a full-screen program really reads: keys in the kitty protocol
-/// and in the legacy spellings, mouse reports, paste markers, plain UTF-8,
-/// and the replies that arrive in among them. It ends on a whole piece.
+/// Whole pieces of mixed terminal input, including replies between key events.
 fn mixedInput(allocator: std.mem.Allocator, size: usize) ![]u8 {
     const pieces = [_][]const u8{
-        "\x1b[97;5u",
-        "a",
-        "\x1b[A",
-        "\x1b[1;5C",
-        "\x1b[<0;40;12M",
-        "\x1b[M\x20\x21\x21",
-        "\x1b[200~",
-        "pasted",
-        "\x1b[201~",
-        "\u{00e9}",
-        "\u{4e2d}",
-        "\x1b[?2026;1$y",
-        "\x1b[?997;1n",
-        "\x1b[48;24;80;384;640t",
-        "\x1b[15~",
-        "\x1bOP",
-        "\x1b[27;5;97~",
-        "\x1b]52;c;aGk=\x1b\\",
-        "\r",
-        "\x7f",
+        "\x1b[97;5u",   "a",                      "\x1b[A",    "\x1b[1;5C", "\x1b[<0;40;12M", "\x1b[M\x20\x21\x21",
+        "\x1b[200~",    "pasted",                 "\x1b[201~", "\u{00e9}",  "\u{4e2d}",       "\x1b[?2026;1$y",
+        "\x1b[?997;1n", "\x1b[48;24;80;384;640t", "\x1b[15~",  "\x1bOP",    "\x1b[27;5;97~",  "\x1b]52;c;aGk=\x1b\\",
+        "\r",           "\x7f",
     };
-
     var list: std.ArrayList(u8) = .empty;
     errdefer list.deinit(allocator);
     var i: usize = 0;
-    while (list.items.len < size) : (i += 1) {
-        try list.appendSlice(allocator, pieces[i % pieces.len]);
-    }
+    while (list.items.len < size) : (i += 1) try list.appendSlice(allocator, pieces[i % pieces.len]);
     return list.toOwnedSlice(allocator);
 }
 
-/// A megabyte of mixed input, framed and decoded.
-fn mixedInputDecode(run: *Run) !void {
-    const size: usize = if (run.smoke) 4 * 1024 else 1024 * 1024;
-    const input = try mixedInput(run.gpa, size);
-    defer run.gpa.free(input);
-
-    var storage: [morse.KeyParser.min_buffer]u8 = undefined;
-    var parser: morse.KeyParser = .init(&storage);
-
-    const start = run.nowNanos();
-    var events: usize = 0;
-    var keys: usize = 0;
-
-    // Fed in reads of an awkward size, so a sequence lands across a read
-    // boundary as often as it does against a real terminal.
-    var offset: usize = 0;
-    while (offset < input.len) {
-        const end = @min(offset + 977, input.len);
-        var batch = parser.feed(input[offset..end]);
-        while (batch.next()) |event| {
-            events += 1;
-            if (event == .key) keys += 1;
-        }
-        offset = end;
-    }
-    const elapsed = run.nowNanos() - start;
-
-    // The stream is real input, so it must decode to real events rather
-    // than to a megabyte of `unhandled`, and nothing is left half-read.
-    try expect(events > input.len / 10, "mixed input decodes to an event every ten bytes or fewer");
-    try expect(keys > events / 4, "a quarter of the events are keys");
-    try expect(parser.pending().len == 0, "the parser holds nothing once the input ends on a sequence");
-
-    const ns_per_byte = @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(input.len));
-    try run.row("KeyParser, per byte", ns_per_byte, "ns", 200);
-    try run.figure("KeyParser throughput", @as(f64, @floatFromInt(input.len)) / @as(f64, @floatFromInt(elapsed)) * 1000, "MB/s");
-    try run.figure("KeyParser events", events, "events");
-    try run.figure("KeyParser keys", keys, "events");
-}
-
-/// A block of printable text, the shape a paste or a fast typist arrives in.
 fn plainInput(allocator: std.mem.Allocator, size: usize) ![]u8 {
     const bytes = try allocator.alloc(u8, size);
-    for (bytes, 0..) |*b, i| b.* = ' ' + @as(u8, @intCast(i % 95));
-    return bytes;
-}
-
-/// What the parser costs does not depend on the caller's buffer.
-///
-/// The grid the per-event top-up used to fall off: the cost of a top-up is
-/// the whole of the unread buffer, so doing one per event made a large
-/// buffer slower than a small one and a large read slower than a small one
-/// -- exactly backwards, and exactly what the README's advice to size for an
-/// OSC 52 reply steers a caller into.
-fn parserGrid(run: *Run) !void {
-    const block: usize = if (run.smoke) 4 * 1024 else 128 * 1024;
-    // The best of three per cell, not the mean. What this grid catches is a
-    // tilt -- one cell orders of magnitude worse than its neighbours -- and
-    // a tilt is in every run, where a machine shared with other work puts
-    // noise in some of them.
-    const rounds: usize = if (run.smoke) 1 else 3;
-    const mixed = try mixedInput(run.gpa, block);
-    defer run.gpa.free(mixed);
-    const text = try plainInput(run.gpa, block);
-    defer run.gpa.free(text);
-
-    const streams = [_]struct { name: []const u8, bytes: []const u8 }{
-        .{ .name = "text", .bytes = text },
-        .{ .name = "mixed", .bytes = mixed },
-    };
-    const buffers = [_]usize{ 64, 1024, 16 * 1024 };
-    const reads = [_]usize{ 64, 977, 8192, 128 * 1024 };
-
-    var storage: [16 * 1024]u8 = undefined;
-    var worst: f64 = 0;
-    for (streams) |stream| {
-        for (buffers) |size| {
-            for (reads) |read| {
-                var best: f64 = std.math.floatMax(f64);
-                for (0..rounds) |_| {
-                    var parser: morse.KeyParser = .init(storage[0..size]);
-                    const start = run.nowNanos();
-                    var offset: usize = 0;
-                    while (offset < stream.bytes.len) {
-                        const end = @min(offset + read, stream.bytes.len);
-                        var batch = parser.feed(stream.bytes[offset..end]);
-                        while (batch.next()) |_| {}
-                        offset = end;
-                    }
-                    const elapsed = run.nowNanos() - start;
-                    best = @min(best, @as(f64, @floatFromInt(elapsed)) /
-                        @as(f64, @floatFromInt(stream.bytes.len)));
-                }
-                var name_buf: [128]u8 = undefined;
-                const name = try std.mem.print(&name_buf, "KeyParser {s}, buffer {d}, read {d}", .{ stream.name, size, read });
-                try run.row(name, best, "ns/byte", 400);
-                worst = @max(worst, best);
-            }
-        }
+    for (bytes, 0..) |*byte, i| {
+        // safe: i % 95 is an ASCII offset that fits u8.
+        byte.* = ' ' + @as(u8, @intCast(i % 95));
     }
-
-    // One ceiling for every cell of the grid, because the defect this
-    // catches is a whole grid tilting rather than one number moving. Wide:
-    // the slowest cell measures under 40 ns a byte in Debug, and the tilt it
-    // is here to catch measured 2,272.
-    try run.row("KeyParser, worst of the grid", worst, "ns/byte", 400);
+    return bytes;
 }

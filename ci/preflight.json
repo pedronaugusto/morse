@@ -3,7 +3,8 @@
     "src"
   ],
   "test_roots": [
-    "src/tests.zig"
+    "src/tests.zig",
+    "bench/budgets_test.zig"
   ],
   "test_dependencies": [
     "shakedown"

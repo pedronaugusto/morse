@@ -101,14 +101,34 @@ pub fn build(b: *std.Build) !void {
     //=====================================================================
 
     const ci = b.lazyImport(@This(), "preflight");
-    // The tests' corpus entries and repeated text.
+    // Test support and measuring stay outside the consumer module.
     const shakedown = try b.dependencyLazy("shakedown", .{ .target = target, .optimize = optimize });
     tests.root_module.addImport("shakedown", shakedown.module("shakedown"));
+    const measurement_options = b.addOptions();
+    measurement_options.addOption([]const u8, "commit", "test");
+    measurement_options.addOption([]const u8, "cpu", b.graph.host.result.cpu.model.name);
+    measurement_options.addOption([]const u8, "os", @tagName(b.graph.host.result.os.tag));
+    const measurement_tests = b.addTest(.{
+        .name = "measurement-tests",
+        .filters = if (test_filter) |filter| &.{filter} else &.{},
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/budgets_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "morse", .module = module },
+                .{ .name = "shakedown", .module = shakedown.module("shakedown") },
+            },
+        }),
+    });
+    measurement_tests.root_module.addOptions("preflight_bench_options", measurement_options);
+    test_step.dependOn(&b.addRunArtifact(measurement_tests).step);
+    check_step.dependOn(&measurement_tests.step);
     if (ci) |preflight| {
         preflight.addCi(b, .{
             .tests = test_step,
             .portable_tests = true,
-            // Speed ceilings with a clock in them, read on a quiet machine.
+            // Workloads only; shakedown measures and preflight wires the steps.
             .bench = .{
                 .programs = &.{.{ .name = "budgets", .source = "bench/budgets.zig" }},
                 .imports = benchImports,

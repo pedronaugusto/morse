@@ -1,7 +1,7 @@
 //! Exact byte counts and bounded work for the paths a renderer uses.
 //!
-//! These checks need no clock. Timing loops and their ceilings live on the
-//! bench branch, separately from the unit suite.
+//! These checks need no clock. bench/budgets.zig supplies workloads to
+//! shakedown.bench separately from these exact byte and buffer guards.
 
 const std = @import("std");
 const base64 = @import("../base64.zig");
