@@ -1,0 +1,10 @@
+{
+  "profile": "core",
+  "rules": [
+    {
+      "id": "A004",
+      "level": "gate"
+    }
+  ],
+  "strict_suppressions": true
+}

@@ -30,6 +30,12 @@ base64 chunks and numeric wire encoders retain raw operations with reasons at
 the sites: one validated byte domain or a fixed wire field with no mixed-domain
 arithmetic. No terminal ownership or future protocol state is introduced.
 
+`ci/preflight.json` selects `ci/glint.json`, which sets A004 (ID, unit and
+integer contracts) to gate across production, tests, benchmarks, examples, conformance
+and build/CI code. The published preflight pin still executes ziglint; glint G3
+accepts these aegis rules only in report mode. The gate configuration is ready
+for G4 integration and is not claimed to execute under the current pin.
+
 ## Invariants
 
 - `KeyParser` owns no memory: `start <= end <= buffer.len`, the buffer meets

@@ -31,5 +31,14 @@
   ],
   "unreachable_exceptions": "ci/unreachable-exceptions.json",
   "debug_print_exceptions": "ci/debug-print-exceptions.json",
-  "file_name_exceptions": "ci/file-name-exceptions.json"
+  "file_name_exceptions": "ci/file-name-exceptions.json",
+  "glint_config": "ci/glint.json",
+  "glint_paths": [
+    "src",
+    "bench",
+    "examples",
+    "conformance",
+    "ci",
+    "build.zig"
+  ]
 }
