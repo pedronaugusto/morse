@@ -1184,7 +1184,7 @@ test "an animation is built out of frames, played, and composed" {
     // And the one animation command the delete writer already reached:
     // `d=f` takes a frame away and leaves the image standing.
     try morse.deleteImage(v.w(), .{
-        .target = .{ .frames = .{ .id = 9 } },
+        .target = .{ .frames = .{ .id = morse.ImageId.fromRaw(9) } },
         .quiet = .silent,
     });
     v.feed();
@@ -1220,7 +1220,7 @@ test "a frame command is answered, and a chunked one is answered once" {
     v.feed();
 
     const response = morse.parseGraphicsResponse(v.replies()).?;
-    try checkEqual(@as(?u32, 11), response.id);
+    try checkEqual(@as(?morse.ImageId, morse.ImageId.fromRaw(11)), response.id);
     try check(response.ok());
     try checkEqual(@as(u32, 2), v.term.screens.active.kitty_images.imageById(11).?.animation.?.frameCount());
 }
