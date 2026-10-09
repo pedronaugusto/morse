@@ -165,7 +165,7 @@ pub const Probe = struct {
     /// the program picks one it will never send a picture under, because an
     /// id it also uses for a picture makes the picture's answers read as the
     /// probe's.
-    graphics_id: u32,
+    graphics_id: graphics.QueryImageId,
 
     /// Writes every question this probe asks, slow forwarded questions first
     /// and DA1 last.
@@ -384,7 +384,7 @@ test "a whole probe is one write, with DA1 last" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const probe: Probe = .{ .graphics_id = 31 };
+    const probe: Probe = .{ .graphics_id = try graphics.QueryImageId.fromRaw(31) };
     try probe.write(&out.writer);
     const bytes = out.written();
 
@@ -427,7 +427,7 @@ test "the order is the order the questions are declared in" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const probe: Probe = .{ .graphics_id = 31 };
+    const probe: Probe = .{ .graphics_id = try graphics.QueryImageId.fromRaw(31) };
     try probe.write(&out.writer);
     const bytes = out.written();
 
@@ -446,7 +446,7 @@ test "the order is the order the questions are declared in" {
 }
 
 /// The one question `question` asks, for a test that checks the order.
-fn writeOne(w: *Writer, question: Probe.Question, graphics_id: u32) Writer.Error!void {
+fn writeOne(w: *Writer, question: Probe.Question, graphics_id: graphics.QueryImageId) Writer.Error!void {
     switch (question) {
         .cursor_position => try query.requestCursorPosition(w),
         .foreground_color => try device.queryColor(w, .foreground),
@@ -482,7 +482,7 @@ test "a probe that asks nothing still asks for the device attributes" {
     defer out.deinit();
 
     const probe: Probe = .{
-        .graphics_id = 31,
+        .graphics_id = try graphics.QueryImageId.fromRaw(31),
         .cursor_position = false,
         .foreground_color = false,
         .background_color = false,
@@ -517,15 +517,15 @@ test "a probe that asks nothing still asks for the device attributes" {
 test "a field turned off leaves exactly that question out" {
     var whole: Writer.Allocating = .init(std.testing.allocator);
     defer whole.deinit();
-    try (Probe{ .graphics_id = 31 }).write(&whole.writer);
+    try (Probe{ .graphics_id = try graphics.QueryImageId.fromRaw(31) }).write(&whole.writer);
 
     var without: Writer.Allocating = .init(std.testing.allocator);
     defer without.deinit();
-    try (Probe{ .graphics_id = 31, .graphics = false }).write(&without.writer);
+    try (Probe{ .graphics_id = try graphics.QueryImageId.fromRaw(31), .graphics = false }).write(&without.writer);
 
     var only: Writer.Allocating = .init(std.testing.allocator);
     defer only.deinit();
-    try writeOne(&only.writer, .graphics, 31);
+    try writeOne(&only.writer, .graphics, try graphics.QueryImageId.fromRaw(31));
 
     try std.testing.expectEqual(
         whole.written().len - only.written().len,
@@ -600,7 +600,7 @@ test "a probe routes a forwarded reply that arrives after DA1" {
 
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    try (Probe{ .graphics_id = 31 }).write(&out.writer);
+    try (Probe{ .graphics_id = try graphics.QueryImageId.fromRaw(31) }).write(&out.writer);
 
     const replies = "\x1b[12;40R" ++
         "a" ++
@@ -699,7 +699,7 @@ test "fuzz matches" {
 test "the probe asks the colour count and routes its answer or refusal" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    try (Probe{ .graphics_id = 31 }).write(&out.writer);
+    try (Probe{ .graphics_id = try graphics.QueryImageId.fromRaw(31) }).write(&out.writer);
     try std.testing.expect(std.mem.find(u8, out.written(), "\x1bP+q436f\x1b\\") != null);
 
     for ([_][]const u8{ "\x1bP1+r436f=323536\x1b\\", "\x1bP0+r436f\x1b\\" }) |bytes| {
@@ -715,7 +715,7 @@ test "the probe asks the colour count and routes its answer or refusal" {
 test "a disabled colour count leaves its query out" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    const probe: Probe = .{ .graphics_id = 31, .color_count = false };
+    const probe: Probe = .{ .graphics_id = try graphics.QueryImageId.fromRaw(31), .color_count = false };
     try probe.write(&out.writer);
     try std.testing.expect(!probe.asks(.color_count));
     try std.testing.expect(std.mem.find(u8, out.written(), "\x1bP+q436f\x1b\\") == null);

@@ -46,7 +46,7 @@ test "measurement: output errors propagate and calibration terminates" {
     var context = try workloads.Context.init(gpa, true);
     defer context.deinit(gpa);
     var clock: shakedown.Clock = .init(std.testing.io, .{});
-    try std.testing.expectError(error.Unmeasurable, bench.run(gpa, clock.io(), &out.writer, &context, &.{.{
+    try std.testing.expectError(error.Unmeasurable, bench.run(workloads.WorkloadError, gpa, clock.io(), &out.writer, &context, &.{.{
         .name = "cursorTo",
         .unit = "move",
         .run = workloads.Context.cursorMove,
@@ -61,7 +61,7 @@ test "measurement: callbacks reuse data and propagate workload failures" {
     var context = try workloads.Context.init(gpa, true);
     defer context.deinit(gpa);
     try context.check();
-    const rows = [_]bench.Row(workloads.Context){
+    const rows = [_]bench.Row(workloads.Context, workloads.WorkloadError){
         .{ .name = "transmit 1 MB", .unit = "image", .run = workloads.Context.transmit },
     };
     var out: std.Io.Writer.Allocating = .init(gpa);
@@ -70,7 +70,7 @@ test "measurement: callbacks reuse data and propagate workload failures" {
     {
         context.sink = sink[0..1];
         defer context.sink = sink;
-        try std.testing.expectError(error.WriteFailed, bench.run(gpa, std.testing.io, &out.writer, &context, &rows, metadata, .{ .smoke = true }));
+        try std.testing.expectError(error.WriteFailed, bench.run(workloads.WorkloadError, gpa, std.testing.io, &out.writer, &context, &rows, metadata, .{ .smoke = true }));
     }
     for (0..2) |_| {
         try context.styleDiff(2);
@@ -89,7 +89,7 @@ test "measurement: real workload callback produces measured JSONL with shared po
         workload: *workloads.Context,
         clock: *shakedown.Clock,
         calls: usize = 0,
-        fn run(context: *@This(), units: u64) !void {
+        fn run(context: *@This(), units: u64) workloads.WorkloadError!void {
             try context.workload.cursorMove(units);
             context.calls += 1;
             context.clock.advance(.fromNanoseconds(1000 * units));
@@ -101,7 +101,7 @@ test "measurement: real workload callback produces measured JSONL with shared po
     var cursor: Cursor = .{ .workload = &workload, .clock = &clock };
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
-    try bench.run(gpa, clock.io(), &out.writer, &cursor, &.{.{
+    try bench.run(workloads.WorkloadError, gpa, clock.io(), &out.writer, &cursor, &.{.{
         .name = "cursorTo",
         .unit = "move",
         .run = Cursor.run,

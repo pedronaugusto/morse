@@ -13,6 +13,10 @@
 //! borrows the bytes they were given.
 
 const std = @import("std");
+const aegis = @import("aegis");
+
+/// A framed byte count, distinct from a parameter or element index.
+pub const ByteCount = aegis.units.Bytes(usize);
 const seq = @import("seq.zig");
 
 /// One control sequence, `CSI [marker] parameters [intermediates] final`,
@@ -36,7 +40,7 @@ pub const Csi = struct {
     final: u8,
     /// How many bytes the sequence took, from the `ESC` through the final
     /// byte, or up to the byte that abandoned it.
-    len: usize,
+    len: ByteCount,
 
     /// The parameter at `index`, counting from zero, as a number: the field
     /// between the `index`th and the next `;`, up to any `:` in it.
@@ -62,6 +66,7 @@ pub const Csi = struct {
 /// `bytes` starts with the `CSI`, `ESC [`, and may run on past the sequence;
 /// `Csi.len` says where it ended. Null when `bytes` does not start with a
 /// `CSI`, or does not yet hold the byte that ends it.
+// aegis: measured hot loop validated at its boundary: indices stay within bytes; the result exports a byte count.
 pub fn parseCsi(bytes: []const u8) ?Csi {
     if (bytes.len < 2 or bytes[0] != seq.esc or bytes[1] != '[') return null;
     var i: usize = 2;
@@ -82,7 +87,7 @@ pub fn parseCsi(bytes: []const u8) ?Csi {
         .params = bytes[params_start..params_end],
         .intermediates = bytes[params_end..i],
         .final = if (whole) final else 0,
-        .len = if (whole) i + 1 else i,
+        .len = ByteCount.fromRaw(if (whole) i + 1 else i),
     };
 }
 
@@ -97,7 +102,7 @@ pub const ControlString = struct {
     body: []const u8,
     /// How many bytes the string took, from the `ESC` through its
     /// terminator, or up to the `ESC` that abandoned it.
-    len: usize,
+    len: ByteCount,
     /// Whether a terminator ended it. False for a string abandoned by an
     /// `ESC` that does not begin an `ST`: that `ESC` is the next sequence
     /// beginning, so the string ends in front of it, unfinished, and what it
@@ -113,6 +118,7 @@ pub const ControlString = struct {
 /// on past the string. Null when `bytes` does not start with one of the five
 /// introducers, or does not yet hold the byte that ends it -- which includes
 /// a final `ESC` whose next byte has not arrived.
+// aegis: measured hot loop validated at its boundary: terminator lookahead checks bytes.len before indexing.
 pub fn parseControlString(bytes: []const u8) ?ControlString {
     if (bytes.len < 2 or bytes[0] != seq.esc) return null;
     switch (bytes[1]) {
@@ -124,7 +130,7 @@ pub fn parseControlString(bytes: []const u8) ?ControlString {
         if (bytes[i] == seq.bel) return .{
             .introducer = bytes[1],
             .body = bytes[2..i],
-            .len = i + 1,
+            .len = ByteCount.fromRaw(i + 1),
             .terminated = true,
         };
         if (bytes[i] != seq.esc) continue;
@@ -133,7 +139,7 @@ pub fn parseControlString(bytes: []const u8) ?ControlString {
         return .{
             .introducer = bytes[1],
             .body = bytes[2..i],
-            .len = if (terminated) i + 2 else i,
+            .len = ByteCount.fromRaw(if (terminated) i + 2 else i),
             .terminated = terminated,
         };
     }
@@ -148,7 +154,7 @@ test "a control sequence frames into its marker, parameters, intermediates and f
     try testing.expectEqualStrings("25;7", c.params);
     try testing.expectEqualStrings("", c.intermediates);
     try testing.expectEqual(@as(u8, 'h'), c.final);
-    try testing.expectEqual(@as(usize, 8), c.len);
+    try testing.expectEqual(@as(usize, 8), c.len.raw());
 
     const shape = parseCsi("\x1b[5 q").?;
     try testing.expectEqual(@as(u8, 0), shape.marker);
@@ -158,7 +164,7 @@ test "a control sequence frames into its marker, parameters, intermediates and f
 
     const bare = parseCsi("\x1b[m").?;
     try testing.expectEqualStrings("", bare.params);
-    try testing.expectEqual(@as(usize, 3), bare.len);
+    try testing.expectEqual(@as(usize, 3), bare.len.raw());
 }
 
 test "a control sequence not all here yet is not framed" {
@@ -172,7 +178,7 @@ test "a control sequence not all here yet is not framed" {
 test "a byte that cannot end a control sequence abandons it in front of that byte" {
     const c = parseCsi("\x1b[12\x1b[1m").?;
     try testing.expectEqual(@as(u8, 0), c.final);
-    try testing.expectEqual(@as(usize, 4), c.len);
+    try testing.expectEqual(@as(usize, 4), c.len.raw());
     try testing.expectEqualStrings("12", c.params);
 }
 
@@ -190,18 +196,18 @@ test "a control string ends at ST or BEL, and an ESC that is not ST abandons it"
     const st = parseControlString("\x1b]8;;https://x\x1b\\after").?;
     try testing.expectEqual(@as(u8, ']'), st.introducer);
     try testing.expectEqualStrings("8;;https://x", st.body);
-    try testing.expectEqual(@as(usize, 16), st.len);
+    try testing.expectEqual(@as(usize, 16), st.len.raw());
     try testing.expect(st.terminated);
 
     const bel = parseControlString("\x1b_Gi=1;OK\x07").?;
     try testing.expectEqual(@as(u8, '_'), bel.introducer);
     try testing.expectEqualStrings("Gi=1;OK", bel.body);
-    try testing.expectEqual(@as(usize, 10), bel.len);
+    try testing.expectEqual(@as(usize, 10), bel.len.raw());
     try testing.expect(bel.terminated);
 
     const cut = parseControlString("\x1b]0;tit\x1b[A").?;
     try testing.expect(!cut.terminated);
-    try testing.expectEqual(@as(usize, 7), cut.len);
+    try testing.expectEqual(@as(usize, 7), cut.len.raw());
     try testing.expectEqualStrings("0;tit", cut.body);
 }
 

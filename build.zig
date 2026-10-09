@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     //=====================================================================
-    // The module. Pure Zig, no dependencies, nothing to link.
+    // The module. Pure Zig and aegis scalar types, nothing to link.
     //=====================================================================
 
     const module = b.addModule("morse", .{
@@ -14,8 +14,11 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
+    const aegis = b.dependency("aegis", .{ .target = target, .optimize = optimize });
+    module.addImport("aegis", aegis.module("aegis"));
+
     // Everything below is morse's own tree: a program that depends on morse
-    // builds the module and nothing else, and fetches nothing for it.
+    // builds the module and its aegis dependency; no checkout-only tools.
     if (b.pkg_hash.len != 0) return;
 
     //=====================================================================
@@ -33,6 +36,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         }),
     });
+    tests.root_module.addImport("aegis", aegis.module("aegis"));
     const test_step = b.step("test", "Run the morse tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
@@ -137,7 +141,7 @@ pub fn build(b: *std.Build) !void {
             },
         });
         // The build a consumer gets: nothing morse fetches for itself.
-        preflight.addConsumerCheck(b, .{ .package = "morse", .program = b.path("ci/consumer.zig") });
+        preflight.addConsumerCheck(b, .{ .package = "morse", .program = b.path("ci/consumer.zig"), .packages = &.{aegis} });
     }
 }
 
@@ -146,6 +150,7 @@ pub fn build(b: *std.Build) !void {
 /// Debug module.
 fn benchImports(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize) []const std.Build.Module.Import {
     const morse = b.createModule(.{ .root_source_file = b.path("src/morse.zig"), .target = target, .optimize = optimize });
+    morse.addImport("aegis", b.dependency("aegis", .{ .target = target, .optimize = optimize }).module("aegis"));
     // Select morse's published measuring pin rather than preflight's default.
     const shakedown = b.dependency("shakedown", .{ .target = target, .optimize = optimize });
     return b.allocator.dupe(std.Build.Module.Import, &.{

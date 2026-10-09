@@ -45,7 +45,7 @@ const mouse = (events.next() orelse return error.MissingMouse).mouse;
 
 ## Design
 
-The library uses only `std` and allocates no storage of its own. The conformance build
+The library uses `std` and aegis scalar types and allocates no storage of its own. The conformance build
 under `conformance/` pins a Ghostty emulator in a manifest of its own to check terminal
 behaviour; morse's manifest does not name it, so no build of a program on morse fetches
 or compiles it. Writers take a `*std.Io.Writer` and leave flushing to the caller.

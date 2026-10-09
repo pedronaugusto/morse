@@ -387,6 +387,8 @@ pub const applySgr = style.applySgr;
 //=========================================================================
 
 /// One control sequence, `CSI ... final`, framed.
+/// A framed or copied byte count.
+pub const ByteCount = framing.ByteCount;
 pub const Csi = framing.Csi;
 /// Frames the control sequence at the front of a byte stream, or null when
 /// it is not all there.
@@ -641,6 +643,24 @@ pub const GraphicsMedium = graphics.GraphicsMedium;
 /// How much the terminal may say back about a graphics command.
 pub const GraphicsQuiet = graphics.GraphicsQuiet;
 /// Which image a graphics command is about: an id, a number, or neither.
+/// A terminal image identity.
+pub const ImageId = graphics.ImageId;
+/// A nonzero image identity for graphics queries.
+pub const QueryImageId = graphics.QueryImageId;
+/// A client image number.
+pub const ImageNumber = graphics.ImageNumber;
+/// A placement identity within an image.
+pub const PlacementId = graphics.PlacementId;
+/// Graphics file byte sizes and offsets.
+pub const GraphicsBytes = graphics.GraphicsBytes;
+/// Image pixel coordinates and dimensions.
+pub const Pixels = graphics.Pixels;
+/// Terminal cell dimensions in graphics commands.
+pub const Cells = graphics.Cells;
+/// Signed parent-placement cell offsets.
+pub const CellOffset = graphics.CellOffset;
+/// A placement value that fits a placeholder underline colour.
+pub const PlaceholderPlacement = graphics.PlaceholderPlacement;
 pub const GraphicsImage = graphics.GraphicsImage;
 /// An image an animation command must name by id or number.
 pub const AnimationImage = graphics.AnimationImage;
@@ -863,7 +883,7 @@ test "a frame stripped is the text it wrote" {
     try w.writeAll("one ");
     try hyperlink(w, "two", "https://ziglang.org");
     try textSize(w, .{ .scale = 2 }, "three");
-    try transmitImage(w, .{ .image = .{ .id = 9 } }, "\x00\x01\x02\x03");
+    try transmitImage(w, .{ .image = .{ .id = ImageId.fromRaw(9) } }, "\x00\x01\x02\x03");
     try w.writeAll(" four\n");
     try title(w, "five");
     try resetStyle(w);
@@ -1001,19 +1021,19 @@ test "the root module re-exports what the README promises" {
     try colorScheme.set(w, true);
     try queryColorScheme(w);
 
-    try (Probe{ .graphics_id = 1 }).write(w);
+    try (Probe{ .graphics_id = try QueryImageId.fromRaw(1) }).write(w);
     try std.testing.expect(probeMatches("\x1b[?62;52;c", .device_attributes));
     try std.testing.expect(!probeMatches("\x1b[?62;52;c", .cursor_position));
     try std.testing.expect(Probe.Question.device_attributes == .device_attributes);
 
-    try transmitImage(w, .{ .image = .{ .id = 1 }, .width = 1, .height = 1 }, "abc");
-    try placeImage(w, .{ .image = .{ .id = 1 }, .placement = .{ .z = -1 } });
-    try deleteImage(w, .{ .target = .{ .image = .{ .id = 1 } }, .free = true });
-    try queryGraphics(w, 31);
-    try transmitFrame(w, .{ .image = .{ .id = 1 }, .width = 1, .height = 1 }, "abc");
-    try animateImage(w, .{ .image = .{ .id = 1 }, .state = .running });
-    try composeFrames(w, .{ .image = .{ .id = 1 }, .source = 1, .destination = 2 });
-    try placeholderRow(w, .{ .id = 1, .row = 0, .columns = 1 });
+    try transmitImage(w, .{ .image = .{ .id = ImageId.fromRaw(1) }, .width = Pixels.fromRaw(1), .height = Pixels.fromRaw(1) }, "abc");
+    try placeImage(w, .{ .image = .{ .id = ImageId.fromRaw(1) }, .placement = .{ .z = -1 } });
+    try deleteImage(w, .{ .target = .{ .image = .{ .id = ImageId.fromRaw(1) } }, .free = true });
+    try queryGraphics(w, try QueryImageId.fromRaw(31));
+    try transmitFrame(w, .{ .image = .{ .id = ImageId.fromRaw(1) }, .width = Pixels.fromRaw(1), .height = Pixels.fromRaw(1) }, "abc");
+    try animateImage(w, .{ .image = .{ .id = ImageId.fromRaw(1) }, .state = .running });
+    try composeFrames(w, .{ .image = .{ .id = ImageId.fromRaw(1) }, .source = 1, .destination = 2 });
+    try placeholderRow(w, .{ .id = ImageId.fromRaw(1), .row = 0, .columns = 1 });
     try placeholderCell(w, 0, 0, 0);
 
     try extraCursors(w, .main, &.{.{ .cells = &.{.{ .row = 1, .col = 1 }} }});
@@ -1106,17 +1126,17 @@ test "the root module re-exports what the README promises" {
     const which: CursorColorTarget = .text;
     try std.testing.expect(span == .main_cursor and box.top == 1 and which == .text);
 
-    const image: GraphicsImage = .{ .id = 1 };
-    const animation_image: AnimationImage = .{ .id = 1 };
-    const area: GraphicsRect = .{ .width = 4, .height = 4 };
+    const image: GraphicsImage = .{ .id = ImageId.fromRaw(1) };
+    const animation_image: AnimationImage = .{ .id = ImageId.fromRaw(1) };
+    const area: GraphicsRect = .{ .width = Pixels.fromRaw(4), .height = Pixels.fromRaw(4) };
     const how: GraphicsAction = .store;
     const shown: Placement = .{ .z = -1 };
     const sending: Transmit = .{ .format = .png, .medium = .file, .quiet = .silent };
     const showing: Place = .{ .image = image, .placement = shown };
     const removing: Delete = .{ .target = .all };
     const gone: DeleteTarget = .at_cursor;
-    const grid: Placeholder = .{ .id = 1, .row = 0, .columns = 1 };
-    try std.testing.expect(image == .id and area.width == 4 and how == .store);
+    const grid: Placeholder = .{ .id = ImageId.fromRaw(1), .row = 0, .columns = 1 };
+    try std.testing.expect(image == .id and area.width == Pixels.fromRaw(4) and how == .store);
     try std.testing.expect(sending.format == .png and showing.placement.z == -1);
     try std.testing.expect(removing.target == .all and gone == .at_cursor);
     try std.testing.expect(grid.columns == 1 and graphics_placeholder == 0x10EEEE);

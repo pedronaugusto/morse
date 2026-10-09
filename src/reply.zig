@@ -20,6 +20,7 @@ const std = @import("std");
 const clipboard = @import("clipboard.zig");
 const device = @import("device.zig");
 const graphics = @import("graphics.zig");
+const framing = @import("framing.zig");
 const mode = @import("mode.zig");
 const multicursor = @import("multicursor.zig");
 const query = @import("query.zig");
@@ -72,8 +73,8 @@ pub const Reply = union(enum) {
     extra_cursor_colors: multicursor.ExtraCursorColors,
 
     /// Bytes needed to keep this reply independently of its input buffer.
-    pub fn copySize(reply: Reply) usize {
-        return reply.borrowed().len;
+    pub fn copySize(reply: Reply) framing.ByteCount {
+        return framing.ByteCount.fromRaw(reply.borrowed().len);
     }
 
     /// `copy`'s `out` is shorter than `copySize` says the reply needs.
@@ -84,6 +85,7 @@ pub const Reply = union(enum) {
     /// of the parser. No allocation. `NoSpaceLeft` leaves `out` unchanged.
     /// Replies holding only values need no storage.
     // ziglint-ignore: Z015 `Reply.CopyError` is pub; ziglint does not look inside a tagged union for it
+    // aegis: no danger here: both lengths count bytes; the all-build capacity check precedes the borrowed slice copy.
     pub fn copy(reply: Reply, out: []u8) CopyError!Reply {
         const bytes = reply.borrowed();
         if (out.len < bytes.len) return error.NoSpaceLeft;
@@ -189,7 +191,7 @@ test "Reply.copy keeps every borrowed arm after its source is overwritten" {
         const reply = Reply.parse(source[0..bytes.len]).?;
         const expected = try testing.allocator.dupe(u8, reply.borrowed());
         defer testing.allocator.free(expected);
-        const storage = try testing.allocator.alloc(u8, reply.copySize());
+        const storage = try testing.allocator.alloc(u8, reply.copySize().raw());
         defer testing.allocator.free(storage);
         const kept = try reply.copy(storage);
         @memset(&source, 0);
@@ -207,6 +209,6 @@ test "Reply.copy keeps every borrowed arm after its source is overwritten" {
     try testing.expectError(error.NoSpaceLeft, (Reply{ .version = "long" }).copy(&short));
     try testing.expectEqual(@as(u8, 99), short[0]);
     const value = Reply.parse("\x1b[?2026;2$y").?;
-    try testing.expectEqual(@as(usize, 0), value.copySize());
+    try testing.expectEqual(@as(usize, 0), value.copySize().raw());
     try testing.expectEqualDeep(value, try value.copy(&.{}));
 }

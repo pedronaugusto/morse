@@ -5,6 +5,7 @@ const morse = @import("morse");
 const bench = @import("shakedown").bench;
 const provenance = @import("preflight_bench_options");
 const Writer = std.Io.Writer;
+pub const WorkloadError = Writer.Error || error{PartialInput};
 
 pub const OptionsError = error{ UnknownArgument, MissingRow, DuplicateArgument };
 pub fn options(args: []const []const u8) OptionsError!bench.Options {
@@ -44,7 +45,7 @@ pub fn measure(gpa: std.mem.Allocator, io: std.Io, out: *Writer, selected: bench
     defer context.deinit(gpa);
     try context.check();
     std.mem.doNotOptimizeAway(&context.numbers);
-    try bench.run(gpa, io, out, &context, &.{
+    try bench.run(WorkloadError, gpa, io, out, &context, &.{
         .{ .name = "diffStyle, two calls", .unit = "two calls", .initial = 200_000, .run = Context.styleDiff },
         .{ .name = "cursorTo", .unit = "move", .initial = 200_000, .run = Context.cursorMove },
         .{ .name = "cursorTo, four moves", .unit = "four moves", .initial = 100_000, .run = Context.encoder },
@@ -66,7 +67,7 @@ pub fn measure(gpa: std.mem.Allocator, io: std.Io, out: *Writer, selected: bench
                 context.read_size = read;
                 var name_buffer: [128]u8 = undefined;
                 const name = try std.mem.print(&name_buffer, "KeyParser {s}, buffer {d}, read {d}", .{ stream.name, size, read });
-                try bench.run(gpa, io, out, &context, &.{.{ .name = name, .unit = "byte", .initial = stream.bytes.len, .smoke = stream.bytes.len, .run = Context.grid }}, metadata, selected);
+                try bench.run(WorkloadError, gpa, io, out, &context, &.{.{ .name = name, .unit = "byte", .initial = stream.bytes.len, .smoke = stream.bytes.len, .run = Context.grid }}, metadata, selected);
             }
         }
     }
@@ -95,7 +96,7 @@ pub const Context = struct {
         const pixels = try gpa.alloc(u8, side * side * 4);
         errdefer gpa.free(pixels);
         for (pixels, 0..) |*byte, i| byte.* = @truncate(i *% 131 +% 17);
-        const command: morse.Transmit = .{ .image = .{ .id = 1 }, .width = side, .height = side };
+        const command: morse.Transmit = .{ .image = .{ .id = morse.ImageId.fromRaw(1) }, .width = morse.Pixels.fromRaw(side), .height = morse.Pixels.fromRaw(side) };
         var output: Writer.Allocating = .init(gpa);
         defer output.deinit();
         try morse.transmitImage(&output.writer, command, pixels);
@@ -140,7 +141,7 @@ pub const Context = struct {
         const payload = std.base64.standard.Encoder.calcSize(context.pixels.len);
         const chunks = (context.pixels.len + morse.graphics_chunk_bytes - 1) / morse.graphics_chunk_bytes;
         var first_keys: [64]u8 = undefined;
-        const first = try std.mem.print(&first_keys, "i=1,s={d},v={d},m=1", .{ context.command.width, context.command.height });
+        const first = try std.mem.print(&first_keys, "i=1,s={d},v={d},m=1", .{ context.command.width.raw(), context.command.height.raw() });
         const framing = "\x1b_".len + 1 + 1 + "\x1b\\".len;
         try expect(image.end == payload + chunks * (framing + "m=1".len) + (first.len - "m=1".len));
         // Full-size byte budgets and cross-buffer event equivalence stay in
@@ -151,7 +152,7 @@ pub const Context = struct {
         try expect(counts.pending == 0);
     }
 
-    pub fn styleDiff(context: *Context, units: u64) !void {
+    pub fn styleDiff(context: *Context, units: u64) WorkloadError!void {
         for (0..units) |_| {
             var out: Writer = .fixed(&context.buffer);
             try morse.diffStyle(&out, lit, plain);
@@ -160,7 +161,7 @@ pub const Context = struct {
         }
     }
 
-    pub fn cursorMove(context: *Context, units: u64) !void {
+    pub fn cursorMove(context: *Context, units: u64) WorkloadError!void {
         for (0..units) |_| {
             var out: Writer = .fixed(context.buffer[0..32]);
             try morse.cursorTo(&out, 200, 300);
@@ -168,7 +169,7 @@ pub const Context = struct {
         }
     }
 
-    pub fn encoder(context: *Context, units: u64) !void {
+    pub fn encoder(context: *Context, units: u64) WorkloadError!void {
         for (0..units) |_| {
             var out: Writer = .fixed(context.buffer[0..32]);
             var i: usize = 0;
@@ -180,7 +181,7 @@ pub const Context = struct {
         }
     }
 
-    pub fn formatter(context: *Context, units: u64) !void {
+    pub fn formatter(context: *Context, units: u64) WorkloadError!void {
         for (0..units) |_| {
             var out: Writer = .fixed(context.buffer[0..32]);
             var i: usize = 0;
@@ -192,7 +193,7 @@ pub const Context = struct {
         }
     }
 
-    pub fn transmit(context: *Context, units: u64) !void {
+    pub fn transmit(context: *Context, units: u64) WorkloadError!void {
         for (0..units) |_| {
             var out: Writer = .fixed(context.sink);
             try morse.transmitImage(&out, context.command, context.pixels);
@@ -200,7 +201,7 @@ pub const Context = struct {
         }
     }
 
-    pub fn decode(context: *Context, units: u64) !void {
+    pub fn decode(context: *Context, units: u64) WorkloadError!void {
         if (units % context.mixed.len != 0) return error.PartialInput;
         for (0..units / context.mixed.len) |_| std.mem.doNotOptimizeAway(context.decodeOne());
     }
@@ -222,7 +223,7 @@ pub const Context = struct {
         return .{ .events = events, .keys = keys, .pending = parser.pending().len };
     }
 
-    pub fn grid(context: *Context, units: u64) !void {
+    pub fn grid(context: *Context, units: u64) WorkloadError!void {
         if (units % context.stream.len != 0) return error.PartialInput;
         for (0..units / context.stream.len) |_| {
             var parser: morse.KeyParser = .init(context.storage[0..context.buffer_size]);

@@ -25,6 +25,26 @@
 //! would be shadowed.
 
 const std = @import("std");
+const aegis = @import("aegis");
+
+/// A terminal image identity; zero retains the protocol sentinel.
+pub const ImageId = aegis.id.Id(enum { image }, u32);
+/// A nonzero image identity used to correlate a graphics probe.
+pub const QueryImageId = aegis.id.NonZero(ImageId.Domain, u32);
+/// A client image number, distinct from the terminal image identity.
+pub const ImageNumber = aegis.id.Id(enum { image_number }, u32);
+/// A placement within an image; zero means no named placement or parent.
+pub const PlacementId = aegis.id.Id(enum { placement }, u32);
+/// Byte sizes and offsets in graphics files or shared memory objects.
+pub const GraphicsBytes = aegis.units.Bytes(u32);
+/// Pixel coordinates and dimensions, distinct from terminal cells.
+pub const Pixels = aegis.units.Count(enum { pixels }, u32);
+/// Terminal cell dimensions, distinct from image pixels.
+pub const Cells = aegis.units.Count(enum { cells }, u32);
+/// Signed offsets from a parent placement, in terminal cells.
+pub const CellOffset = aegis.units.Count(Cells.Domain, i32);
+/// A placeholder underline colour can carry only 24 placement bits.
+pub const PlaceholderPlacement = aegis.int.Ranged(u32, 0, 0xffffff);
 const base64 = @import("base64.zig");
 const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
@@ -92,11 +112,11 @@ pub const GraphicsImage = union(enum) {
     /// No image named, which is image id zero.
     none,
     /// The `i` key: an id the program picked, from 1 to 4294967295.
-    id: u32,
+    id: ImageId,
     /// The `I` key: a number the program picked, which the terminal answers
     /// with the id it assigned. Two images may share a number; a command
     /// naming one acts on the newest.
-    number: u32,
+    number: ImageNumber,
 };
 
 /// An image an animation command must name.
@@ -105,22 +125,22 @@ pub const GraphicsImage = union(enum) {
 /// `GraphicsImage` this has no `.none`: every command carries `i` or `I`.
 pub const AnimationImage = union(enum) {
     /// The `i` key: an id the program picked.
-    id: u32,
+    id: ImageId,
     /// The `I` key: the newest image carrying this number.
-    number: u32,
+    number: ImageNumber,
 };
 
 /// A rectangle of the source image, in pixels: the `x`, `y`, `w` and `h`
 /// keys. All zero shows the whole image.
 pub const GraphicsRect = extern struct {
     /// The left edge.
-    x: u32 = 0,
+    x: Pixels = Pixels.fromRaw(0),
     /// The top edge.
-    y: u32 = 0,
+    y: Pixels = Pixels.fromRaw(0),
     /// The width, or zero for the rest of the image.
-    width: u32 = 0,
+    width: Pixels = Pixels.fromRaw(0),
     /// The height, or zero for the rest of the image.
-    height: u32 = 0,
+    height: Pixels = Pixels.fromRaw(0),
 };
 
 /// Where a placement goes and how much of the image it shows.
@@ -132,19 +152,19 @@ pub const Placement = extern struct {
     /// addressable: sending the same image id and placement id again
     /// replaces it, which is how a picture moves without flickering. Zero is
     /// no id, and then every command makes another placement.
-    id: u32 = 0,
+    id: PlacementId = PlacementId.fromRaw(0),
     /// The part of the image to show: the `x`, `y`, `w` and `h` keys.
     source: GraphicsRect = .{},
     /// The `X` key: how far into the first cell, in pixels, the image starts
     /// horizontally. Must be smaller than a cell.
-    x_offset: u32 = 0,
+    x_offset: Pixels = Pixels.fromRaw(0),
     /// The `Y` key: the same vertically.
-    y_offset: u32 = 0,
+    y_offset: Pixels = Pixels.fromRaw(0),
     /// The `c` key: how many columns to draw the image across. Zero lets the
     /// terminal work it out from the pixels and the cell size.
-    columns: u32 = 0,
+    columns: Cells = Cells.fromRaw(0),
     /// The `r` key: how many rows.
-    rows: u32 = 0,
+    rows: Cells = Cells.fromRaw(0),
     /// The `z` key: where the image sits in the stack. Below zero is under
     /// the text, which is where a background belongs; at or above zero is
     /// over it.
@@ -159,13 +179,13 @@ pub const Placement = extern struct {
     virtual: bool = false,
     /// The `P` key: the id of an image to place this one relative to. Zero
     /// is no parent.
-    parent: u32 = 0,
+    parent: ImageId = ImageId.fromRaw(0),
     /// The `Q` key: which placement of the parent.
-    parent_placement: u32 = 0,
+    parent_placement: PlacementId = PlacementId.fromRaw(0),
     /// The `H` key: the offset in cells from the parent, horizontally.
-    parent_x: i32 = 0,
+    parent_x: CellOffset = CellOffset.fromRaw(0),
     /// The `V` key: the same vertically.
-    parent_y: i32 = 0,
+    parent_y: CellOffset = CellOffset.fromRaw(0),
 };
 
 /// What a transmit command does with the image once it has it.
@@ -192,14 +212,14 @@ pub const Transmit = struct {
     medium: GraphicsMedium = .direct,
     /// The `s` key: the image's width in pixels. Required for `.rgb` and
     /// `.rgba`, read from the file for `.png`.
-    width: u32 = 0,
+    width: Pixels = Pixels.fromRaw(0),
     /// The `v` key: the image's height in pixels.
-    height: u32 = 0,
+    height: Pixels = Pixels.fromRaw(0),
     /// The `S` key: how many bytes to read. Required for a compressed PNG,
     /// and the way to read part of a file or a shared memory object.
-    size: u32 = 0,
+    size: GraphicsBytes = GraphicsBytes.fromRaw(0),
     /// The `O` key: where in the file or object to start reading.
-    offset: u32 = 0,
+    offset: GraphicsBytes = GraphicsBytes.fromRaw(0),
     /// The `o` key: the payload is zlib-deflated before it is base64 encoded.
     /// Deflate the pixels first and hand the result to `transmit`.
     compressed: bool = false,
@@ -231,9 +251,9 @@ pub const DeleteTarget = union(enum) {
     all,
     /// `d=i`: one image, or one placement of it when `placement` is not
     /// zero.
-    image: struct { id: u32, placement: u32 = 0 },
+    image: struct { id: ImageId, placement: PlacementId = PlacementId.fromRaw(0) },
     /// `d=n`: the newest image carrying a number, or one placement of it.
-    number: struct { number: u32, placement: u32 = 0 },
+    number: struct { number: ImageNumber, placement: PlacementId = PlacementId.fromRaw(0) },
     /// `d=c`: every placement the cursor's cell is inside.
     at_cursor,
     /// `d=f`: the animation frames of an image. The only animation this file
@@ -244,7 +264,7 @@ pub const DeleteTarget = union(enum) {
     /// `d=q`: every placement over one cell at one z-index.
     cell_at_z: struct { col: u32, row: u32, z: i32 },
     /// `d=r`: every image whose id falls in a range, both ends included.
-    id_range: struct { first: u32, last: u32 },
+    id_range: struct { first: ImageId, last: ImageId },
     /// `d=x`: every placement over one column.
     column: u32,
     /// `d=y`: every placement over one row.
@@ -340,9 +360,9 @@ pub const Frame = struct {
     base: u32 = 0,
     /// The `x` key: where in the frame, in pixels, the rectangle being sent
     /// starts horizontally. The rest of the frame comes from the canvas.
-    x: u32 = 0,
+    x: Pixels = Pixels.fromRaw(0),
     /// The `y` key: the same vertically.
-    y: u32 = 0,
+    y: Pixels = Pixels.fromRaw(0),
     /// The `X` key.
     compose: GraphicsCompose = .blend,
     /// The `Y` key: what the canvas is filled with when `base` is zero.
@@ -358,13 +378,13 @@ pub const Frame = struct {
     medium: GraphicsMedium = .direct,
     /// The `s` key: the width in pixels of the rectangle being sent, which
     /// is the image's own width when the frame covers all of it.
-    width: u32 = 0,
+    width: Pixels = Pixels.fromRaw(0),
     /// The `v` key: its height.
-    height: u32 = 0,
+    height: Pixels = Pixels.fromRaw(0),
     /// The `S` key: how many bytes to read.
-    size: u32 = 0,
+    size: GraphicsBytes = GraphicsBytes.fromRaw(0),
     /// The `O` key: where in the file or object to start reading.
-    offset: u32 = 0,
+    offset: GraphicsBytes = GraphicsBytes.fromRaw(0),
     /// The `o` key: the payload is zlib-deflated before it is base64
     /// encoded.
     compressed: bool = false,
@@ -417,18 +437,18 @@ pub const Compose = struct {
     destination: u32 = 0,
     /// The `X` key: the left edge, in pixels, of the rectangle in the
     /// source frame.
-    source_x: u32 = 0,
+    source_x: Pixels = Pixels.fromRaw(0),
     /// The `Y` key: its top edge.
-    source_y: u32 = 0,
+    source_y: Pixels = Pixels.fromRaw(0),
     /// The `x` key: the left edge of where it lands in the destination
     /// frame.
-    destination_x: u32 = 0,
+    destination_x: Pixels = Pixels.fromRaw(0),
     /// The `y` key: its top edge.
-    destination_y: u32 = 0,
+    destination_y: Pixels = Pixels.fromRaw(0),
     /// The `w` key: the width of both rectangles. Zero is the whole image.
-    width: u32 = 0,
+    width: Pixels = Pixels.fromRaw(0),
     /// The `h` key: their height.
-    height: u32 = 0,
+    height: Pixels = Pixels.fromRaw(0),
     /// The `C` key.
     compose: GraphicsCompose = .blend,
     /// The `q` key.
@@ -496,39 +516,42 @@ const Keys = struct {
 ///
 /// Shared by `place` and by a transmit whose action is `.display`, so the
 /// placement grammar is spelled once.
+// aegis: no danger here: typed fields reach only their fixed wire keys; raw decimal values are not mixed.
 fn writePlacement(k: *Keys, p: Placement) Writer.Error!void {
-    if (p.id != 0) try k.int('p', p.id);
-    if (p.source.x != 0) try k.int('x', p.source.x);
-    if (p.source.y != 0) try k.int('y', p.source.y);
-    if (p.source.width != 0) try k.int('w', p.source.width);
-    if (p.source.height != 0) try k.int('h', p.source.height);
-    if (p.x_offset != 0) try k.int('X', p.x_offset);
-    if (p.y_offset != 0) try k.int('Y', p.y_offset);
-    if (p.columns != 0) try k.int('c', p.columns);
-    if (p.rows != 0) try k.int('r', p.rows);
+    if (p.id.raw() != 0) try k.int('p', p.id.raw());
+    if (p.source.x.raw() != 0) try k.int('x', p.source.x.raw());
+    if (p.source.y.raw() != 0) try k.int('y', p.source.y.raw());
+    if (p.source.width.raw() != 0) try k.int('w', p.source.width.raw());
+    if (p.source.height.raw() != 0) try k.int('h', p.source.height.raw());
+    if (p.x_offset.raw() != 0) try k.int('X', p.x_offset.raw());
+    if (p.y_offset.raw() != 0) try k.int('Y', p.y_offset.raw());
+    if (p.columns.raw() != 0) try k.int('c', p.columns.raw());
+    if (p.rows.raw() != 0) try k.int('r', p.rows.raw());
     if (p.z != 0) try k.signed('z', p.z);
     if (p.keep_cursor) try k.int('C', 1);
     if (p.virtual) try k.int('U', 1);
-    if (p.parent != 0) try k.int('P', p.parent);
-    if (p.parent_placement != 0) try k.int('Q', p.parent_placement);
-    if (p.parent_x != 0) try k.signed('H', p.parent_x);
-    if (p.parent_y != 0) try k.signed('V', p.parent_y);
+    if (p.parent.raw() != 0) try k.int('P', p.parent.raw());
+    if (p.parent_placement.raw() != 0) try k.int('Q', p.parent_placement.raw());
+    if (p.parent_x.raw() != 0) try k.signed('H', p.parent_x.raw());
+    if (p.parent_y.raw() != 0) try k.signed('V', p.parent_y.raw());
 }
 
 /// Writes which image a command names: `i` or `I`, or neither.
+// aegis: no danger here: raw identities are serialized under their distinct protocol keys without arithmetic.
 fn writeImage(k: *Keys, image: GraphicsImage) Writer.Error!void {
     switch (image) {
         .none => {},
-        .id => |v| try k.int('i', v),
-        .number => |v| try k.int('I', v),
+        .id => |v| try k.int('i', v.raw()),
+        .number => |v| try k.int('I', v.raw()),
     }
 }
 
 /// Writes the required image of an animation command: `i` or `I`.
+// aegis: no danger here: the image domain is retained until the fixed wire-key encoder.
 fn writeAnimationImage(k: *Keys, image: AnimationImage) Writer.Error!void {
     switch (image) {
-        .id => |v| try k.int('i', v),
-        .number => |v| try k.int('I', v),
+        .id => |v| try k.int('i', v.raw()),
+        .number => |v| try k.int('I', v.raw()),
     }
 }
 
@@ -538,13 +561,14 @@ fn writeAnimationImage(k: *Keys, image: AnimationImage) Writer.Error!void {
 /// `cmd` is a `Transmit` or a `Frame`. An animation frame travels by the
 /// same seven keys under the same names, so they are spelled once here
 /// rather than twice.
+// aegis: no danger here: byte counts are extracted only for their S/O decimal wire fields.
 fn writeMedia(k: *Keys, cmd: anytype) Writer.Error!void {
     if (cmd.format != .rgba) try k.int('f', @backingInt(cmd.format));
     if (cmd.medium != .direct) try k.char('t', @backingInt(cmd.medium));
-    if (cmd.width != 0) try k.int('s', cmd.width);
-    if (cmd.height != 0) try k.int('v', cmd.height);
-    if (cmd.size != 0) try k.int('S', cmd.size);
-    if (cmd.offset != 0) try k.int('O', cmd.offset);
+    if (cmd.width.raw() != 0) try k.int('s', cmd.width.raw());
+    if (cmd.height.raw() != 0) try k.int('v', cmd.height.raw());
+    if (cmd.size.raw() != 0) try k.int('S', cmd.size.raw());
+    if (cmd.offset.raw() != 0) try k.int('O', cmd.offset.raw());
     if (cmd.compressed) try k.char('o', 'z');
 }
 
@@ -578,6 +602,7 @@ fn writeTransmit(k: *Keys, cmd: Transmit) Writer.Error!void {
 ///
 /// Nothing is flushed and nothing else may be written in between: the
 /// protocol requires the chunks of one image to be consecutive.
+// aegis: measured hot loop validated at its boundary: one byte domain, chunk_bytes bounds every base64 input.
 pub fn transmitImage(w: *Writer, cmd: Transmit, data: []const u8) Writer.Error!void {
     var offset: usize = 0;
     var first = true;
@@ -618,6 +643,7 @@ pub fn placeImage(w: *Writer, cmd: Place) Writer.Error!void {
 }
 
 /// Takes images or placements off the screen: `APC G a=d,... ST`.
+// aegis: no danger here: typed IDs and placements are extracted only at their fixed decimal wire fields.
 pub fn deleteImage(w: *Writer, cmd: Delete) Writer.Error!void {
     try w.writeAll(seq.apc ++ "G");
     var keys: Keys = .{ .w = w };
@@ -650,12 +676,12 @@ fn writeDeleteTarget(k: *Keys, target: DeleteTarget, free: bool) Writer.Error!vo
     switch (target) {
         .all, .at_cursor => {},
         .image => |v| {
-            try k.int('i', v.id);
-            if (v.placement != 0) try k.int('p', v.placement);
+            try k.int('i', v.id.raw());
+            if (v.placement.raw() != 0) try k.int('p', v.placement.raw());
         },
         .number => |v| {
-            try k.int('I', v.number);
-            if (v.placement != 0) try k.int('p', v.placement);
+            try k.int('I', v.number.raw());
+            if (v.placement.raw() != 0) try k.int('p', v.placement.raw());
         },
         .frames => |image| try writeImage(k, image),
         .cell => |v| {
@@ -668,8 +694,8 @@ fn writeDeleteTarget(k: *Keys, target: DeleteTarget, free: bool) Writer.Error!vo
             try k.signed('z', v.z);
         },
         .id_range => |v| {
-            try k.int('x', v.first);
-            try k.int('y', v.last);
+            try k.int('x', v.first.raw());
+            try k.int('y', v.last.raw());
         },
         .column => |v| try k.int('x', v),
         .row => |v| try k.int('y', v),
@@ -686,13 +712,13 @@ fn writeDeleteTarget(k: *Keys, target: DeleteTarget, free: bool) Writer.Error!vo
 /// `queryDeviceAttributes`, as with every other question here: a terminal
 /// without the protocol says nothing at all. DA1 proves the input path works,
 /// but only the caller's timeout or quiescence period says this went unanswered.
-pub fn queryGraphics(w: *Writer, id: u32) Writer.Error!void {
+pub fn queryGraphics(w: *Writer, id: QueryImageId) Writer.Error!void {
     try transmitImage(w, .{
         .action = .query,
-        .image = .{ .id = id },
+        .image = .{ .id = ImageId.fromRaw(id.raw()) },
         .format = .rgb,
-        .width = 1,
-        .height = 1,
+        .width = Pixels.fromRaw(1),
+        .height = Pixels.fromRaw(1),
     }, &.{ 0, 0, 0 });
 }
 
@@ -705,12 +731,13 @@ pub fn queryGraphics(w: *Writer, id: u32) Writer.Error!void {
 //=========================================================================
 
 /// Writes the keys of the first sequence of a frame, after its `a=f`.
+// aegis: no danger here: pixel and byte counts reach fixed wire keys without cross-domain arithmetic.
 fn writeFrame(k: *Keys, cmd: Frame) Writer.Error!void {
     if (cmd.quiet != .answers) try k.int('q', @backingInt(cmd.quiet));
     try writeAnimationImage(k, cmd.image);
     try writeMedia(k, cmd);
-    if (cmd.x != 0) try k.int('x', cmd.x);
-    if (cmd.y != 0) try k.int('y', cmd.y);
+    if (cmd.x.raw() != 0) try k.int('x', cmd.x.raw());
+    if (cmd.y.raw() != 0) try k.int('y', cmd.y.raw());
     if (cmd.base != 0) try k.int('c', cmd.base);
     if (cmd.edit != 0) try k.int('r', cmd.edit);
     if (cmd.gap != 0) try k.signed('z', cmd.gap);
@@ -728,6 +755,7 @@ fn writeFrame(k: *Keys, cmd: Frame) Writer.Error!void {
 ///
 /// Nothing is flushed and nothing else may be written in between, as with
 /// any chunked payload.
+// aegis: measured hot loop validated at its boundary: one byte domain, chunk_bytes bounds every base64 input.
 pub fn transmitFrame(w: *Writer, cmd: Frame, data: []const u8) Writer.Error!void {
     var offset: usize = 0;
     var first = true;
@@ -778,6 +806,7 @@ pub fn animateImage(w: *Writer, cmd: Animate) Writer.Error!void {
 ///
 /// The cheap way to change part of a frame, because the pixels are already
 /// in the terminal: no payload, and so no `;`.
+// aegis: no danger here: typed pixel coordinates are extracted only for the fixed composition wire keys.
 pub fn composeFrames(w: *Writer, cmd: Compose) Writer.Error!void {
     try w.writeAll(seq.apc ++ "G");
     var keys: Keys = .{ .w = w };
@@ -786,12 +815,12 @@ pub fn composeFrames(w: *Writer, cmd: Compose) Writer.Error!void {
     try writeAnimationImage(&keys, cmd.image);
     if (cmd.destination != 0) try keys.int('c', cmd.destination);
     if (cmd.source != 0) try keys.int('r', cmd.source);
-    if (cmd.destination_x != 0) try keys.int('x', cmd.destination_x);
-    if (cmd.destination_y != 0) try keys.int('y', cmd.destination_y);
-    if (cmd.width != 0) try keys.int('w', cmd.width);
-    if (cmd.height != 0) try keys.int('h', cmd.height);
-    if (cmd.source_x != 0) try keys.int('X', cmd.source_x);
-    if (cmd.source_y != 0) try keys.int('Y', cmd.source_y);
+    if (cmd.destination_x.raw() != 0) try keys.int('x', cmd.destination_x.raw());
+    if (cmd.destination_y.raw() != 0) try keys.int('y', cmd.destination_y.raw());
+    if (cmd.width.raw() != 0) try keys.int('w', cmd.width.raw());
+    if (cmd.height.raw() != 0) try keys.int('h', cmd.height.raw());
+    if (cmd.source_x.raw() != 0) try keys.int('X', cmd.source_x.raw());
+    if (cmd.source_y.raw() != 0) try keys.int('Y', cmd.source_y.raw());
     if (cmd.compose != .blend) try keys.int('C', @backingInt(cmd.compose));
     try w.writeAll(seq.st);
 }
@@ -824,11 +853,11 @@ pub const Placeholder = struct {
     /// The image to show. Its low 24 bits travel in the foreground colour
     /// and its top byte in a third diacritic, so the whole 32-bit id is
     /// carried.
-    id: u32,
+    id: ImageId,
     /// The placement, carried in the underline colour. Zero writes no
     /// underline colour, and the terminal picks any virtual placement of the
-    /// image. The colour has exactly 24 bits, so the type does too.
-    placement: u24 = 0,
+    /// image. Construction rejects values above the colour's 24-bit range.
+    placement: PlaceholderPlacement = PlaceholderPlacement.init(0) catch unreachable, // unreachable: zero is in the comptime range.
     /// Which row of the grid, counting from zero.
     row: u16,
     /// How many cells wide the row is, counting from column zero.
@@ -854,34 +883,35 @@ pub const Placeholder = struct {
 /// A `row.row` of `placeholder_max` or more, or `row.columns` past it, is
 /// refused with `error.PlaceholderOutOfRange` before anything is written.
 // ziglint-ignore: Z015 `PlaceholderError` is pub; ziglint counts a merged error set as no type
+// aegis: a design removes the bug class: distinct image IDs and ranged placements precede wire-bit extraction.
 pub fn placeholderRow(w: *Writer, row: Placeholder) PlaceholderError!void {
     if (row.row >= placeholder_max or row.columns > placeholder_max) return error.PlaceholderOutOfRange;
 
     try w.writeAll(seq.csi ++ "38;2;");
-    try seq.writeInt(w, (row.id >> 16) & 0xff);
+    try seq.writeInt(w, (row.id.raw() >> 16) & 0xff);
     try w.writeByte(';');
-    try seq.writeInt(w, (row.id >> 8) & 0xff);
+    try seq.writeInt(w, (row.id.raw() >> 8) & 0xff);
     try w.writeByte(';');
-    try seq.writeInt(w, row.id & 0xff);
+    try seq.writeInt(w, row.id.raw() & 0xff);
     try w.writeByte('m');
 
-    if (row.placement != 0) {
+    if (row.placement.raw() != 0) {
         try w.writeAll(seq.csi ++ "58:2::");
-        try seq.writeInt(w, (row.placement >> 16) & 0xff);
+        try seq.writeInt(w, (row.placement.raw() >> 16) & 0xff);
         try w.writeByte(':');
-        try seq.writeInt(w, (row.placement >> 8) & 0xff);
+        try seq.writeInt(w, (row.placement.raw() >> 8) & 0xff);
         try w.writeByte(':');
-        try seq.writeInt(w, row.placement & 0xff);
+        try seq.writeInt(w, row.placement.raw() & 0xff);
         try w.writeByte('m');
     }
 
     var col: u16 = 0;
     while (col < row.columns) : (col += 1) {
-        try placeholderCell(w, row.row, col, @truncate(row.id >> 24));
+        try placeholderCell(w, row.row, col, @truncate(row.id.raw() >> 24));
     }
 
     try w.writeAll(seq.csi ++ "39m");
-    if (row.placement != 0) try w.writeAll(seq.csi ++ "59m");
+    if (row.placement.raw() != 0) try w.writeAll(seq.csi ++ "59m");
 }
 
 /// Writes one placeholder cell: the placeholder character, the diacritic for
@@ -976,13 +1006,13 @@ comptime {
 pub const GraphicsResponse = struct {
     /// The image id the response is about, the `i=` key, as the command that
     /// prompted it gave. Null when the command carried none.
-    id: ?u32 = null,
+    id: ?ImageId = null,
     /// The client-chosen image number, the `I=` key, which a program uses
     /// when it wants the terminal to assign the id. Null when absent.
-    number: ?u32 = null,
+    number: ?ImageNumber = null,
     /// The placement id, the `p=` key, naming which of an image's placements
     /// the response is about. Null when absent.
-    placement: ?u32 = null,
+    placement: ?PlacementId = null,
     /// What the terminal said: `OK`, or an error beginning with its name,
     /// such as `ENOENT:` or `EBADF:`. A sub-slice of the bytes handed to the
     /// parser, borrowed rather than owned: valid for exactly as long as they
@@ -1008,9 +1038,10 @@ pub const GraphicsResponse = struct {
 /// with no keys at all is valid, and so is an empty message. Returns null for
 /// anything else. `bytes` must be exactly the sequence, with nothing before
 /// or after it.
-pub fn parseGraphicsResponse(bytes: []const u8) ?GraphicsResponse {
+// aegis: measured hot loop validated at its boundary: scanInt rejects u32 overflow before typed ID import.
+pub inline fn parseGraphicsResponse(bytes: []const u8) ?GraphicsResponse {
     if (!std.mem.startsWith(u8, bytes, seq.apc)) return null;
-    var rest = bytes[seq.apc.len..];
+    var rest: []const u8 = bytes[seq.apc.len..];
     if (rest.len == 0 or rest[0] != 'G') return null;
     rest = rest[1..];
 
@@ -1029,9 +1060,9 @@ pub fn parseGraphicsResponse(bytes: []const u8) ?GraphicsResponse {
         rest = rest[value.len..];
 
         switch (key) {
-            'i' => response.id = value.value,
-            'I' => response.number = value.value,
-            'p' => response.placement = value.value,
+            'i' => response.id = ImageId.fromRaw(value.value),
+            'I' => response.number = ImageNumber.fromRaw(value.value),
+            'p' => response.placement = PlacementId.fromRaw(value.value),
             else => {},
         }
 
@@ -1100,7 +1131,7 @@ const Command = struct {
 /// sequence.
 fn readCommand(bytes: []const u8) ?Command {
     if (!std.mem.startsWith(u8, bytes, seq.apc)) return null;
-    var rest = bytes[seq.apc.len..];
+    var rest: []const u8 = bytes[seq.apc.len..];
     if (rest.len == 0 or rest[0] != 'G') return null;
     rest = rest[1..];
 
@@ -1205,9 +1236,9 @@ fn keySigned(c: Command, name: u8) ?i32 {
 fn keyAnimationImage(c: Command) ?AnimationImage {
     if (c.get('i') != null) {
         if (c.get('I') != null) return null;
-        return .{ .id = keyInt(c, 'i') orelse return null };
+        return .{ .id = ImageId.fromRaw(keyInt(c, 'i') orelse return null) };
     }
-    if (c.get('I') != null) return .{ .number = keyInt(c, 'I') orelse return null };
+    if (c.get('I') != null) return .{ .number = ImageNumber.fromRaw(keyInt(c, 'I') orelse return null) };
     return null;
 }
 
@@ -1275,17 +1306,17 @@ fn readAnimation(bytes: []const u8) ?Animation {
             .image = image,
             .edit = keyInt(c, 'r') orelse return null,
             .base = keyInt(c, 'c') orelse return null,
-            .x = keyInt(c, 'x') orelse return null,
-            .y = keyInt(c, 'y') orelse return null,
+            .x = Pixels.fromRaw(keyInt(c, 'x') orelse return null),
+            .y = Pixels.fromRaw(keyInt(c, 'y') orelse return null),
             .compose = keyCompose(c, 'X') orelse return null,
             .background = keyColor(c, 'Y') orelse return null,
             .gap = keySigned(c, 'z') orelse return null,
             .format = keyFormat(c) orelse return null,
             .medium = keyMedium(c) orelse return null,
-            .width = keyInt(c, 's') orelse return null,
-            .height = keyInt(c, 'v') orelse return null,
-            .size = keyInt(c, 'S') orelse return null,
-            .offset = keyInt(c, 'O') orelse return null,
+            .width = Pixels.fromRaw(keyInt(c, 's') orelse return null),
+            .height = Pixels.fromRaw(keyInt(c, 'v') orelse return null),
+            .size = GraphicsBytes.fromRaw(keyInt(c, 'S') orelse return null),
+            .offset = GraphicsBytes.fromRaw(keyInt(c, 'O') orelse return null),
             .compressed = std.mem.eql(u8, c.get('o') orelse "", "z"),
             .quiet = quiet,
         } },
@@ -1308,12 +1339,12 @@ fn readAnimation(bytes: []const u8) ?Animation {
             .image = image,
             .source = keyInt(c, 'r') orelse return null,
             .destination = keyInt(c, 'c') orelse return null,
-            .source_x = keyInt(c, 'X') orelse return null,
-            .source_y = keyInt(c, 'Y') orelse return null,
-            .destination_x = keyInt(c, 'x') orelse return null,
-            .destination_y = keyInt(c, 'y') orelse return null,
-            .width = keyInt(c, 'w') orelse return null,
-            .height = keyInt(c, 'h') orelse return null,
+            .source_x = Pixels.fromRaw(keyInt(c, 'X') orelse return null),
+            .source_y = Pixels.fromRaw(keyInt(c, 'Y') orelse return null),
+            .destination_x = Pixels.fromRaw(keyInt(c, 'x') orelse return null),
+            .destination_y = Pixels.fromRaw(keyInt(c, 'y') orelse return null),
+            .width = Pixels.fromRaw(keyInt(c, 'w') orelse return null),
+            .height = Pixels.fromRaw(keyInt(c, 'h') orelse return null),
             .compose = keyCompose(c, 'C') orelse return null,
             .quiet = quiet,
         } },
@@ -1343,7 +1374,7 @@ test "a plain transmit writes only the keys that are not at their default" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try transmitImage(&out.writer, .{ .image = .{ .id = 31 }, .width = 1, .height = 1 }, "abc");
+    try transmitImage(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(31) }, .width = Pixels.fromRaw(1), .height = Pixels.fromRaw(1) }, "abc");
     try std.testing.expectEqualStrings("\x1b_Gi=31,s=1,v=1;YWJj\x1b\\", out.written());
     try expectCommand(out.written(), &.{ "i=31", "s=1", "v=1" }, "abc");
 }
@@ -1353,13 +1384,13 @@ test "a transmit with every key writes them in the documented order" {
     defer out.deinit();
 
     try transmitImage(&out.writer, .{
-        .image = .{ .number = 13 },
+        .image = .{ .number = ImageNumber.fromRaw(13) },
         .format = .png,
         .medium = .shared_memory,
-        .width = 10,
-        .height = 20,
-        .size = 80,
-        .offset = 10,
+        .width = Pixels.fromRaw(10),
+        .height = Pixels.fromRaw(20),
+        .size = GraphicsBytes.fromRaw(80),
+        .offset = GraphicsBytes.fromRaw(10),
         .compressed = true,
         .transient = true,
         .quiet = .silent,
@@ -1419,10 +1450,10 @@ test "a transmit that displays writes a=T and the placement keys" {
     defer out.deinit();
 
     try transmitImage(&out.writer, .{
-        .action = .{ .display = .{ .id = 1, .columns = 78, .rows = 26, .z = -3, .keep_cursor = true } },
-        .image = .{ .id = 6 },
-        .width = 4,
-        .height = 4,
+        .action = .{ .display = .{ .id = PlacementId.fromRaw(1), .columns = Cells.fromRaw(78), .rows = Cells.fromRaw(26), .z = -3, .keep_cursor = true } },
+        .image = .{ .id = ImageId.fromRaw(6) },
+        .width = Pixels.fromRaw(4),
+        .height = Pixels.fromRaw(4),
     }, "");
     try std.testing.expectEqualStrings(
         "\x1b_Ga=T,i=6,s=4,v=4,p=1,c=78,r=26,z=-3,C=1;\x1b\\",
@@ -1435,7 +1466,7 @@ test "a payload that fits writes one sequence and no m key" {
     defer out.deinit();
 
     const data: [chunk_bytes]u8 = @splat(0xab);
-    try transmitImage(&out.writer, .{ .image = .{ .id = 1 } }, &data);
+    try transmitImage(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(1) } }, &data);
 
     var commands: Commands = .{ .rest = out.written() };
     const only = commands.next().?;
@@ -1449,7 +1480,7 @@ test "a payload one byte too long is split, and the chunks obey the rule" {
     defer out.deinit();
 
     const data: [chunk_bytes + 1]u8 = @splat(0xcd);
-    try transmitImage(&out.writer, .{ .image = .{ .id = 1 }, .quiet = .silent }, &data);
+    try transmitImage(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(1) }, .quiet = .silent }, &data);
 
     var commands: Commands = .{ .rest = out.written() };
     const first = commands.next().?;
@@ -1473,7 +1504,7 @@ test "a chunked transmit carries the image back byte for byte" {
 
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    try transmitImage(&out.writer, .{ .image = .{ .id = 9 }, .width = 32, .height = 32 }, &data);
+    try transmitImage(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(9) }, .width = Pixels.fromRaw(32), .height = Pixels.fromRaw(32) }, &data);
 
     var joined: std.ArrayList(u8) = .empty;
     defer joined.deinit(std.testing.allocator);
@@ -1505,8 +1536,8 @@ test "place writes a=p and the placement, and no payload at all" {
     defer out.deinit();
 
     try placeImage(&out.writer, .{
-        .image = .{ .id = 6 },
-        .placement = .{ .id = 1, .columns = 78, .rows = 26, .z = -3, .keep_cursor = true },
+        .image = .{ .id = ImageId.fromRaw(6) },
+        .placement = .{ .id = PlacementId.fromRaw(1), .columns = Cells.fromRaw(78), .rows = Cells.fromRaw(26), .z = -3, .keep_cursor = true },
         .quiet = .silent,
     });
     try std.testing.expectEqualStrings(
@@ -1522,21 +1553,21 @@ test "every placement key is written, in the documented order" {
     defer out.deinit();
 
     try placeImage(&out.writer, .{
-        .image = .{ .number = 3 },
+        .image = .{ .number = ImageNumber.fromRaw(3) },
         .placement = .{
-            .id = 1,
-            .source = .{ .x = 2, .y = 3, .width = 4, .height = 5 },
-            .x_offset = 6,
-            .y_offset = 7,
-            .columns = 8,
-            .rows = 9,
+            .id = PlacementId.fromRaw(1),
+            .source = .{ .x = Pixels.fromRaw(2), .y = Pixels.fromRaw(3), .width = Pixels.fromRaw(4), .height = Pixels.fromRaw(5) },
+            .x_offset = Pixels.fromRaw(6),
+            .y_offset = Pixels.fromRaw(7),
+            .columns = Cells.fromRaw(8),
+            .rows = Cells.fromRaw(9),
             .z = -10,
             .keep_cursor = true,
             .virtual = true,
-            .parent = 11,
-            .parent_placement = 12,
-            .parent_x = -13,
-            .parent_y = 14,
+            .parent = ImageId.fromRaw(11),
+            .parent_placement = PlacementId.fromRaw(12),
+            .parent_x = CellOffset.fromRaw(-13),
+            .parent_y = CellOffset.fromRaw(14),
         },
     });
     try std.testing.expectEqualStrings(
@@ -1554,8 +1585,8 @@ test "a virtual placement is the Unicode placeholder's prototype" {
     defer out.deinit();
 
     try placeImage(&out.writer, .{
-        .image = .{ .id = 42 },
-        .placement = .{ .virtual = true, .columns = 2, .rows = 2 },
+        .image = .{ .id = ImageId.fromRaw(42) },
+        .placement = .{ .virtual = true, .columns = Cells.fromRaw(2), .rows = Cells.fromRaw(2) },
         .quiet = .silent,
     });
     try std.testing.expectEqualStrings("\x1b_Ga=p,q=2,i=42,c=2,r=2,U=1\x1b\\", out.written());
@@ -1571,8 +1602,8 @@ test "the same image id and placement id twice is a move, not a second image" {
     defer out.deinit();
 
     const at: Place = .{
-        .image = .{ .id = 6 },
-        .placement = .{ .id = 1, .columns = 20, .rows = 6, .z = -1, .keep_cursor = true },
+        .image = .{ .id = ImageId.fromRaw(6) },
+        .placement = .{ .id = PlacementId.fromRaw(1), .columns = Cells.fromRaw(20), .rows = Cells.fromRaw(6), .z = -1, .keep_cursor = true },
         .quiet = .silent,
     };
     try placeImage(&out.writer, at);
@@ -1586,8 +1617,8 @@ test "the same image id and placement id twice is a move, not a second image" {
     var numbered: Writer.Allocating = .init(std.testing.allocator);
     defer numbered.deinit();
     try placeImage(&numbered.writer, .{
-        .image = .{ .number = 13 },
-        .placement = .{ .id = 1, .keep_cursor = true },
+        .image = .{ .number = ImageNumber.fromRaw(13) },
+        .placement = .{ .id = PlacementId.fromRaw(1), .keep_cursor = true },
     });
     try std.testing.expectEqualStrings("\x1b_Ga=p,I=13,p=1,C=1\x1b\\", numbered.written());
 }
@@ -1604,7 +1635,7 @@ test "the z-index is written on both sides of zero, and not at zero" {
     for (cases) |case| {
         var out: Writer.Allocating = .init(std.testing.allocator);
         defer out.deinit();
-        try placeImage(&out.writer, .{ .image = .{ .id = 1 }, .placement = .{ .z = case.z } });
+        try placeImage(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(1) }, .placement = .{ .z = case.z } });
         try std.testing.expectEqualStrings(case.bytes, out.written());
 
         const command = readCommand(out.written()).?;
@@ -1618,13 +1649,13 @@ test "the cursor policy is written only when it is not the protocol's own" {
     // is written.
     var moves: Writer.Allocating = .init(std.testing.allocator);
     defer moves.deinit();
-    try placeImage(&moves.writer, .{ .image = .{ .id = 1 }, .placement = .{ .keep_cursor = false } });
+    try placeImage(&moves.writer, .{ .image = .{ .id = ImageId.fromRaw(1) }, .placement = .{ .keep_cursor = false } });
     try std.testing.expectEqualStrings("\x1b_Ga=p,i=1\x1b\\", moves.written());
     try std.testing.expect(readCommand(moves.written()).?.get('C') == null);
 
     var stays: Writer.Allocating = .init(std.testing.allocator);
     defer stays.deinit();
-    try placeImage(&stays.writer, .{ .image = .{ .id = 1 }, .placement = .{ .keep_cursor = true } });
+    try placeImage(&stays.writer, .{ .image = .{ .id = ImageId.fromRaw(1) }, .placement = .{ .keep_cursor = true } });
     try std.testing.expectEqualStrings("\x1b_Ga=p,i=1,C=1\x1b\\", stays.written());
     try std.testing.expectEqualStrings("1", readCommand(stays.written()).?.get('C').?);
 }
@@ -1633,11 +1664,11 @@ test "a file and a shared memory object send a path, a size and an offset" {
     var file: Writer.Allocating = .init(std.testing.allocator);
     defer file.deinit();
     try transmitImage(&file.writer, .{
-        .image = .{ .id = 2 },
+        .image = .{ .id = ImageId.fromRaw(2) },
         .format = .png,
         .medium = .file,
-        .size = 4096,
-        .offset = 128,
+        .size = GraphicsBytes.fromRaw(4096),
+        .offset = GraphicsBytes.fromRaw(128),
     }, "/tmp/tty-graphics-protocol-1.png");
     try std.testing.expectEqualStrings(
         "\x1b_Gi=2,f=100,t=f,S=4096,O=128;L3RtcC90dHktZ3JhcGhpY3MtcHJvdG9jb2wtMS5wbmc=\x1b\\",
@@ -1652,12 +1683,12 @@ test "a file and a shared memory object send a path, a size and an offset" {
     var shm: Writer.Allocating = .init(std.testing.allocator);
     defer shm.deinit();
     try transmitImage(&shm.writer, .{
-        .image = .{ .id = 3 },
+        .image = .{ .id = ImageId.fromRaw(3) },
         .medium = .shared_memory,
-        .width = 10,
-        .height = 2,
-        .size = 80,
-        .offset = 10,
+        .width = Pixels.fromRaw(10),
+        .height = Pixels.fromRaw(2),
+        .size = GraphicsBytes.fromRaw(80),
+        .offset = GraphicsBytes.fromRaw(10),
         .compressed = true,
     }, "/morse-1");
     try expectCommand(
@@ -1679,14 +1710,14 @@ test "delete writes every target the protocol names" {
     const cases = [_]struct { target: DeleteTarget, bytes: []const u8 }{
         .{ .target = .all, .bytes = "\x1b_Ga=d,d=a\x1b\\" },
         .{ .target = .at_cursor, .bytes = "\x1b_Ga=d,d=c\x1b\\" },
-        .{ .target = .{ .image = .{ .id = 10 } }, .bytes = "\x1b_Ga=d,d=i,i=10\x1b\\" },
-        .{ .target = .{ .image = .{ .id = 10, .placement = 7 } }, .bytes = "\x1b_Ga=d,d=i,i=10,p=7\x1b\\" },
-        .{ .target = .{ .number = .{ .number = 13 } }, .bytes = "\x1b_Ga=d,d=n,I=13\x1b\\" },
-        .{ .target = .{ .number = .{ .number = 13, .placement = 2 } }, .bytes = "\x1b_Ga=d,d=n,I=13,p=2\x1b\\" },
-        .{ .target = .{ .frames = .{ .id = 4 } }, .bytes = "\x1b_Ga=d,d=f,i=4\x1b\\" },
+        .{ .target = .{ .image = .{ .id = ImageId.fromRaw(10) } }, .bytes = "\x1b_Ga=d,d=i,i=10\x1b\\" },
+        .{ .target = .{ .image = .{ .id = ImageId.fromRaw(10), .placement = PlacementId.fromRaw(7) } }, .bytes = "\x1b_Ga=d,d=i,i=10,p=7\x1b\\" },
+        .{ .target = .{ .number = .{ .number = ImageNumber.fromRaw(13) } }, .bytes = "\x1b_Ga=d,d=n,I=13\x1b\\" },
+        .{ .target = .{ .number = .{ .number = ImageNumber.fromRaw(13), .placement = PlacementId.fromRaw(2) } }, .bytes = "\x1b_Ga=d,d=n,I=13,p=2\x1b\\" },
+        .{ .target = .{ .frames = .{ .id = ImageId.fromRaw(4) } }, .bytes = "\x1b_Ga=d,d=f,i=4\x1b\\" },
         .{ .target = .{ .cell = .{ .col = 3, .row = 4 } }, .bytes = "\x1b_Ga=d,d=p,x=3,y=4\x1b\\" },
         .{ .target = .{ .cell_at_z = .{ .col = 3, .row = 4, .z = -1 } }, .bytes = "\x1b_Ga=d,d=q,x=3,y=4,z=-1\x1b\\" },
-        .{ .target = .{ .id_range = .{ .first = 2, .last = 9 } }, .bytes = "\x1b_Ga=d,d=r,x=2,y=9\x1b\\" },
+        .{ .target = .{ .id_range = .{ .first = ImageId.fromRaw(2), .last = ImageId.fromRaw(9) } }, .bytes = "\x1b_Ga=d,d=r,x=2,y=9\x1b\\" },
         .{ .target = .{ .column = 5 }, .bytes = "\x1b_Ga=d,d=x,x=5\x1b\\" },
         .{ .target = .{ .row = 6 }, .bytes = "\x1b_Ga=d,d=y,y=6\x1b\\" },
         .{ .target = .{ .z = -1 }, .bytes = "\x1b_Ga=d,d=z,z=-1\x1b\\" },
@@ -1704,12 +1735,12 @@ test "freeing the data is the same target in its capital spelling" {
     const cases = [_]struct { target: DeleteTarget, letter: []const u8 }{
         .{ .target = .all, .letter = "A" },
         .{ .target = .at_cursor, .letter = "C" },
-        .{ .target = .{ .image = .{ .id = 1 } }, .letter = "I" },
-        .{ .target = .{ .number = .{ .number = 1 } }, .letter = "N" },
-        .{ .target = .{ .frames = .{ .id = 1 } }, .letter = "F" },
+        .{ .target = .{ .image = .{ .id = ImageId.fromRaw(1) } }, .letter = "I" },
+        .{ .target = .{ .number = .{ .number = ImageNumber.fromRaw(1) } }, .letter = "N" },
+        .{ .target = .{ .frames = .{ .id = ImageId.fromRaw(1) } }, .letter = "F" },
         .{ .target = .{ .cell = .{ .col = 1, .row = 1 } }, .letter = "P" },
         .{ .target = .{ .cell_at_z = .{ .col = 1, .row = 1, .z = 0 } }, .letter = "Q" },
-        .{ .target = .{ .id_range = .{ .first = 1, .last = 2 } }, .letter = "R" },
+        .{ .target = .{ .id_range = .{ .first = ImageId.fromRaw(1), .last = ImageId.fromRaw(2) } }, .letter = "R" },
         .{ .target = .{ .column = 1 }, .letter = "X" },
         .{ .target = .{ .row = 1 }, .letter = "Y" },
         .{ .target = .{ .z = 0 }, .letter = "Z" },
@@ -1727,7 +1758,7 @@ test "the delete a renderer runs on the way out says nothing back" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try deleteImage(&out.writer, .{ .target = .{ .image = .{ .id = 6, .placement = 1 } }, .quiet = .silent });
+    try deleteImage(&out.writer, .{ .target = .{ .image = .{ .id = ImageId.fromRaw(6), .placement = PlacementId.fromRaw(1) } }, .quiet = .silent });
     try std.testing.expectEqualStrings("\x1b_Ga=d,q=2,d=i,i=6,p=1\x1b\\", out.written());
 }
 
@@ -1735,7 +1766,7 @@ test "queryGraphics is a one-pixel image the terminal answers and forgets" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try queryGraphics(&out.writer, 31);
+    try queryGraphics(&out.writer, try QueryImageId.fromRaw(31));
     try std.testing.expectEqualStrings("\x1b_Ga=q,i=31,f=24,s=1,v=1;AAAA\x1b\\", out.written());
     try expectCommand(out.written(), &.{ "a=q", "i=31", "f=24", "s=1", "v=1" }, &.{ 0, 0, 0 });
 }
@@ -1744,7 +1775,7 @@ test "a frame writes a=f and only the keys that are not at their default" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try transmitFrame(&out.writer, .{ .image = .{ .id = 7 } }, "abc");
+    try transmitFrame(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(7) } }, "abc");
     try std.testing.expectEqualStrings("\x1b_Ga=f,i=7;YWJj\x1b\\", out.written());
     try expectCommand(out.written(), &.{ "a=f", "i=7" }, "abc");
 }
@@ -1754,20 +1785,20 @@ test "a frame with every key writes them in the documented order" {
     defer out.deinit();
 
     try transmitFrame(&out.writer, .{
-        .image = .{ .number = 13 },
+        .image = .{ .number = ImageNumber.fromRaw(13) },
         .edit = 3,
         .base = 2,
-        .x = 10,
-        .y = 5,
+        .x = Pixels.fromRaw(10),
+        .y = Pixels.fromRaw(5),
         .compose = .overwrite,
         .background = .{ .r = 0xff, .a = 0xff },
         .gap = 48,
         .format = .rgb,
         .medium = .shared_memory,
-        .width = 100,
-        .height = 200,
-        .size = 60000,
-        .offset = 16,
+        .width = Pixels.fromRaw(100),
+        .height = Pixels.fromRaw(200),
+        .size = GraphicsBytes.fromRaw(60000),
+        .offset = GraphicsBytes.fromRaw(16),
         .compressed = true,
         .quiet = .silent,
     }, "/name");
@@ -1803,7 +1834,7 @@ test "the gap of a frame is written on both sides of zero, and not at zero" {
     for (cases) |case| {
         var out: Writer.Allocating = .init(std.testing.allocator);
         defer out.deinit();
-        try transmitFrame(&out.writer, .{ .image = .{ .id = 1 }, .gap = case.gap }, "");
+        try transmitFrame(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(1) }, .gap = case.gap }, "");
         try std.testing.expectEqualStrings(case.bytes, out.written());
         try std.testing.expectEqual(case.gap, readAnimation(out.written()).?.frame.gap);
     }
@@ -1819,7 +1850,7 @@ test "the background colour is the protocol's own 32-bit RGBA" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     try transmitFrame(&out.writer, .{
-        .image = .{ .id = 1 },
+        .image = .{ .id = ImageId.fromRaw(1) },
         .background = .{ .g = 0xff, .a = 0x88 },
     }, "");
     try std.testing.expectEqualStrings("\x1b_Ga=f,i=1,Y=16711816;\x1b\\", out.written());
@@ -1828,7 +1859,7 @@ test "the background colour is the protocol's own 32-bit RGBA" {
     // one colour that writes no key at all.
     var none: Writer.Allocating = .init(std.testing.allocator);
     defer none.deinit();
-    try transmitFrame(&none.writer, .{ .image = .{ .id = 1 } }, "");
+    try transmitFrame(&none.writer, .{ .image = .{ .id = ImageId.fromRaw(1) } }, "");
     try std.testing.expect(readCommand(none.written()).?.get('Y') == null);
 }
 
@@ -1840,7 +1871,7 @@ test "a chunked frame carries a=f on every sequence" {
     defer out.deinit();
 
     const data: [chunk_bytes + 1]u8 = @splat(0xcd);
-    try transmitFrame(&out.writer, .{ .image = .{ .id = 1 }, .quiet = .silent }, &data);
+    try transmitFrame(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(1) }, .quiet = .silent }, &data);
 
     var commands: Commands = .{ .rest = out.written() };
     const first = commands.next().?;
@@ -1863,7 +1894,7 @@ test "a frame that fits writes one sequence and no m key" {
     defer out.deinit();
 
     const data: [chunk_bytes]u8 = @splat(0xab);
-    try transmitFrame(&out.writer, .{ .image = .{ .id = 1 } }, &data);
+    try transmitFrame(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(1) } }, &data);
 
     var commands: Commands = .{ .rest = out.written() };
     const only = commands.next().?;
@@ -1877,7 +1908,7 @@ test "animation control writes the state, the frame, the gap, the current frame 
     defer out.deinit();
 
     try animateImage(&out.writer, .{
-        .image = .{ .id = 7 },
+        .image = .{ .id = ImageId.fromRaw(7) },
         .state = .running,
         .frame = 3,
         .gap = 48,
@@ -1895,13 +1926,13 @@ test "animation control writes the state, the frame, the gap, the current frame 
     // seven, which is the only way the root frame ever gets one.
     var gap: Writer.Allocating = .init(std.testing.allocator);
     defer gap.deinit();
-    try animateImage(&gap.writer, .{ .image = .{ .id = 7 }, .frame = 3, .gap = 48 });
+    try animateImage(&gap.writer, .{ .image = .{ .id = ImageId.fromRaw(7) }, .frame = 3, .gap = 48 });
     try std.testing.expectEqualStrings("\x1b_Ga=a,i=7,r=3,z=48\x1b\\", gap.written());
 
     // And the one a client-driven animation sends per tick.
     var step: Writer.Allocating = .init(std.testing.allocator);
     defer step.deinit();
-    try animateImage(&step.writer, .{ .image = .{ .id = 3 }, .current = 7 });
+    try animateImage(&step.writer, .{ .image = .{ .id = ImageId.fromRaw(3) }, .current = 7 });
     try std.testing.expectEqualStrings("\x1b_Ga=a,i=3,c=7\x1b\\", step.written());
 }
 
@@ -1915,7 +1946,7 @@ test "every animation state writes its own value, and the default writes none" {
     for (cases) |case| {
         var out: Writer.Allocating = .init(std.testing.allocator);
         defer out.deinit();
-        try animateImage(&out.writer, .{ .image = .{ .id = 1 }, .state = case.state });
+        try animateImage(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(1) }, .state = case.state });
         try std.testing.expectEqualStrings(case.bytes, out.written());
         try std.testing.expectEqual(case.state, readAnimation(out.written()).?.animate.state);
     }
@@ -1928,15 +1959,15 @@ test "composing frames writes both frames, both rectangles and the mode" {
     defer out.deinit();
 
     try composeFrames(&out.writer, .{
-        .image = .{ .id = 1 },
+        .image = .{ .id = ImageId.fromRaw(1) },
         .source = 7,
         .destination = 9,
-        .width = 23,
-        .height = 27,
-        .source_x = 4,
-        .source_y = 8,
-        .destination_x = 1,
-        .destination_y = 3,
+        .width = Pixels.fromRaw(23),
+        .height = Pixels.fromRaw(27),
+        .source_x = Pixels.fromRaw(4),
+        .source_y = Pixels.fromRaw(8),
+        .destination_x = Pixels.fromRaw(1),
+        .destination_y = Pixels.fromRaw(3),
     });
     try std.testing.expectEqualStrings(
         "\x1b_Ga=c,i=1,c=9,r=7,x=1,y=3,w=23,h=27,X=4,Y=8\x1b\\",
@@ -1951,7 +1982,7 @@ test "composing frames writes both frames, both rectangles and the mode" {
     var whole: Writer.Allocating = .init(std.testing.allocator);
     defer whole.deinit();
     try composeFrames(&whole.writer, .{
-        .image = .{ .number = 4 },
+        .image = .{ .number = ImageNumber.fromRaw(4) },
         .source = 1,
         .destination = 2,
         .compose = .overwrite,
@@ -1962,28 +1993,28 @@ test "composing frames writes both frames, both rectangles and the mode" {
 
 test "every animation command reads back as the command that wrote it" {
     const commands = [_]Animation{
-        .{ .frame = .{ .image = .{ .id = 1 } } },
+        .{ .frame = .{ .image = .{ .id = ImageId.fromRaw(1) } } },
         .{ .frame = .{
-            .image = .{ .number = 2 },
+            .image = .{ .number = ImageNumber.fromRaw(2) },
             .edit = 4,
             .base = 3,
-            .x = 10,
-            .y = 5,
+            .x = Pixels.fromRaw(10),
+            .y = Pixels.fromRaw(5),
             .compose = .overwrite,
             .background = .{ .r = 1, .g = 2, .b = 3, .a = 4 },
             .gap = -40,
             .format = .png,
             .medium = .file,
-            .width = 7,
-            .height = 8,
-            .size = 9,
-            .offset = 11,
+            .width = Pixels.fromRaw(7),
+            .height = Pixels.fromRaw(8),
+            .size = GraphicsBytes.fromRaw(9),
+            .offset = GraphicsBytes.fromRaw(11),
             .compressed = true,
             .quiet = .failures,
         } },
-        .{ .animate = .{ .image = .{ .id = 1 } } },
+        .{ .animate = .{ .image = .{ .id = ImageId.fromRaw(1) } } },
         .{ .animate = .{
-            .image = .{ .number = 5 },
+            .image = .{ .number = ImageNumber.fromRaw(5) },
             .state = .loading,
             .current = 6,
             .frame = 7,
@@ -1991,17 +2022,17 @@ test "every animation command reads back as the command that wrote it" {
             .loops = 8,
             .quiet = .silent,
         } },
-        .{ .compose = .{ .image = .{ .id = 1 } } },
+        .{ .compose = .{ .image = .{ .id = ImageId.fromRaw(1) } } },
         .{ .compose = .{
-            .image = .{ .number = 9 },
+            .image = .{ .number = ImageNumber.fromRaw(9) },
             .source = 1,
             .destination = 2,
-            .source_x = 3,
-            .source_y = 4,
-            .destination_x = 5,
-            .destination_y = 6,
-            .width = 7,
-            .height = 8,
+            .source_x = Pixels.fromRaw(3),
+            .source_y = Pixels.fromRaw(4),
+            .destination_x = Pixels.fromRaw(5),
+            .destination_y = Pixels.fromRaw(6),
+            .width = Pixels.fromRaw(7),
+            .height = Pixels.fromRaw(8),
             .compose = .overwrite,
             .quiet = .failures,
         } },
@@ -2051,9 +2082,9 @@ test "fuzz the animation round trip" {
             const e = std.mem.readInt(u32, bytes[16..20], .little);
 
             const image: AnimationImage = if (a & 1 == 0)
-                .{ .id = b }
+                .{ .id = ImageId.fromRaw(b) }
             else
-                .{ .number = c };
+                .{ .number = ImageNumber.fromRaw(c) };
             const quiet: GraphicsQuiet = @fromBackingInt(@intCast(@as(u8, @truncate(a >> 2)) % 3));
             const mode: GraphicsCompose = if (a & 0x10 != 0) .overwrite else .blend;
 
@@ -2062,8 +2093,8 @@ test "fuzz the animation round trip" {
                     .image = image,
                     .edit = b,
                     .base = c,
-                    .x = d,
-                    .y = e,
+                    .x = Pixels.fromRaw(d),
+                    .y = Pixels.fromRaw(e),
                     .compose = mode,
                     .background = .{
                         .r = @truncate(d >> 24),
@@ -2083,10 +2114,10 @@ test "fuzz the animation round trip" {
                         2 => .temporary_file,
                         else => .shared_memory,
                     },
-                    .width = c,
-                    .height = d,
-                    .size = e,
-                    .offset = b,
+                    .width = Pixels.fromRaw(c),
+                    .height = Pixels.fromRaw(d),
+                    .size = GraphicsBytes.fromRaw(e),
+                    .offset = GraphicsBytes.fromRaw(b),
                     .compressed = a & 0x200 != 0,
                     .quiet = quiet,
                 } },
@@ -2103,12 +2134,12 @@ test "fuzz the animation round trip" {
                     .image = image,
                     .source = b,
                     .destination = c,
-                    .source_x = d,
-                    .source_y = e,
-                    .destination_x = b,
-                    .destination_y = c,
-                    .width = d,
-                    .height = e,
+                    .source_x = Pixels.fromRaw(d),
+                    .source_y = Pixels.fromRaw(e),
+                    .destination_x = Pixels.fromRaw(b),
+                    .destination_y = Pixels.fromRaw(c),
+                    .width = Pixels.fromRaw(d),
+                    .height = Pixels.fromRaw(e),
                     .compose = mode,
                     .quiet = quiet,
                 } },
@@ -2137,7 +2168,7 @@ test "a placeholder row carries the image id in the foreground colour" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try placeholderRow(&out.writer, .{ .id = 42, .row = 0, .columns = 2 });
+    try placeholderRow(&out.writer, .{ .id = ImageId.fromRaw(42), .row = 0, .columns = 2 });
     try std.testing.expectEqualStrings(
         "\x1b[38;2;0;0;42m\u{10EEEE}\u{305}\u{305}\u{10EEEE}\u{305}\u{30d}\x1b[39m",
         out.written(),
@@ -2145,7 +2176,7 @@ test "a placeholder row carries the image id in the foreground colour" {
 
     var second: Writer.Allocating = .init(std.testing.allocator);
     defer second.deinit();
-    try placeholderRow(&second.writer, .{ .id = 42, .row = 1, .columns = 2 });
+    try placeholderRow(&second.writer, .{ .id = ImageId.fromRaw(42), .row = 1, .columns = 2 });
     try std.testing.expectEqualStrings(
         "\x1b[38;2;0;0;42m\u{10EEEE}\u{30d}\u{305}\u{10EEEE}\u{30d}\u{30d}\x1b[39m",
         second.written(),
@@ -2157,7 +2188,7 @@ test "an image id past three bytes puts its top byte in a third diacritic" {
     defer out.deinit();
 
     // 33554474 = 42 + (2 << 24), the protocol's own example.
-    try placeholderRow(&out.writer, .{ .id = 42 + (2 << 24), .row = 0, .columns = 2 });
+    try placeholderRow(&out.writer, .{ .id = ImageId.fromRaw(42 + (2 << 24)), .row = 0, .columns = 2 });
     try std.testing.expectEqualStrings(
         "\x1b[38;2;0;0;42m" ++
             "\u{10EEEE}\u{305}\u{305}\u{30e}" ++
@@ -2171,7 +2202,7 @@ test "a placement id travels in the underline colour" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try placeholderRow(&out.writer, .{ .id = 1, .placement = 7, .row = 0, .columns = 1 });
+    try placeholderRow(&out.writer, .{ .id = ImageId.fromRaw(1), .placement = try PlaceholderPlacement.init(7), .row = 0, .columns = 1 });
     try std.testing.expectEqualStrings(
         "\x1b[38;2;0;0;1m\x1b[58:2::0:0:7m\u{10EEEE}\u{305}\u{305}\x1b[39m\x1b[59m",
         out.written(),
@@ -2179,7 +2210,8 @@ test "a placement id travels in the underline colour" {
 }
 
 test "a placeholder placement has exactly the bits its colour carries" {
-    try std.testing.expectEqual(@as(usize, 24), @bitSizeOf(@FieldType(Placeholder, "placement")));
+    try std.testing.expectEqual(@as(u32, 0xffffff), (try PlaceholderPlacement.init(0xffffff)).raw());
+    try std.testing.expectError(error.OutOfRange, PlaceholderPlacement.init(0x1000000));
 }
 
 test "a placeholder cell writes the character and its diacritics and no colour" {
@@ -2224,16 +2256,16 @@ test "a row or column past the diacritic table is refused, with nothing written"
     try std.testing.expectError(error.PlaceholderOutOfRange, placeholderCell(&out.writer, 0, std.math.maxInt(u16), 0));
     try std.testing.expectError(
         error.PlaceholderOutOfRange,
-        placeholderRow(&out.writer, .{ .id = 1, .row = placeholder_max, .columns = 1 }),
+        placeholderRow(&out.writer, .{ .id = ImageId.fromRaw(1), .row = placeholder_max, .columns = 1 }),
     );
     try std.testing.expectError(
         error.PlaceholderOutOfRange,
-        placeholderRow(&out.writer, .{ .id = 1, .row = 0, .columns = placeholder_max + 1 }),
+        placeholderRow(&out.writer, .{ .id = ImageId.fromRaw(1), .row = 0, .columns = placeholder_max + 1 }),
     );
     try std.testing.expectEqualStrings("", out.written());
 
     // The last row and the widest row still go through.
-    try placeholderRow(&out.writer, .{ .id = 1, .row = last, .columns = placeholder_max });
+    try placeholderRow(&out.writer, .{ .id = ImageId.fromRaw(1), .row = last, .columns = placeholder_max });
     try std.testing.expect(out.written().len != 0);
 }
 
@@ -2305,7 +2337,7 @@ test "fuzz the transmit round trip" {
 
             var out: Writer.Allocating = .init(std.testing.allocator);
             defer out.deinit();
-            try transmitImage(&out.writer, .{ .image = .{ .id = 1 }, .quiet = .silent }, data);
+            try transmitImage(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(1) }, .quiet = .silent }, data);
 
             var joined: std.ArrayList(u8) = .empty;
             defer joined.deinit(std.testing.allocator);
@@ -2352,36 +2384,36 @@ fn borrows(outer: []const u8, inner: []const u8) bool {
 
 test "parseGraphicsResponse reads an acknowledgement and a refusal" {
     const accepted = parseGraphicsResponse("\x1b_Gi=31;OK\x1b\\").?;
-    try std.testing.expectEqual(@as(?u32, 31), accepted.id);
-    try std.testing.expectEqual(@as(?u32, null), accepted.number);
-    try std.testing.expectEqual(@as(?u32, null), accepted.placement);
+    try std.testing.expectEqual(@as(?ImageId, ImageId.fromRaw(31)), accepted.id);
+    try std.testing.expectEqual(@as(?ImageNumber, null), accepted.number);
+    try std.testing.expectEqual(@as(?PlacementId, null), accepted.placement);
     try std.testing.expectEqualStrings("OK", accepted.message);
     try std.testing.expect(accepted.ok());
 
     const refused = parseGraphicsResponse("\x1b_Gi=31;ENOENT:No such file\x1b\\").?;
-    try std.testing.expectEqual(@as(?u32, 31), refused.id);
+    try std.testing.expectEqual(@as(?ImageId, ImageId.fromRaw(31)), refused.id);
     try std.testing.expectEqualStrings("ENOENT:No such file", refused.message);
     try std.testing.expect(!refused.ok());
 }
 
 test "parseGraphicsResponse reads every key it names" {
     const response = parseGraphicsResponse("\x1b_Gi=1,I=2,p=3;OK\x1b\\").?;
-    try std.testing.expectEqual(@as(?u32, 1), response.id);
-    try std.testing.expectEqual(@as(?u32, 2), response.number);
-    try std.testing.expectEqual(@as(?u32, 3), response.placement);
+    try std.testing.expectEqual(@as(?ImageId, ImageId.fromRaw(1)), response.id);
+    try std.testing.expectEqual(@as(?ImageNumber, ImageNumber.fromRaw(2)), response.number);
+    try std.testing.expectEqual(@as(?PlacementId, PlacementId.fromRaw(3)), response.placement);
 }
 
 test "parseGraphicsResponse reads past keys it does not name" {
     // The protocol adds keys; a response carrying one is still a response.
     const response = parseGraphicsResponse("\x1b_Gi=31,q=2,z=0,p=7;OK\x1b\\").?;
-    try std.testing.expectEqual(@as(?u32, 31), response.id);
-    try std.testing.expectEqual(@as(?u32, 7), response.placement);
-    try std.testing.expectEqual(@as(?u32, null), response.number);
+    try std.testing.expectEqual(@as(?ImageId, ImageId.fromRaw(31)), response.id);
+    try std.testing.expectEqual(@as(?PlacementId, PlacementId.fromRaw(7)), response.placement);
+    try std.testing.expectEqual(@as(?ImageNumber, null), response.number);
 }
 
 test "parseGraphicsResponse reads a response with no keys and one with no message" {
     const keyless = parseGraphicsResponse("\x1b_G;OK\x1b\\").?;
-    try std.testing.expectEqual(@as(?u32, null), keyless.id);
+    try std.testing.expectEqual(@as(?ImageId, null), keyless.id);
     try std.testing.expectEqualStrings("OK", keyless.message);
     try std.testing.expect(keyless.ok());
 
@@ -2392,7 +2424,7 @@ test "parseGraphicsResponse reads a response with no keys and one with no messag
 
 test "parseGraphicsResponse accepts BEL where a terminal uses it instead of ST" {
     const response = parseGraphicsResponse("\x1b_GI=99;EBADF:bad file descriptor\x07").?;
-    try std.testing.expectEqual(@as(?u32, 99), response.number);
+    try std.testing.expectEqual(@as(?ImageNumber, ImageNumber.fromRaw(99)), response.number);
     try std.testing.expectEqualStrings("EBADF:bad file descriptor", response.message);
 }
 
@@ -2480,4 +2512,25 @@ comptime {
     std.debug.assert(diacritics.len >= 256);
     std.debug.assert(std.unicode.utf8ValidCodepoint(placeholder));
     for (diacritics) |cp| std.debug.assert(std.unicode.utf8ValidCodepoint(cp));
+}
+
+test "graphics domains retain scalar layout and nonzero probe bounds" {
+    comptime {
+        std.debug.assert(ImageId != ImageNumber);
+        std.debug.assert(ImageId != PlacementId);
+        std.debug.assert(ImageId != QueryImageId);
+        std.debug.assert(GraphicsBytes != ImageId);
+        std.debug.assert(Pixels != Cells);
+        std.debug.assert(Pixels != GraphicsBytes);
+        std.debug.assert(@sizeOf(ImageId) == @sizeOf(u32));
+        std.debug.assert(@alignOf(ImageId) == @alignOf(u32));
+        std.debug.assert(@sizeOf(Placement) == 60);
+        std.debug.assert(@sizeOf(GraphicsBytes) == @sizeOf(u32));
+    }
+    try std.testing.expectError(error.InvalidId, QueryImageId.fromRaw(0));
+    try std.testing.expectEqual(std.math.maxInt(u32), (try QueryImageId.fromRaw(std.math.maxInt(u32))).raw());
+    const reply = parseGraphicsResponse("\x1b_Gi=4294967295,I=0,p=0;OK\x1b\\").?;
+    try std.testing.expectEqual(ImageId.fromRaw(std.math.maxInt(u32)), reply.id.?);
+    try std.testing.expectEqual(ImageNumber.fromRaw(0), reply.number.?);
+    try std.testing.expectEqual(PlacementId.fromRaw(0), reply.placement.?);
 }

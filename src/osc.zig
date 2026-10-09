@@ -367,14 +367,14 @@ pub fn parseTextSize(body: []const u8) ?SizedText {
 /// trips below go through the framing a reader uses.
 fn readTextSize(bytes: []const u8) ?SizedText {
     const string = framing.parseControlString(bytes) orelse return null;
-    if (string.introducer != ']' or !string.terminated or string.len != bytes.len) return null;
+    if (string.introducer != ']' or !string.terminated or string.len != framing.ByteCount.fromRaw(bytes.len)) return null;
     return parseTextSize(string.body);
 }
 
 /// The same for an OSC 8.
 fn readHyperlink(bytes: []const u8) ?Hyperlink {
     const string = framing.parseControlString(bytes) orelse return null;
-    if (string.introducer != ']' or !string.terminated or string.len != bytes.len) return null;
+    if (string.introducer != ']' or !string.terminated or string.len != framing.ByteCount.fromRaw(bytes.len)) return null;
     return parseHyperlink(string.body);
 }
 
@@ -816,7 +816,7 @@ test "every string this package writes frames whole, terminator and all" {
     while (rest.len != 0) : (framed += 1) {
         const s = framing.parseControlString(rest).?;
         try std.testing.expect(s.terminated);
-        rest = rest[s.len..];
+        rest = rest[s.len.raw()..];
     }
     try std.testing.expectEqual(@as(usize, 3), framed);
 }

@@ -13,16 +13,20 @@
     },
 
     .dependencies = .{
+        .aegis = .{
+            .url = "git+https://github.com/pedronaugusto/aegis#45d3aa1f12d0b1e9803af424f61d81aaa4c0c113",
+            .hash = "aegis-0.0.0-rsxoujrXAQDkze8z-wu3N0mJ03Q-Vy4FIhAU1qi6xnxM",
+        },
         .preflight = .{
-            .url = "git+https://github.com/pedronaugusto/preflight#f34ca9adc0fcdf593acb616d87dedd9ad994211b",
-            .hash = "preflight-0.1.0-LX1ZwhbQCAA3VfNh10B9lBxEWqsBPWF0868sFi2HtLwI",
+            .url = "git+https://github.com/pedronaugusto/preflight#e80b9a631956b1b7b7a7c6ebc69ec7e495ad623d",
+            .hash = "preflight-0.1.0-LX1Zwv3_CACAF-_k51Z494nvVGgk4EPS1hfQCBVozPQo",
             .lazy = true,
         },
         // Test support and measuring, asked for only in
         // morse's own tree: nothing a consumer builds names it.
         .shakedown = .{
-            .url = "git+https://github.com/pedronaugusto/shakedown#57d6b02e0b875babcc65a733534d9052029d5548",
-            .hash = "shakedown-0.1.0-BR8U44noDwAh7rsnq3dpDnt3_qbAKeBA_S3UtjUwWU7-",
+            .url = "git+https://github.com/pedronaugusto/shakedown#b7458b6ec717dc190e0fd5b265b913ffb48a3569",
+            .hash = "shakedown-0.1.0-BR8U46GKEADNXxI8lxG6UzW_qse5oUklgt6adWzNSPDD",
             .lazy = true,
         },
         // The terminal emulator the conformance build feeds is named in

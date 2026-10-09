@@ -988,10 +988,10 @@ test "an image is transmitted, placed and taken away" {
     // Two by two, four bytes a pixel.
     const pixels: [16]u8 = @splat(0xff);
     try morse.transmitImage(v.w(), .{
-        .image = .{ .id = 7 },
+        .image = .{ .id = morse.ImageId.fromRaw(7) },
         .format = .rgba,
-        .width = 2,
-        .height = 2,
+        .width = morse.Pixels.fromRaw(2),
+        .height = morse.Pixels.fromRaw(2),
         .quiet = .silent,
     }, &pixels);
     v.feed();
@@ -1004,8 +1004,8 @@ test "an image is transmitted, placed and taken away" {
 
     try morse.cursorTo(v.w(), 4, 1);
     try morse.placeImage(v.w(), .{
-        .image = .{ .id = 7 },
-        .placement = .{ .id = 1, .columns = 8, .rows = 4, .z = -1, .keep_cursor = true },
+        .image = .{ .id = morse.ImageId.fromRaw(7) },
+        .placement = .{ .id = morse.PlacementId.fromRaw(1), .columns = morse.Cells.fromRaw(8), .rows = morse.Cells.fromRaw(4), .z = -1, .keep_cursor = true },
         .quiet = .silent,
     });
     v.feed();
@@ -1022,7 +1022,7 @@ test "an image is transmitted, placed and taken away" {
 
     // The placement goes, the pixels stay.
     try morse.deleteImage(v.w(), .{
-        .target = .{ .image = .{ .id = 7, .placement = 1 } },
+        .target = .{ .image = .{ .id = morse.ImageId.fromRaw(7), .placement = morse.PlacementId.fromRaw(1) } },
         .quiet = .silent,
     });
     v.feed();
@@ -1031,7 +1031,7 @@ test "an image is transmitted, placed and taken away" {
 
     // And now the pixels too.
     try morse.deleteImage(v.w(), .{
-        .target = .{ .image = .{ .id = 7 } },
+        .target = .{ .image = .{ .id = morse.ImageId.fromRaw(7) } },
         .free = true,
         .quiet = .silent,
     });
@@ -1047,16 +1047,16 @@ test "a graphics command that asks for an answer gets one" {
     const pixels: [4]u8 = @splat(0xff);
     v.resetReplies();
     try morse.transmitImage(v.w(), .{
-        .image = .{ .id = 31 },
+        .image = .{ .id = morse.ImageId.fromRaw(31) },
         .format = .rgba,
-        .width = 1,
-        .height = 1,
+        .width = morse.Pixels.fromRaw(1),
+        .height = morse.Pixels.fromRaw(1),
         .quiet = .answers,
     }, &pixels);
     v.feed();
 
     const response = morse.parseGraphicsResponse(v.replies()).?;
-    try checkEqual(@as(?u32, 31), response.id);
+    try checkEqual(@as(?morse.ImageId, morse.ImageId.fromRaw(31)), response.id);
     try check(response.ok());
 }
 
@@ -1066,11 +1066,11 @@ test "the graphics query is answered" {
     defer v.deinit();
 
     v.resetReplies();
-    try morse.queryGraphics(v.w(), 31);
+    try morse.queryGraphics(v.w(), try morse.QueryImageId.fromRaw(31));
     v.feed();
 
     const response = morse.parseGraphicsResponse(v.replies()).?;
-    try checkEqual(@as(?u32, 31), response.id);
+    try checkEqual(@as(?morse.ImageId, morse.ImageId.fromRaw(31)), response.id);
     try check(response.ok());
 }
 
@@ -1082,10 +1082,10 @@ test "an animation is built out of frames, played, and composed" {
     // The image the frames belong to: two by two, RGBA, all white.
     const white: [16]u8 = @splat(0xff);
     try morse.transmitImage(v.w(), .{
-        .image = .{ .id = 9 },
+        .image = .{ .id = morse.ImageId.fromRaw(9) },
         .format = .rgba,
-        .width = 2,
-        .height = 2,
+        .width = morse.Pixels.fromRaw(2),
+        .height = morse.Pixels.fromRaw(2),
         .quiet = .silent,
     }, &white);
     v.feed();
@@ -1104,10 +1104,10 @@ test "an animation is built out of frames, played, and composed" {
         0xff, 0x00, 0x00, 0xff,
     };
     try morse.transmitFrame(v.w(), .{
-        .image = .{ .id = 9 },
+        .image = .{ .id = morse.ImageId.fromRaw(9) },
         .format = .rgba,
-        .width = 2,
-        .height = 2,
+        .width = morse.Pixels.fromRaw(2),
+        .height = morse.Pixels.fromRaw(2),
         .gap = 48,
         .quiet = .silent,
     }, &red);
@@ -1120,10 +1120,10 @@ test "an animation is built out of frames, played, and composed" {
         0x00, 0x00, 0xff, 0xff,
     };
     try morse.transmitFrame(v.w(), .{
-        .image = .{ .id = 9 },
+        .image = .{ .id = morse.ImageId.fromRaw(9) },
         .format = .rgba,
-        .width = 2,
-        .height = 2,
+        .width = morse.Pixels.fromRaw(2),
+        .height = morse.Pixels.fromRaw(2),
         .base = 2,
         .compose = .overwrite,
         .gap = 30,
@@ -1139,26 +1139,26 @@ test "an animation is built out of frames, played, and composed" {
     // The root frame is made gapless, and `a=a` is the only way it is ever
     // given a gap.
     try checkEqual(@as(u32, 0), animation.gapAt(0));
-    try morse.animateImage(v.w(), .{ .image = .{ .id = 9 }, .frame = 1, .gap = 40 });
+    try morse.animateImage(v.w(), .{ .image = .{ .id = morse.ImageId.fromRaw(9) }, .frame = 1, .gap = 40 });
     v.feed();
     try checkEqual(@as(u32, 40), animation.gapAt(0));
 
     // Naming a frame is the whole of a client-driven animation.
-    try morse.animateImage(v.w(), .{ .image = .{ .id = 9 }, .current = 3 });
+    try morse.animateImage(v.w(), .{ .image = .{ .id = morse.ImageId.fromRaw(9) }, .current = 3 });
     v.feed();
     try checkEqual(@as(u32, 2), animation.current_index);
 
     // And the three playback states, with a loop count.
-    try morse.animateImage(v.w(), .{ .image = .{ .id = 9 }, .state = .loading });
+    try morse.animateImage(v.w(), .{ .image = .{ .id = morse.ImageId.fromRaw(9) }, .state = .loading });
     v.feed();
     try check(animation.state == .loading);
 
-    try morse.animateImage(v.w(), .{ .image = .{ .id = 9 }, .state = .running, .loops = 4 });
+    try morse.animateImage(v.w(), .{ .image = .{ .id = morse.ImageId.fromRaw(9) }, .state = .running, .loops = 4 });
     v.feed();
     try check(animation.state == .running);
     try checkEqual(@as(u32, 3), animation.max_loops);
 
-    try morse.animateImage(v.w(), .{ .image = .{ .id = 9 }, .state = .stopped });
+    try morse.animateImage(v.w(), .{ .image = .{ .id = morse.ImageId.fromRaw(9) }, .state = .stopped });
     v.feed();
     try check(animation.state == .stopped);
 
@@ -1168,11 +1168,11 @@ test "an animation is built out of frames, played, and composed" {
     try checkEqual([4]u8{ 0x00, 0x00, 0xff, 0xff }, before);
 
     try morse.composeFrames(v.w(), .{
-        .image = .{ .id = 9 },
+        .image = .{ .id = morse.ImageId.fromRaw(9) },
         .source = 2,
         .destination = 3,
-        .width = 1,
-        .height = 1,
+        .width = morse.Pixels.fromRaw(1),
+        .height = morse.Pixels.fromRaw(1),
         .compose = .overwrite,
         .quiet = .silent,
     });
@@ -1199,10 +1199,10 @@ test "a frame command is answered, and a chunked one is answered once" {
 
     const pixels: [16]u8 = @splat(0xff);
     try morse.transmitImage(v.w(), .{
-        .image = .{ .id = 11 },
+        .image = .{ .id = morse.ImageId.fromRaw(11) },
         .format = .rgba,
-        .width = 2,
-        .height = 2,
+        .width = morse.Pixels.fromRaw(2),
+        .height = morse.Pixels.fromRaw(2),
         .quiet = .silent,
     }, &pixels);
     v.feed();
@@ -1212,10 +1212,10 @@ test "a frame command is answered, and a chunked one is answered once" {
     const frame: [morse.graphics_chunk_bytes + 4]u8 = @splat(0x40);
     v.resetReplies();
     try morse.transmitFrame(&v.writer, .{
-        .image = .{ .id = 11 },
+        .image = .{ .id = morse.ImageId.fromRaw(11) },
         .format = .rgba,
-        .width = 2,
-        .height = 2,
+        .width = morse.Pixels.fromRaw(2),
+        .height = morse.Pixels.fromRaw(2),
     }, &frame);
     v.feed();
 
@@ -1421,7 +1421,7 @@ test "the startup probe is one write and a stream of answers" {
     defer v.deinit();
 
     v.resetReplies();
-    try (morse.Probe{ .graphics_id = 31 }).write(v.w());
+    try (morse.Probe{ .graphics_id = try morse.QueryImageId.fromRaw(31) }).write(v.w());
     v.feed();
 
     // The answers come back as one byte stream carrying replies of four
@@ -2046,7 +2046,7 @@ test "strip leaves what the emulator prints" {
     try morse.syncOutput.set(w, true);
     try morse.mouse(w, .{ .motion = .any });
     try morse.kittyKeyboardPush(w, .{ .disambiguate_escape_codes = true });
-    try morse.transmitImage(w, .{ .image = .{ .id = 1 }, .format = .rgb, .width = 1, .height = 1 }, "\x00\x00\x00");
+    try morse.transmitImage(w, .{ .image = .{ .id = morse.ImageId.fromRaw(1) }, .format = .rgb, .width = morse.Pixels.fromRaw(1), .height = morse.Pixels.fromRaw(1) }, "\x00\x00\x00");
     try morse.cursorShape(w, .bar);
     try morse.queryCapability(w, "TN");
     try morse.repeatChar(w, 3);

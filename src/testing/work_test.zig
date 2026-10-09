@@ -141,9 +141,9 @@ test "work: a megabyte of pixels costs a quarter of a percent in framing" {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     try graphics.transmitImage(&out.writer, .{
-        .image = .{ .id = 1 },
-        .width = 512,
-        .height = 512,
+        .image = .{ .id = graphics.ImageId.fromRaw(1) },
+        .width = graphics.Pixels.fromRaw(512),
+        .height = graphics.Pixels.fromRaw(512),
     }, pixels);
 
     const written = out.written().len;

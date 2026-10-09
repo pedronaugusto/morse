@@ -179,11 +179,11 @@ pub const Event = union(enum) {
 
     /// Bytes needed to keep this event after the parser advances. A key
     /// and every other arm holding only values need no storage.
-    pub fn copySize(ev: Event) usize {
+    pub fn copySize(ev: Event) framing.ByteCount {
         return switch (ev) {
             .reply => |r| r.copySize(),
-            .text, .unhandled => |bytes| bytes.len,
-            else => 0,
+            .text, .unhandled => |bytes| framing.ByteCount.fromRaw(bytes.len),
+            else => framing.ByteCount.fromRaw(0),
         };
     }
 
@@ -802,9 +802,10 @@ fn decodeShortEscape(bytes: []const u8) Decoded {
 /// how a terminal that was interrupted mid-reply does not eat the sequence
 /// that follows: what there is goes back, and reading starts again at the
 /// `ESC`.
+// aegis: measured hot loop validated at its boundary: framing returns a byte count bounded by this input slice.
 fn decodeString(bytes: []const u8) Decoded {
     const string = framing.parseControlString(bytes) orelse return .incomplete;
-    return ready(.{ .unhandled = bytes[0..string.len] }, string.len);
+    return ready(.{ .unhandled = bytes[0..string.len.raw()] }, string.len.raw());
 }
 
 /// `ESC [` or `ESC O` followed straight away by a byte no sequence goes on
@@ -3711,10 +3712,10 @@ test "Event.copy survives parser reuse for text, sequences and replies" {
         var parser: KeyParser = .init(&buffer);
         var events = parser.feed(bytes);
         const original = events.next().?;
-        const storage = try std.testing.allocator.alloc(u8, original.copySize());
+        const storage = try std.testing.allocator.alloc(u8, original.copySize().raw());
         defer std.testing.allocator.free(storage);
         const kept = try original.copy(storage);
-        const second = try std.testing.allocator.alloc(u8, kept.copySize());
+        const second = try std.testing.allocator.alloc(u8, kept.copySize().raw());
         defer std.testing.allocator.free(second);
         const expected = try kept.copy(second);
         var later = parser.feed("overwrite the borrowed bytes");
@@ -3723,7 +3724,7 @@ test "Event.copy survives parser reuse for text, sequences and replies" {
         if (kept == .reply and kept.reply == .graphics) try std.testing.expect(kept.reply.graphics.ok());
     }
     const key_event: Event = .{ .key = .{ .key = .{ .char = 'é' } } };
-    try std.testing.expectEqual(@as(usize, 0), key_event.copySize());
+    try std.testing.expectEqual(@as(usize, 0), key_event.copySize().raw());
     try std.testing.expectEqualDeep(key_event, try key_event.copy(&.{}));
     var short = [_]u8{99};
     try std.testing.expectError(error.NoSpaceLeft, (Event{ .text = "long" }).copy(&short));

@@ -87,15 +87,15 @@ pub fn main(init: std.process.Init) !void {
     // sending it again. `q=2` because nothing here reads the reply.
     const pixels = [_]u8{ 0xff, 0x00, 0x00, 0xff }; // one red pixel, RGBA
     try morse.transmitImage(w, .{
-        .image = .{ .id = 7 },
-        .width = 1,
-        .height = 1,
+        .image = .{ .id = morse.ImageId.fromRaw(7) },
+        .width = morse.Pixels.fromRaw(1),
+        .height = morse.Pixels.fromRaw(1),
         .quiet = .silent,
     }, &pixels);
     try morse.cursorTo(w, 6, 1);
     try morse.placeImage(w, .{
-        .image = .{ .id = 7 },
-        .placement = .{ .id = 1, .columns = 20, .rows = 6, .z = -1, .keep_cursor = true },
+        .image = .{ .id = morse.ImageId.fromRaw(7) },
+        .placement = .{ .id = morse.PlacementId.fromRaw(1), .columns = morse.Cells.fromRaw(20), .rows = morse.Cells.fromRaw(6), .z = -1, .keep_cursor = true },
         .quiet = .silent,
     });
 
@@ -124,7 +124,7 @@ pub fn main(init: std.process.Init) !void {
     // Keep the timeout armed, or finish after an explicit quiet period. The
     // graphics question carries an image id, and the program picks one it
     // never sends a picture under.
-    try (morse.Probe{ .graphics_id = 1 }).write(w);
+    try (morse.Probe{ .graphics_id = try morse.QueryImageId.fromRaw(1) }).write(w);
 
     // A question the probe does not ask, because it needs a name. None of
     // these is guaranteed an answer either.
@@ -209,7 +209,7 @@ pub fn main(init: std.process.Init) !void {
     // away explicitly: they outlive the program that drew them.
     try morse.extraCursorsClear(w);
     try morse.deleteImage(w, .{
-        .target = .{ .image = .{ .id = 7 } },
+        .target = .{ .image = .{ .id = morse.ImageId.fromRaw(7) } },
         .free = true,
         .quiet = .silent,
     });

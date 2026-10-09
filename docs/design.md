@@ -1,11 +1,34 @@
 # Architecture
 
 Morse writes terminal sequences and parses terminal input. The consumer module
-uses Zig and its standard library only: it owns no terminal, executor or event
+uses Zig, its standard library and aegis scalar types: it owns no terminal, executor or event
 loop. Writers take caller-owned `std.Io.Writer` storage, and stream parsers retain
 partial input in caller-owned buffers. `ci/layers.zig` declares the production
 module boundaries. Examples, conformance, test support and measurement belong to
 the checkout and are excluded from the fetched consumer's dependency graph.
+
+## Value boundaries
+
+Graphics commands and replies distinguish `ImageId`, `ImageNumber` and
+`PlacementId`. Their raw u32 layout and zero sentinels retain the wire format;
+`QueryImageId` rejects zero because probes need a correlatable identity.
+`GraphicsBytes` distinguishes file sizes and offsets from image dimensions.
+`Pixels`, `Cells` and signed `CellOffset` keep image geometry separate from
+terminal geometry through command construction to fixed-key serialization.
+`PlaceholderPlacement` checks the underline colour's 24-bit range at construction.
+Framing and reply/event storage sizes return `ByteCount`; extraction to usize
+happens when slicing or asking the allocator for bytes. These types remain in
+their existing concern modules, reexported by the root facade. The production
+layer graph still points downward, and aegis closes on std.
+
+Borrowed input stays a slice with the caller's lifetime; wrapping it cannot
+make storage immutable or extend that lifetime. Parsers validate syntax and
+u32 overflow before importing scalar identities. The small graphics-reply
+grammar is inline so callers use only the typed result fields they need; the
+validated scalar scan remains unchanged. Their bounded inner indices,
+base64 chunks and numeric wire encoders retain raw operations with reasons at
+the sites: one validated byte domain or a fixed wire field with no mixed-domain
+arithmetic. No terminal ownership or future protocol state is introduced.
 
 ## Invariants
 
