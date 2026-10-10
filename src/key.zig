@@ -1067,6 +1067,9 @@ fn csiEvent(final: u8, params: Params) ?Event {
             const key = ss3Key(final).?;
             var ev: KeyEvent = .{ .key = key };
             if (!applyModifiers(&ev, params, 1)) return null;
+            // The kitty encoder writes the text of these keys as it does for
+            // `CSI u` and `CSI n ~`, so the three read it the same way.
+            if (!fillText(&ev, params, 2)) return null;
             return .{ .key = ev };
         },
         // Backtab, which is shift and tab spelled without a parameter.
@@ -1085,7 +1088,8 @@ fn csiEvent(final: u8, params: Params) ?Event {
 
 /// Reads rxvt's numbered-key modifier finals: shift, control, and both.
 fn rxvtNumberedEvent(final: u8, params: Params) ?Event {
-    if (params.count != 1 or params.get(0, 1) != null) return null;
+    // One number and nothing after it, an empty sub-parameter (`1:`) included.
+    if (params.count != 1 or params.subs[0] != 1) return null;
     const key = tildeKey(params.get(0, 0) orelse return null) orelse return null;
     const mods: Modifiers = switch (final) {
         '$' => .{ .shift = true },
@@ -1819,6 +1823,12 @@ test "kitty associated text carries every codepoint it names" {
     try std.testing.expectEqualStrings("🙂", oneKey("\x1b[97;;128578u").?.text());
 }
 
+test "associated text is read from the arrow, home and end finals as it is from CSI u and CSI n ~" {
+    try std.testing.expectEqualStrings("a", oneKey("\x1b[1;6;97H").?.text());
+    try std.testing.expectEqualStrings("ab", oneKey("\x1b[1;1;97:98A").?.text());
+    try std.testing.expectEqualStrings("a", oneKey("\x1b[7;6;97~").?.text());
+}
+
 test "kitty text longer than the capacity stops at a codepoint boundary" {
     // Four four-byte codepoints is exactly the capacity.
     const full = oneKey("\x1b[97;;128578:128578:128578:128578u").?;
@@ -2550,17 +2560,19 @@ test "fuzz KeyParser" {
     };
     const property = struct {
         fn holds(bytes: []const u8, first: usize, second: usize) !void {
-            var whole_buffer: [16 * 1024]u8 = undefined;
-            var whole: std.Io.Writer = .fixed(&whole_buffer);
-            try transcribe(bytes, &.{}, &whole);
+            // Every event is written out in full, and 256 bytes can be 256
+            // events, so the transcript has no size to fix.
+            var whole: std.Io.Writer.Allocating = .init(std.testing.allocator);
+            defer whole.deinit();
+            try transcribe(bytes, &.{}, &whole.writer);
 
             // Cut in two places a real read could have ended.
             const cuts = [2]usize{ @min(first, second), @max(first, second) };
-            var split_buffer: [16 * 1024]u8 = undefined;
-            var split: std.Io.Writer = .fixed(&split_buffer);
-            try transcribe(bytes, &cuts, &split);
+            var split: std.Io.Writer.Allocating = .init(std.testing.allocator);
+            defer split.deinit();
+            try transcribe(bytes, &cuts, &split.writer);
 
-            try std.testing.expectEqualStrings(whole.buffered(), split.buffered());
+            try std.testing.expectEqualStrings(whole.written(), split.written());
         }
 
         fn body(_: void, case: *fuzz.Case) !void {
@@ -2972,6 +2984,13 @@ test "fuzz the framing against a second framer" {
         }
     };
     try fuzz.check(std.testing.allocator, {}, property.body, .{});
+}
+
+test "rxvt's numbered keys take one bare number, and both framers agree on what is not one" {
+    // `$` is the final only after a number that is a key; `1:` is not a bare
+    // number, so there `$` is an intermediate and the sequence is not whole.
+    try std.testing.expectEqual(@as(usize, 1), try checkFraming("\x1b[1$"));
+    try std.testing.expectEqual(@as(usize, 0), try checkFraming("\x1b[1:$"));
 }
 
 test "an X10 mouse report is framed whole, not split into keypresses" {
@@ -3980,7 +3999,9 @@ test "fuzz the encoder against the parser" {
     // every kitty flag, reads back as itself -- less the alternates the
     // protocol does not carry, a shifted form without shift held and either
     // alternate on a key that is not a codepoint, and less a typed
-    // codepoint the protocol has given to a named key.
+    // codepoint in the block the protocol gives to its named keys and
+    // reserves the rest of: written as `CSI u` it reads back as a named key
+    // or as nothing, and the text it came as is the only way to say it.
     const fuzz = @import("testing/fuzz.zig");
     const examples = [_][]const u8{
         "\x1b[97:65:98;2:3;65u",
@@ -3992,6 +4013,10 @@ test "fuzz the encoder against the parser" {
         fn holds(bytes: []const u8) !void {
             var decoded: [64]KeyEvent = undefined;
             for (decodeKeys(bytes, &decoded)) |k| {
+                switch (k.key) {
+                    .char => |cp| if (cp >= 57344 and cp <= 57599) continue,
+                    else => {},
+                }
                 var expected = k;
                 if (!k.mods.shift) expected.shifted = null;
                 if (k.key != .char) {

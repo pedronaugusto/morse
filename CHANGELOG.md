@@ -55,6 +55,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `CSI 1:$` is no longer read as rxvt's shifted Home: the number must be bare, as the framer already required.
+- Associated text is read from the arrow, home and end finals (`CSI 1;6;97 H`) as it is from `CSI u` and `CSI n ~`, which is how the kitty encoder writes it.
+
 - `strip` works in place as documented: `strip(buf, buf)` panicked with `@memcpy arguments alias` in safe builds, and was undefined behaviour in ReleaseFast, once a run of text overlapped where it was written.
 - `KeyParser` frames `CSI Ps ; Pm $ y`, the ANSI-mode DECRPM reply, whole as `Event.unhandled`; `$` is rxvt's shifted-key final only after one number that names a key. It used to split into an unhandled `CSI Ps;Pm $` and a typed `y`.
 - `KeyParser` reads `ESC [` or `ESC O` followed by a control byte as alt+`[` or alt+`O` and then the control, as `flush` reads the same two bytes; the alt was dropped before.
