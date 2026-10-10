@@ -194,7 +194,6 @@ pub const Event = union(enum) {
     /// `out`. The returned event is valid until `out` changes or is freed,
     /// even after the parser advances. No allocation; use `copySize` to
     /// allocate exactly when needed. `NoSpaceLeft` leaves `out` unchanged.
-    // ziglint-ignore: Z015 `Event.CopyError` is pub; ziglint does not look inside a tagged union for it
     pub fn copy(ev: Event, out: []u8) CopyError!Event {
         switch (ev) {
             .reply => |r| return .{ .reply = try r.copy(out) },
@@ -802,7 +801,6 @@ fn decodeShortEscape(bytes: []const u8) Decoded {
 /// how a terminal that was interrupted mid-reply does not eat the sequence
 /// that follows: what there is goes back, and reading starts again at the
 /// `ESC`.
-// aegis: measured hot loop validated at its boundary: framing returns a byte count bounded by this input slice.
 fn decodeString(bytes: []const u8) Decoded {
     const string = framing.parseControlString(bytes) orelse return .incomplete;
     return ready(.{ .unhandled = bytes[0..string.len.raw()] }, string.len.raw());

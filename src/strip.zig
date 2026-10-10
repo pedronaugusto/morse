@@ -165,7 +165,6 @@ pub const Stripper = struct {
 
     /// Text from `bytes[start..]` up to the next sequence, written; returns
     /// where reading goes on.
-    // aegis: measured hot loop validated at its boundary: framed byte counts fit the remaining byte slice.
     fn text(s: *Stripper, w: *Writer, bytes: []const u8, start: usize) Writer.Error!usize {
         var i = start;
         while (i < bytes.len) {

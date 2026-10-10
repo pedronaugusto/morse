@@ -18,8 +18,8 @@
             .hash = "aegis-0.0.0-rsxoujrXAQDkze8z-wu3N0mJ03Q-Vy4FIhAU1qi6xnxM",
         },
         .preflight = .{
-            .url = "git+https://github.com/pedronaugusto/preflight#e80b9a631956b1b7b7a7c6ebc69ec7e495ad623d",
-            .hash = "preflight-0.1.0-LX1Zwv3_CACAF-_k51Z494nvVGgk4EPS1hfQCBVozPQo",
+            .url = "git+https://github.com/pedronaugusto/preflight#e3d81b9e477c1c690f1ce03506511935d16035c3",
+            .hash = "preflight-0.1.0-LX1Zwl2HCQB4-h0brJMmXe_1ZA3UoIT6vI9kJ3IE1grE",
             .lazy = true,
         },
         // Test support and measuring, asked for only in

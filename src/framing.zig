@@ -66,7 +66,6 @@ pub const Csi = struct {
 /// `bytes` starts with the `CSI`, `ESC [`, and may run on past the sequence;
 /// `Csi.len` says where it ended. Null when `bytes` does not start with a
 /// `CSI`, or does not yet hold the byte that ends it.
-// aegis: measured hot loop validated at its boundary: indices stay within bytes; the result exports a byte count.
 pub fn parseCsi(bytes: []const u8) ?Csi {
     if (bytes.len < 2 or bytes[0] != seq.esc or bytes[1] != '[') return null;
     var i: usize = 2;
@@ -118,7 +117,6 @@ pub const ControlString = struct {
 /// on past the string. Null when `bytes` does not start with one of the five
 /// introducers, or does not yet hold the byte that ends it -- which includes
 /// a final `ESC` whose next byte has not arrived.
-// aegis: measured hot loop validated at its boundary: terminator lookahead checks bytes.len before indexing.
 pub fn parseControlString(bytes: []const u8) ?ControlString {
     if (bytes.len < 2 or bytes[0] != seq.esc) return null;
     switch (bytes[1]) {

@@ -26,15 +26,14 @@ make storage immutable or extend that lifetime. Parsers validate syntax and
 u32 overflow before importing scalar identities. The small graphics-reply
 grammar is inline so callers use only the typed result fields they need; the
 validated scalar scan remains unchanged. Their bounded inner indices,
-base64 chunks and numeric wire encoders retain raw operations with reasons at
-the sites: one validated byte domain or a fixed wire field with no mixed-domain
-arithmetic. No terminal ownership or future protocol state is introduced.
+base64 chunks and numeric wire encoders extract raw values only within one
+validated byte domain or at a fixed wire field, with no mixed-domain arithmetic. No terminal ownership or future protocol state is introduced.
 
-`ci/preflight.json` selects `ci/glint.json`, which sets A004 (ID, unit and
-integer contracts) to gate across production, tests, benchmarks, examples, conformance
-and build/CI code. The published preflight pin still executes ziglint; glint G3
-accepts these aegis rules only in report mode. The gate configuration is ready
-for G4 integration and is not claimed to execute under the current pin.
+`ci/preflight.json` sets glint's A004 (ID, unit and integer contracts) to gate across
+production, tests, benchmarks, examples, conformance and build/CI code, and Z026 (a
+discarded error carries its reason) too. A zero test on a typed field compares the
+type (`!p.id.eql(.fromRaw(0))`) and extracts the raw value only where it is written to
+its wire key, so the gate holds with no suppression at those sites.
 
 ## Invariants
 

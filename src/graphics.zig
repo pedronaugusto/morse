@@ -45,6 +45,8 @@ pub const Cells = aegis.units.Count(enum { cells }, u32);
 pub const CellOffset = aegis.units.Count(Cells.Domain, i32);
 /// A placeholder underline colour can carry only 24 placement bits.
 pub const PlaceholderPlacement = aegis.int.Ranged(u32, 0, 0xffffff);
+/// The placeholder without an underline colour, which the protocol leaves unwritten.
+const no_placement = PlaceholderPlacement.init(0) catch unreachable; // unreachable: zero is inside the range
 const base64 = @import("base64.zig");
 const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
@@ -484,6 +486,12 @@ comptime {
 /// The comma goes before each key but the first, so a command with no keys
 /// at all writes none -- which `\x1b_Ga=d\x1b\\` needs and a default-valued
 /// command relies on.
+/// Whether an identity or a count is not zero, which the protocol spells by
+/// leaving its key out.
+fn present(value: anytype) bool {
+    return value != @TypeOf(value).fromRaw(0);
+}
+
 const Keys = struct {
     w: *Writer,
     any: bool = false,
@@ -516,28 +524,26 @@ const Keys = struct {
 ///
 /// Shared by `place` and by a transmit whose action is `.display`, so the
 /// placement grammar is spelled once.
-// aegis: no danger here: typed fields reach only their fixed wire keys; raw decimal values are not mixed.
 fn writePlacement(k: *Keys, p: Placement) Writer.Error!void {
-    if (p.id.raw() != 0) try k.int('p', p.id.raw());
-    if (p.source.x.raw() != 0) try k.int('x', p.source.x.raw());
-    if (p.source.y.raw() != 0) try k.int('y', p.source.y.raw());
-    if (p.source.width.raw() != 0) try k.int('w', p.source.width.raw());
-    if (p.source.height.raw() != 0) try k.int('h', p.source.height.raw());
-    if (p.x_offset.raw() != 0) try k.int('X', p.x_offset.raw());
-    if (p.y_offset.raw() != 0) try k.int('Y', p.y_offset.raw());
-    if (p.columns.raw() != 0) try k.int('c', p.columns.raw());
-    if (p.rows.raw() != 0) try k.int('r', p.rows.raw());
+    if (present(p.id)) try k.int('p', p.id.raw());
+    if (present(p.source.x)) try k.int('x', p.source.x.raw());
+    if (present(p.source.y)) try k.int('y', p.source.y.raw());
+    if (present(p.source.width)) try k.int('w', p.source.width.raw());
+    if (present(p.source.height)) try k.int('h', p.source.height.raw());
+    if (present(p.x_offset)) try k.int('X', p.x_offset.raw());
+    if (present(p.y_offset)) try k.int('Y', p.y_offset.raw());
+    if (present(p.columns)) try k.int('c', p.columns.raw());
+    if (present(p.rows)) try k.int('r', p.rows.raw());
     if (p.z != 0) try k.signed('z', p.z);
     if (p.keep_cursor) try k.int('C', 1);
     if (p.virtual) try k.int('U', 1);
-    if (p.parent.raw() != 0) try k.int('P', p.parent.raw());
-    if (p.parent_placement.raw() != 0) try k.int('Q', p.parent_placement.raw());
-    if (p.parent_x.raw() != 0) try k.signed('H', p.parent_x.raw());
-    if (p.parent_y.raw() != 0) try k.signed('V', p.parent_y.raw());
+    if (present(p.parent)) try k.int('P', p.parent.raw());
+    if (present(p.parent_placement)) try k.int('Q', p.parent_placement.raw());
+    if (present(p.parent_x)) try k.signed('H', p.parent_x.raw());
+    if (present(p.parent_y)) try k.signed('V', p.parent_y.raw());
 }
 
 /// Writes which image a command names: `i` or `I`, or neither.
-// aegis: no danger here: raw identities are serialized under their distinct protocol keys without arithmetic.
 fn writeImage(k: *Keys, image: GraphicsImage) Writer.Error!void {
     switch (image) {
         .none => {},
@@ -547,7 +553,6 @@ fn writeImage(k: *Keys, image: GraphicsImage) Writer.Error!void {
 }
 
 /// Writes the required image of an animation command: `i` or `I`.
-// aegis: no danger here: the image domain is retained until the fixed wire-key encoder.
 fn writeAnimationImage(k: *Keys, image: AnimationImage) Writer.Error!void {
     switch (image) {
         .id => |v| try k.int('i', v.raw()),
@@ -561,14 +566,13 @@ fn writeAnimationImage(k: *Keys, image: AnimationImage) Writer.Error!void {
 /// `cmd` is a `Transmit` or a `Frame`. An animation frame travels by the
 /// same seven keys under the same names, so they are spelled once here
 /// rather than twice.
-// aegis: no danger here: byte counts are extracted only for their S/O decimal wire fields.
 fn writeMedia(k: *Keys, cmd: anytype) Writer.Error!void {
     if (cmd.format != .rgba) try k.int('f', @backingInt(cmd.format));
     if (cmd.medium != .direct) try k.char('t', @backingInt(cmd.medium));
-    if (cmd.width.raw() != 0) try k.int('s', cmd.width.raw());
-    if (cmd.height.raw() != 0) try k.int('v', cmd.height.raw());
-    if (cmd.size.raw() != 0) try k.int('S', cmd.size.raw());
-    if (cmd.offset.raw() != 0) try k.int('O', cmd.offset.raw());
+    if (present(cmd.width)) try k.int('s', cmd.width.raw());
+    if (present(cmd.height)) try k.int('v', cmd.height.raw());
+    if (present(cmd.size)) try k.int('S', cmd.size.raw());
+    if (present(cmd.offset)) try k.int('O', cmd.offset.raw());
     if (cmd.compressed) try k.char('o', 'z');
 }
 
@@ -602,7 +606,6 @@ fn writeTransmit(k: *Keys, cmd: Transmit) Writer.Error!void {
 ///
 /// Nothing is flushed and nothing else may be written in between: the
 /// protocol requires the chunks of one image to be consecutive.
-// aegis: measured hot loop validated at its boundary: one byte domain, chunk_bytes bounds every base64 input.
 pub fn transmitImage(w: *Writer, cmd: Transmit, data: []const u8) Writer.Error!void {
     var offset: usize = 0;
     var first = true;
@@ -643,7 +646,6 @@ pub fn placeImage(w: *Writer, cmd: Place) Writer.Error!void {
 }
 
 /// Takes images or placements off the screen: `APC G a=d,... ST`.
-// aegis: no danger here: typed IDs and placements are extracted only at their fixed decimal wire fields.
 pub fn deleteImage(w: *Writer, cmd: Delete) Writer.Error!void {
     try w.writeAll(seq.apc ++ "G");
     var keys: Keys = .{ .w = w };
@@ -677,11 +679,11 @@ fn writeDeleteTarget(k: *Keys, target: DeleteTarget, free: bool) Writer.Error!vo
         .all, .at_cursor => {},
         .image => |v| {
             try k.int('i', v.id.raw());
-            if (v.placement.raw() != 0) try k.int('p', v.placement.raw());
+            if (present(v.placement)) try k.int('p', v.placement.raw());
         },
         .number => |v| {
             try k.int('I', v.number.raw());
-            if (v.placement.raw() != 0) try k.int('p', v.placement.raw());
+            if (present(v.placement)) try k.int('p', v.placement.raw());
         },
         .frames => |image| try writeImage(k, image),
         .cell => |v| {
@@ -731,13 +733,12 @@ pub fn queryGraphics(w: *Writer, id: QueryImageId) Writer.Error!void {
 //=========================================================================
 
 /// Writes the keys of the first sequence of a frame, after its `a=f`.
-// aegis: no danger here: pixel and byte counts reach fixed wire keys without cross-domain arithmetic.
 fn writeFrame(k: *Keys, cmd: Frame) Writer.Error!void {
     if (cmd.quiet != .answers) try k.int('q', @backingInt(cmd.quiet));
     try writeAnimationImage(k, cmd.image);
     try writeMedia(k, cmd);
-    if (cmd.x.raw() != 0) try k.int('x', cmd.x.raw());
-    if (cmd.y.raw() != 0) try k.int('y', cmd.y.raw());
+    if (present(cmd.x)) try k.int('x', cmd.x.raw());
+    if (present(cmd.y)) try k.int('y', cmd.y.raw());
     if (cmd.base != 0) try k.int('c', cmd.base);
     if (cmd.edit != 0) try k.int('r', cmd.edit);
     if (cmd.gap != 0) try k.signed('z', cmd.gap);
@@ -755,7 +756,6 @@ fn writeFrame(k: *Keys, cmd: Frame) Writer.Error!void {
 ///
 /// Nothing is flushed and nothing else may be written in between, as with
 /// any chunked payload.
-// aegis: measured hot loop validated at its boundary: one byte domain, chunk_bytes bounds every base64 input.
 pub fn transmitFrame(w: *Writer, cmd: Frame, data: []const u8) Writer.Error!void {
     var offset: usize = 0;
     var first = true;
@@ -806,7 +806,6 @@ pub fn animateImage(w: *Writer, cmd: Animate) Writer.Error!void {
 ///
 /// The cheap way to change part of a frame, because the pixels are already
 /// in the terminal: no payload, and so no `;`.
-// aegis: no danger here: typed pixel coordinates are extracted only for the fixed composition wire keys.
 pub fn composeFrames(w: *Writer, cmd: Compose) Writer.Error!void {
     try w.writeAll(seq.apc ++ "G");
     var keys: Keys = .{ .w = w };
@@ -815,12 +814,12 @@ pub fn composeFrames(w: *Writer, cmd: Compose) Writer.Error!void {
     try writeAnimationImage(&keys, cmd.image);
     if (cmd.destination != 0) try keys.int('c', cmd.destination);
     if (cmd.source != 0) try keys.int('r', cmd.source);
-    if (cmd.destination_x.raw() != 0) try keys.int('x', cmd.destination_x.raw());
-    if (cmd.destination_y.raw() != 0) try keys.int('y', cmd.destination_y.raw());
-    if (cmd.width.raw() != 0) try keys.int('w', cmd.width.raw());
-    if (cmd.height.raw() != 0) try keys.int('h', cmd.height.raw());
-    if (cmd.source_x.raw() != 0) try keys.int('X', cmd.source_x.raw());
-    if (cmd.source_y.raw() != 0) try keys.int('Y', cmd.source_y.raw());
+    if (present(cmd.destination_x)) try keys.int('x', cmd.destination_x.raw());
+    if (present(cmd.destination_y)) try keys.int('y', cmd.destination_y.raw());
+    if (present(cmd.width)) try keys.int('w', cmd.width.raw());
+    if (present(cmd.height)) try keys.int('h', cmd.height.raw());
+    if (present(cmd.source_x)) try keys.int('X', cmd.source_x.raw());
+    if (present(cmd.source_y)) try keys.int('Y', cmd.source_y.raw());
     if (cmd.compose != .blend) try keys.int('C', @backingInt(cmd.compose));
     try w.writeAll(seq.st);
 }
@@ -882,8 +881,6 @@ pub const Placeholder = struct {
 ///
 /// A `row.row` of `placeholder_max` or more, or `row.columns` past it, is
 /// refused with `error.PlaceholderOutOfRange` before anything is written.
-// ziglint-ignore: Z015 `PlaceholderError` is pub; ziglint counts a merged error set as no type
-// aegis: a design removes the bug class: distinct image IDs and ranged placements precede wire-bit extraction.
 pub fn placeholderRow(w: *Writer, row: Placeholder) PlaceholderError!void {
     if (row.row >= placeholder_max or row.columns > placeholder_max) return error.PlaceholderOutOfRange;
 
@@ -895,7 +892,7 @@ pub fn placeholderRow(w: *Writer, row: Placeholder) PlaceholderError!void {
     try seq.writeInt(w, row.id.raw() & 0xff);
     try w.writeByte('m');
 
-    if (row.placement.raw() != 0) {
+    if (row.placement != no_placement) {
         try w.writeAll(seq.csi ++ "58:2::");
         try seq.writeInt(w, (row.placement.raw() >> 16) & 0xff);
         try w.writeByte(':');
@@ -911,7 +908,7 @@ pub fn placeholderRow(w: *Writer, row: Placeholder) PlaceholderError!void {
     }
 
     try w.writeAll(seq.csi ++ "39m");
-    if (row.placement.raw() != 0) try w.writeAll(seq.csi ++ "59m");
+    if (row.placement != no_placement) try w.writeAll(seq.csi ++ "59m");
 }
 
 /// Writes one placeholder cell: the placeholder character, the diacritic for
@@ -924,7 +921,6 @@ pub fn placeholderRow(w: *Writer, row: Placeholder) PlaceholderError!void {
 ///
 /// A `row` or `col` of `placeholder_max` or more is refused with
 /// `error.PlaceholderOutOfRange` before anything is written.
-// ziglint-ignore: Z015 `PlaceholderError` is pub; ziglint counts a merged error set as no type
 pub fn placeholderCell(w: *Writer, row: u16, col: u16, id_top: u8) PlaceholderError!void {
     if (row >= placeholder_max or col >= placeholder_max) return error.PlaceholderOutOfRange;
     comptime std.debug.assert(std.math.maxInt(u8) < placeholder_max);
@@ -1038,7 +1034,6 @@ pub const GraphicsResponse = struct {
 /// with no keys at all is valid, and so is an empty message. Returns null for
 /// anything else. `bytes` must be exactly the sequence, with nothing before
 /// or after it.
-// aegis: measured hot loop validated at its boundary: scanInt rejects u32 overflow before typed ID import.
 pub inline fn parseGraphicsResponse(bytes: []const u8) ?GraphicsResponse {
     if (!std.mem.startsWith(u8, bytes, seq.apc)) return null;
     var rest: []const u8 = bytes[seq.apc.len..];
