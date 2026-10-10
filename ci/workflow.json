@@ -1,7 +1,6 @@
 {
   "land": true,
   "attest": true,
-  "package": "morse",
   "compile_step": "check",
   "targets": [
     "x86_64-linux-gnu",
@@ -11,5 +10,14 @@
     "x86_64-macos",
     "aarch64-macos"
   ],
-  "compile_once": false
+  "compile_once": false,
+  "jobs": [
+    {
+      "name": "conformance",
+      "step": "test",
+      "directory": "conformance",
+      "os": ["ubuntu-latest", "macos-latest"],
+      "setup": false
+    }
+  ]
 }
