@@ -1,4 +1,6 @@
 {
+  "land": true,
+  "attest": true,
   "package": "morse",
   "compile_step": "check",
   "targets": [
