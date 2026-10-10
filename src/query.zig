@@ -9,7 +9,6 @@
 //! and that silence is also an answer, is the caller's to arrange.
 
 const std = @import("std");
-const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -435,11 +434,19 @@ test "fuzz parseModeReply" {
     // The property: no input panics or overflows, and every reply that parses
     // renders back to a reply that parses to the same report. A terminal
     // writes these; the round trip is against that renderer.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[?2026;1$y",
+        "\x1b[?0;0$y",
+        "\x1b[?65535;4$y",
+        "\x1b[?2026;5$y",
+        "\x1b[?65536;1$y",
+        "\x1b[?2026;1$p",
+        "\x1b[2026;1$y",
+        "\x1b[?2026;1$yy",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const report = parseModeReply(bytes) orelse return;
 
             var output: [64]u8 = undefined;
@@ -447,26 +454,32 @@ test "fuzz parseModeReply" {
             try w.print("\x1b[?{d};{d}$y", .{ report.mode, @backingInt(report.state) });
             try std.testing.expectEqual(report, parseModeReply(w.buffered()).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[?2026;1$y"),
-        corpus.entry("\x1b[?0;0$y"),
-        corpus.entry("\x1b[?65535;4$y"),
-        corpus.entry("\x1b[?2026;5$y"),
-        corpus.entry("\x1b[?65536;1$y"),
-        corpus.entry("\x1b[?2026;1$p"),
-        corpus.entry("\x1b[2026;1$y"),
-        corpus.entry("\x1b[?2026;1$yy"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz parseCursorPosition" {
     // The property: no input panics or overflows, and every report that parses
     // renders back to a report that parses to the same position.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[12;40R",
+        "\x1b[1;1R",
+        "\x1b[4294967295;4294967295R",
+        "\x1b[4294967296;1R",
+        "\x1b[0000000012;0000000040R",
+        "\x1b[?12;40R",
+        "\x1b[12;40;1R",
+        "\x1b[12;40",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const position = parseCursorPosition(bytes) orelse return;
 
             var output: [64]u8 = undefined;
@@ -474,16 +487,14 @@ test "fuzz parseCursorPosition" {
             try w.print("\x1b[{d};{d}R", .{ position.row, position.col });
             try std.testing.expectEqual(position, parseCursorPosition(w.buffered()).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[12;40R"),
-        corpus.entry("\x1b[1;1R"),
-        corpus.entry("\x1b[4294967295;4294967295R"),
-        corpus.entry("\x1b[4294967296;1R"),
-        corpus.entry("\x1b[0000000012;0000000040R"),
-        corpus.entry("\x1b[?12;40R"),
-        corpus.entry("\x1b[12;40;1R"),
-        corpus.entry("\x1b[12;40"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz parseExtendedCursorPosition" {
@@ -491,11 +502,20 @@ test "fuzz parseExtendedCursorPosition" {
     // parses renders back to a report that parses to the same position --
     // the page included, which is the field that tells this report from the
     // plain one.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[?12;40;1R",
+        "\x1b[?1;1;1R",
+        "\x1b[?4294967295;4294967295;4294967295R",
+        "\x1b[?4294967296;1;1R",
+        "\x1b[?0000000012;0000000040;0000000001R",
+        "\x1b[12;40R",
+        "\x1b[?12;40R",
+        "\x1b[?12;40;1;1R",
+        "\x1b[?12;40;1",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const position = parseExtendedCursorPosition(bytes) orelse return;
             // Whatever this reads, the plain parser must not also read.
             try std.testing.expect(parseCursorPosition(bytes) == null);
@@ -505,17 +525,14 @@ test "fuzz parseExtendedCursorPosition" {
             try w.print("\x1b[?{d};{d};{d}R", .{ position.row, position.col, position.page });
             try std.testing.expectEqual(position, parseExtendedCursorPosition(w.buffered()).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[?12;40;1R"),
-        corpus.entry("\x1b[?1;1;1R"),
-        corpus.entry("\x1b[?4294967295;4294967295;4294967295R"),
-        corpus.entry("\x1b[?4294967296;1;1R"),
-        corpus.entry("\x1b[?0000000012;0000000040;0000000001R"),
-        corpus.entry("\x1b[12;40R"),
-        corpus.entry("\x1b[?12;40R"),
-        corpus.entry("\x1b[?12;40;1;1R"),
-        corpus.entry("\x1b[?12;40;1"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "queryColorScheme asks which way round the palette is" {
@@ -564,11 +581,18 @@ test "the colour scheme report is not a mode report and the reverse" {
 test "fuzz parseColorSchemeReply" {
     // The property: no input panics or overflows, and every report that
     // parses renders back to a report that parses to the same scheme.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[?997;1n",
+        "\x1b[?997;2n",
+        "\x1b[?997;0n",
+        "\x1b[?997;3n",
+        "\x1b[?996n",
+        "\x1b[?997;1nn",
+        "\x1b[?997;256n",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const scheme = parseColorSchemeReply(bytes) orelse return;
 
             var output: [32]u8 = undefined;
@@ -578,13 +602,12 @@ test "fuzz parseColorSchemeReply" {
             try w.writeByte('n');
             try std.testing.expectEqual(scheme, parseColorSchemeReply(w.buffered()).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[?997;1n"),
-        corpus.entry("\x1b[?997;2n"),
-        corpus.entry("\x1b[?997;0n"),
-        corpus.entry("\x1b[?997;3n"),
-        corpus.entry("\x1b[?996n"),
-        corpus.entry("\x1b[?997;1nn"),
-        corpus.entry("\x1b[?997;256n"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }

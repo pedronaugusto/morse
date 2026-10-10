@@ -48,7 +48,6 @@ pub const PlaceholderPlacement = aegis.int.Ranged(u32, 0, 0xffffff);
 /// The placeholder without an underline colour, which the protocol leaves unwritten.
 const no_placement = PlaceholderPlacement.init(0) catch unreachable; // unreachable: zero is inside the range
 const base64 = @import("base64.zig");
-const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -2064,18 +2063,9 @@ test "fuzz the animation round trip" {
     // writes a sequence the reader accepts, and reading it back gives the
     // command that was written -- which is what says the three are not
     // sharing a meaning for the letters they share.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [32]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-            if (bytes.len < 20) return;
-
-            const a = std.mem.readInt(u32, bytes[0..4], .little);
-            const b = std.mem.readInt(u32, bytes[4..8], .little);
-            const c = std.mem.readInt(u32, bytes[8..12], .little);
-            const d = std.mem.readInt(u32, bytes[12..16], .little);
-            const e = std.mem.readInt(u32, bytes[16..20], .little);
-
+    const fuzz = @import("testing/fuzz.zig");
+    const property = struct {
+        fn holds(a: u32, b: u32, c: u32, d: u32, e: u32) !void {
             const image: AnimationImage = if (a & 1 == 0)
                 .{ .id = ImageId.fromRaw(b) }
             else
@@ -2151,12 +2141,17 @@ test "fuzz the animation round trip" {
                 try std.testing.expectEqualDeep(command, readAnimation(w.buffered()).?);
             }
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x01\x00\x00\x00\x07\x00\x00\x00\x02\x00\x00\x00" ++
-            "\x03\x00\x00\x00\x30\x00\x00\x00"),
-        corpus.entry(corpus.repeat("\x00", 20)),
-        corpus.entry(corpus.repeat("\xff", 20)),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            const s = case.source;
+            try holds(fuzz.gen.int(s, u32), fuzz.gen.int(s, u32), fuzz.gen.int(s, u32), fuzz.gen.int(s, u32), fuzz.gen.int(s, u32));
+        }
+    };
+    // The values the old corpus held: a mixed set, all zeros, all ones.
+    try property.holds(1, 7, 2, 3, 0x30);
+    try property.holds(0, 0, 0, 0, 0);
+    try property.holds(0xffff_ffff, 0xffff_ffff, 0xffff_ffff, 0xffff_ffff, 0xffff_ffff);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "a placeholder row carries the image id in the foreground colour" {
@@ -2294,11 +2289,19 @@ test "fuzz readCommand" {
     // The property: no input panics or overflows, what it returns borrows
     // from the bytes it was given, and the same bytes read the same way
     // twice.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [96]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b_Gi=31,s=1,v=1;YWJj\x1b\\",
+        "\x1b_Ga=p,q=2,i=6,p=1,c=78,r=26,z=-3,C=1\x1b\\",
+        "\x1b_Ga=d,d=i,i=10,p=7\x1b\\",
+        "\x1b_Gm=0;\x1b\\",
+        "\x1b_G;\x1b\\",
+        "\x1b_Gi=1,i=2;\x1b\\",
+        "\x1b_Gi=1;a\x1b\\",
+        "\x1b_Ga=d,d=i,i=10\x07",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const command = readCommand(bytes) orelse return;
             try std.testing.expect(borrows(bytes, command.keys));
             try std.testing.expect(borrows(bytes, command.payload));
@@ -2309,27 +2312,30 @@ test "fuzz readCommand" {
             try std.testing.expectEqualStrings(command.payload, again.payload);
             try std.testing.expectEqual(command.count(), again.count());
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b_Gi=31,s=1,v=1;YWJj\x1b\\"),
-        corpus.entry("\x1b_Ga=p,q=2,i=6,p=1,c=78,r=26,z=-3,C=1\x1b\\"),
-        corpus.entry("\x1b_Ga=d,d=i,i=10,p=7\x1b\\"),
-        corpus.entry("\x1b_Gm=0;\x1b\\"),
-        corpus.entry("\x1b_G;\x1b\\"),
-        corpus.entry("\x1b_Gi=1,i=2;\x1b\\"),
-        corpus.entry("\x1b_Gi=1;a\x1b\\"),
-        corpus.entry("\x1b_Ga=d,d=i,i=10\x07"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [96]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz the transmit round trip" {
     // The property: whatever the payload, every sequence written parses back
     // as a command, the chunk rule holds on each of them, and the payloads
     // joined and decoded are the bytes that went in.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [chunk_bytes * 2 + 16]u8 = undefined;
-            const data = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "",
+        "a",
+        "ab",
+        "abc",
+        "the quick brown fox",
+    };
+    const property = struct {
+        fn holds(data: []const u8) !void {
             var out: Writer.Allocating = .init(std.testing.allocator);
             defer out.deinit();
             try transmitImage(&out.writer, .{ .image = .{ .id = ImageId.fromRaw(1) }, .quiet = .silent }, data);
@@ -2361,13 +2367,14 @@ test "fuzz the transmit round trip" {
             defer std.testing.allocator.free(decoded);
             try std.testing.expectEqualSlices(u8, data, try base64.decode(joined.items, decoded));
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry(""),
-        corpus.entry("a"),
-        corpus.entry("ab"),
-        corpus.entry("abc"),
-        corpus.entry("the quick brown fox"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [chunk_bytes * 2 + 16]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 /// Whether `inner` points into `outer`. Test support, as in `device.zig`.
@@ -2471,11 +2478,23 @@ test "fuzz parseGraphicsResponse" {
     // sub-slice of the bytes it was read from, and the same bytes parse the
     // same way twice. The message is free-form and this package writes no
     // graphics commands, so there is no renderer to round trip through.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b_Gi=31;OK\x1b\\",
+        "\x1b_Gi=1,I=2,p=3;OK\x1b\\",
+        "\x1b_Gi=31;ENOENT:No such file\x1b\\",
+        "\x1b_GI=99;EBADF:bad\x07",
+        "\x1b_G;OK\x1b\\",
+        "\x1b_Gi=31;\x1b\\",
+        "\x1b_Gi=31,q=2,z=0,p=7;OK\x1b\\",
+        "\x1b_Gi=1,i=2;OK\x1b\\",
+        "\x1b_Gi=4294967296;OK\x1b\\",
+        "\x1b_Gii=31;OK\x1b\\",
+        "\x1b_Gi=1,;OK\x1b\\",
+        "\x1b_Gi=31;OK",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const response = parseGraphicsResponse(bytes) orelse return;
             try std.testing.expect(borrows(bytes, response.message));
             try std.testing.expect(response.message.len <= bytes.len);
@@ -2487,20 +2506,14 @@ test "fuzz parseGraphicsResponse" {
             try std.testing.expectEqualStrings(response.message, again.message);
             try std.testing.expectEqual(response.ok(), again.ok());
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b_Gi=31;OK\x1b\\"),
-        corpus.entry("\x1b_Gi=1,I=2,p=3;OK\x1b\\"),
-        corpus.entry("\x1b_Gi=31;ENOENT:No such file\x1b\\"),
-        corpus.entry("\x1b_GI=99;EBADF:bad\x07"),
-        corpus.entry("\x1b_G;OK\x1b\\"),
-        corpus.entry("\x1b_Gi=31;\x1b\\"),
-        corpus.entry("\x1b_Gi=31,q=2,z=0,p=7;OK\x1b\\"),
-        corpus.entry("\x1b_Gi=1,i=2;OK\x1b\\"),
-        corpus.entry("\x1b_Gi=4294967296;OK\x1b\\"),
-        corpus.entry("\x1b_Gii=31;OK\x1b\\"),
-        corpus.entry("\x1b_Gi=1,;OK\x1b\\"),
-        corpus.entry("\x1b_Gi=31;OK"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 comptime {

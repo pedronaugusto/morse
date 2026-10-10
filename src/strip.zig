@@ -20,7 +20,6 @@ const std = @import("std");
 const utf8 = @import("utf8.zig");
 const framing = @import("framing.zig");
 const seq = @import("seq.zig");
-const corpus = @import("shakedown").corpus;
 
 const Writer = std.Io.Writer;
 
@@ -458,26 +457,35 @@ test "a Stripper is its own state: every field is documented Private:" {
 test "fuzz Stripper" {
     // The properties: no input panics; the text never grows; it holds no
     // ESC; and any split of the input strips to what the whole of it does.
-    try testing.fuzz({}, struct {
-        fn one(_: void, smith: *testing.Smith) anyerror!void {
-            var input: [256]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[1mbold\x1b[0m",
+        "\x1b]8;;u\x1b\\t\x1b]8;;\x1b\\",
+        "\u{9b}\xc2\x9b\x9b\xe2\x82",
+    };
+    const property = struct {
+        // Every place the input can be split, which is what "any split" says.
+        fn holds(bytes: []const u8) !void {
             var whole: [256]u8 = undefined;
             const expected = try strip(&whole, bytes);
             try testing.expect(expected.len <= bytes.len);
             try testing.expect(std.mem.findScalar(u8, expected, seq.esc) == null);
-            const cut = if (bytes.len == 0) 0 else smith.value(u8) % (bytes.len + 1);
-            var out: [256]u8 = undefined;
-            var w: Writer = .fixed(&out);
-            var s: Stripper = .{};
-            try s.feed(&w, bytes[0..cut]);
-            try s.feed(&w, bytes[cut..]);
-            try s.finish(&w);
-            try testing.expectEqualStrings(expected, w.buffered());
+            for (0..bytes.len + 1) |cut| {
+                var out: [256]u8 = undefined;
+                var w: Writer = .fixed(&out);
+                var s: Stripper = .{};
+                try s.feed(&w, bytes[0..cut]);
+                try s.feed(&w, bytes[cut..]);
+                try s.finish(&w);
+                try testing.expectEqualStrings(expected, w.buffered());
+            }
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[1mbold\x1b[0m"),
-        corpus.entry("\x1b]8;;u\x1b\\t\x1b]8;;\x1b\\"),
-        corpus.entry("\u{9b}\xc2\x9b\x9b\xe2\x82"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [256]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(testing.allocator, {}, property.body, .{});
 }

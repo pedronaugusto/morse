@@ -40,6 +40,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The Smith fuzz tests are shakedown `check` properties.
 - Benchmark timing, warmup, sampling, statistics, formatting and comparison come from published shakedown; build, smoke and A/B steps come from preflight. The original terminal workloads and parser grid remain.
 
 - morse's manifest no longer names the terminal emulator its conformance build feeds: that build has a manifest of its own under `conformance/`. A program that depends on morse never fetches or compiles the emulator, with `--fetch=all` too, so a Zig the emulator's build script refuses can no longer fail that program's build once the emulator is in the package cache.

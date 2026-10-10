@@ -25,7 +25,6 @@
 //! ship, or keep up to date.
 
 const std = @import("std");
-const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -483,11 +482,23 @@ test "fuzz parseCapabilityReply" {
     // digits it came from. That is the codec checked in both directions on
     // inputs no test author enumerated, and it is why an odd-length or
     // non-hex field has to be refused at parse time rather than at decode.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1bP1+r436f=323536\x1b\\",
+        "\x1bP1+r6b656e64=1b4f46\x1b\\",
+        "\x1bP1+r436f=323536;544e=7874657270\x07",
+        "\x1bP0+r6e6f7065\x1b\\",
+        "\x1bP1+r4B454E44=1B4F46\x1b\\",
+        "\x1bP1+r436f=\x1b\\",
+        "\x1bP0+r\x1b\\",
+        "\x1bP1+r436\x1b\\",
+        "\x1bP1+r436g\x1b\\",
+        "\x1bP1+r;436f\x1b\\",
+        "\x1bP2+r436f\x1b\\",
+        "\x1bP1+r436f=323536",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const reply = parseCapabilityReply(bytes) orelse return;
             try std.testing.expect(borrows(bytes, reply.entries));
 
@@ -529,18 +540,12 @@ test "fuzz parseCapabilityReply" {
             try std.testing.expectEqual(reply.known, again.known);
             try std.testing.expectEqualStrings(reply.entries, again.entries);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1bP1+r436f=323536\x1b\\"),
-        corpus.entry("\x1bP1+r6b656e64=1b4f46\x1b\\"),
-        corpus.entry("\x1bP1+r436f=323536;544e=7874657270\x07"),
-        corpus.entry("\x1bP0+r6e6f7065\x1b\\"),
-        corpus.entry("\x1bP1+r4B454E44=1B4F46\x1b\\"),
-        corpus.entry("\x1bP1+r436f=\x1b\\"),
-        corpus.entry("\x1bP0+r\x1b\\"),
-        corpus.entry("\x1bP1+r436\x1b\\"),
-        corpus.entry("\x1bP1+r436g\x1b\\"),
-        corpus.entry("\x1bP1+r;436f\x1b\\"),
-        corpus.entry("\x1bP2+r436f\x1b\\"),
-        corpus.entry("\x1bP1+r436f=323536"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }

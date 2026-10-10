@@ -106,7 +106,8 @@ pub fn build(b: *std.Build) !void {
 
     const ci = b.lazyImport(@This(), "preflight");
     // Test support and measuring stay outside the consumer module.
-    const shakedown = try b.dependencyLazy("shakedown", .{ .target = target, .optimize = optimize });
+    const shakedown = try b.dependencyLazy("shakedown", .{ .target = target, .optimize = optimize, .aegis = .consumer });
+    if (b.lazyImport(@This(), "shakedown")) |shakedown_build| shakedown_build.useAegis(shakedown, aegis.module("aegis"));
     tests.root_module.addImport("shakedown", shakedown.module("shakedown"));
     const measurement_options = b.addOptions();
     measurement_options.addOption([]const u8, "commit", "test");

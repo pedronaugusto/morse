@@ -32,7 +32,6 @@
 //! anything.
 
 const std = @import("std");
-const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -622,11 +621,22 @@ test "fuzz parseMouse" {
     // The property: no input panics or overflows, and every input that parses
     // re-encodes to something that parses back to the same event. That is the
     // encoder and the parser agreeing on inputs no test author enumerated.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[<0;10;5M",
+        "\x1b[<62;7;9m",
+        "\x1b[<64;1;1M",
+        "\x1b[<131;4294967295;4294967295m",
+        "\x1b[<192;1;1M",
+        "\x1b[<0;99999999999;5M",
+        "\x1b[<0;10;5",
+        "\x1b[0;10;5M",
+        // A pixel of 0, which lands in the first cell: what the fuzzer found
+        // the old property got wrong.
+        "\x1b[<0;0;0M",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const ev = parseMouse(bytes) orelse return;
             try std.testing.expect(!ev.pixels);
 
@@ -646,21 +656,14 @@ test "fuzz parseMouse" {
             try std.testing.expect(cells.x >= 1 and (@as(u64, cells.x) - 1) * 8 < px and px <= @as(u64, cells.x) * 8);
             try std.testing.expect(cells.y >= 1 and (@as(u64, cells.y) - 1) * 16 < py and py <= @as(u64, cells.y) * 16);
         }
-    }.one, .{
-        .corpus = &.{
-            corpus.entry("\x1b[<0;10;5M"),
-            corpus.entry("\x1b[<62;7;9m"),
-            corpus.entry("\x1b[<64;1;1M"),
-            corpus.entry("\x1b[<131;4294967295;4294967295m"),
-            corpus.entry("\x1b[<192;1;1M"),
-            corpus.entry("\x1b[<0;99999999999;5M"),
-            corpus.entry("\x1b[<0;10;5"),
-            corpus.entry("\x1b[0;10;5M"),
-            // A pixel of 0, which lands in the first cell: what the fuzzer found
-            // the old property got wrong.
-            corpus.entry("\x1b[<0;0;0M"),
-        },
-    });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "parseMouseX10 reads a press, its coordinates and its modifiers" {
@@ -759,11 +762,19 @@ test "fuzz parseMouseX10" {
     // parses re-encodes to the same three biased bytes and parses back to an
     // identical event. The encoder is inline because this package writes no
     // X10 reports -- it only reads them.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[M\x20\x21\x21",
+        "\x1b[M\x23\x21\x21",
+        "\x1b[M\x60\x21\x21",
+        "\x1b[M\xa0\xff\xff",
+        "\x1b[M\x20\x20\x20",
+        "\x1b[M\x1f\x21\x21",
+        "\x1b[M\x20\x21",
+        "\x1b[<0;1;1M",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const ev = parseMouseX10(bytes) orelse return;
             try std.testing.expect(ev.x <= x10_max and ev.y <= x10_max);
             try std.testing.expect(!ev.pixels);
@@ -784,16 +795,14 @@ test "fuzz parseMouseX10" {
             };
             try std.testing.expectEqual(ev, parseMouseX10(&round).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[M\x20\x21\x21"),
-        corpus.entry("\x1b[M\x23\x21\x21"),
-        corpus.entry("\x1b[M\x60\x21\x21"),
-        corpus.entry("\x1b[M\xa0\xff\xff"),
-        corpus.entry("\x1b[M\x20\x20\x20"),
-        corpus.entry("\x1b[M\x1f\x21\x21"),
-        corpus.entry("\x1b[M\x20\x21"),
-        corpus.entry("\x1b[<0;1;1M"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "parseMouseRxvt reads a press, its coordinates and its modifiers" {
@@ -916,11 +925,23 @@ test "fuzz parseMouseRxvt" {
     // the same three decimal fields and parses back to an identical event.
     // The encoder is inline because this package writes no rxvt reports -- it
     // only reads them.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[32;33;34M",
+        "\x1b[35;33;33M",
+        "\x1b[96;33;33M",
+        "\x1b[160;1032;1032M",
+        "\x1b[32;32;32M",
+        "\x1b[31;33;33M",
+        "\x1b[288;33;33M",
+        "\x1b[224;33;33M",
+        "\x1b[32;33;33m",
+        "\x1b[32;33;33",
+        "\x1b[<0;1;1M",
+        "\x1b[M\x20\x21\x21",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const ev = parseMouseRxvt(bytes) orelse return;
             try std.testing.expect(!ev.pixels);
             try std.testing.expect(ev.x <= std.math.maxInt(u32) - x10_bias);
@@ -945,20 +966,14 @@ test "fuzz parseMouseRxvt" {
             try std.testing.expect(parseMouse(bytes) == null);
             try std.testing.expect(parseMouseX10(bytes) == null);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[32;33;34M"),
-        corpus.entry("\x1b[35;33;33M"),
-        corpus.entry("\x1b[96;33;33M"),
-        corpus.entry("\x1b[160;1032;1032M"),
-        corpus.entry("\x1b[32;32;32M"),
-        corpus.entry("\x1b[31;33;33M"),
-        corpus.entry("\x1b[288;33;33M"),
-        corpus.entry("\x1b[224;33;33M"),
-        corpus.entry("\x1b[32;33;33m"),
-        corpus.entry("\x1b[32;33;33"),
-        corpus.entry("\x1b[<0;1;1M"),
-        corpus.entry("\x1b[M\x20\x21\x21"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "toCellsAt is the cell toCells gives, for every whole-number cell size" {

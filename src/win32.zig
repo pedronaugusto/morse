@@ -20,7 +20,6 @@
 //! asks for the other shape, and the rest is the caller's.
 
 const std = @import("std");
-const corpus = @import("shakedown").corpus;
 const key = @import("key/event.zig");
 const mouse = @import("mouse.zig");
 
@@ -1392,18 +1391,9 @@ test "fuzz ConsoleDecoder" {
     // carries valid UTF-8 and never a surrogate, a mouse report is inside the
     // coordinate space, and the same record translates the same way twice
     // through a decoder that has seen nothing else.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [16]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-            if (bytes.len < 12) return;
-
-            const a = std.mem.readInt(u16, bytes[0..2], .little);
-            const b = std.mem.readInt(u16, bytes[2..4], .little);
-            const c = std.mem.readInt(u16, bytes[4..6], .little);
-            const d = std.mem.readInt(u16, bytes[6..8], .little);
-            const state = std.mem.readInt(u32, bytes[8..12], .little);
-
+    const fuzz = @import("testing/fuzz.zig");
+    const property = struct {
+        fn holds(a: u16, b: u16, c: u16, d: u16, state: u32) !void {
             const records = [_]ConsoleRecord{
                 .{ .key = .{
                     .key_down = a & 1 != 0,
@@ -1450,13 +1440,26 @@ test "fuzz ConsoleDecoder" {
                 }
             };
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x01\x00\x01\x00\x25\x00\x4b\x00\x00\x00\x00\x00"),
-        corpus.entry("\x61\x00\x03\x00\x41\x00\x1e\x00\x10\x00\x00\x00"),
-        corpus.entry("\x00\xd8\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00"),
-        corpus.entry("\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"),
-        corpus.entry("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            const s = case.source;
+            try holds(
+                fuzz.gen.int(s, u16),
+                fuzz.gen.int(s, u16),
+                fuzz.gen.int(s, u16),
+                fuzz.gen.int(s, u16),
+                fuzz.gen.int(s, u32),
+            );
+        }
+    };
+    // A key down, an Alt-less F-key, a lone high surrogate, every field at
+    // its largest, and none of them set.
+    try property.holds(1, 1, 0x25, 0x4b, 0);
+    try property.holds(0x61, 3, 0x41, 0x1e, 0x10);
+    try property.holds(0xd800, 1, 0, 0, 0);
+    try property.holds(0xffff, 0xffff, 0xffff, 0xffff, 0xffff_ffff);
+    try property.holds(0, 0, 0, 0, 0);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz a run of records through one decoder" {
@@ -1466,21 +1469,12 @@ test "fuzz a run of records through one decoder" {
     // left-Ctrl press it holds for AltGr is never lost: unless the record
     // after it is AltGr's right-Alt press, the Ctrl press is the first thing
     // that record gives back, or what `flush` gives back after the last one.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
-            var decoder: ConsoleDecoder = .{ .report_key_up = bytes.len % 2 == 0 };
+    const fuzz = @import("testing/fuzz.zig");
+    const property = struct {
+        fn holds(report_key_up: bool, records: []const ConsoleKeyRecord) !void {
+            var decoder: ConsoleDecoder = .{ .report_key_up = report_key_up };
             var ctrl_held = false;
-            var rest = bytes;
-            while (rest.len >= 8) : (rest = rest[8..]) {
-                const r: ConsoleKeyRecord = .{
-                    .key_down = rest[0] & 1 != 0,
-                    .virtual_key_code = std.mem.readInt(u16, rest[1..3], .little),
-                    .unicode_char = std.mem.readInt(u16, rest[3..5], .little),
-                    .control_key_state = std.mem.readInt(u16, rest[5..7], .little),
-                };
+            for (records) |r| {
                 const ctrl_due = ctrl_held and !isAltGrRightAltPress(r);
                 ctrl_held = isPossibleAltGrCtrlPress(r);
 
@@ -1506,16 +1500,45 @@ test "fuzz a run of records through one decoder" {
             try std.testing.expectEqual(Key.left_ctrl, ev.key);
             try std.testing.expectEqual(key.Kind.press, ev.kind);
         }
-    }.one, .{
-        .corpus = &.{
-            corpus.entry("\x01\x00\x00\x00\xd8\x00\x00\x00\x01\x00\x00\x42\xde\x00\x00\x00"),
-            corpus.entry("\x01\x12\x00\x00\x00\x02\x00\x00\x00\x12\x00\xe9\x00\x00\x00\x00"),
-            corpus.entry("\x01\x51\x00\x40\x00\x09\x00\x00"),
-            corpus.entry("\x00\x00\x00\x00\x00\x00\x00\x00"),
-            // A left-Ctrl press, then control and C.
-            corpus.entry("\x01\x11\x00\x00\x00\x08\x00\x00\x01\x43\x00\x03\x00\x08\x00\x00"),
-            // A left-Ctrl press and its release, with releases reported.
-            corpus.entry("\x01\x11\x00\x00\x00\x08\x00\x00\x00\x11\x00\x00\x00\x00\x00\x00"),
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            const s = case.source;
+            var records: [8]ConsoleKeyRecord = undefined;
+            const count = fuzz.gen.intRange(s, usize, 0, records.len);
+            for (records[0..count]) |*r| r.* = .{
+                .key_down = fuzz.gen.boolean(s),
+                .virtual_key_code = fuzz.gen.int(s, u16),
+                .unicode_char = fuzz.gen.int(s, u16),
+                .control_key_state = fuzz.gen.int(s, u16),
+            };
+            try holds(fuzz.gen.boolean(s), records[0..count]);
+        }
+    };
+    // Each of these, with releases dropped and with releases reported.
+    const examples = [_][]const ConsoleKeyRecord{
+        // A lone high surrogate, then a lone low one.
+        &.{
+            .{ .key_down = true, .virtual_key_code = 0, .unicode_char = 0xd800, .control_key_state = 0 },
+            .{ .key_down = true, .virtual_key_code = 0, .unicode_char = 0xde42, .control_key_state = 0 },
         },
-    });
+        // Alt held, then its release carrying a character.
+        &.{
+            .{ .key_down = true, .virtual_key_code = 0x12, .unicode_char = 0, .control_key_state = 2 },
+            .{ .key_down = false, .virtual_key_code = 0x12, .unicode_char = 0xe9, .control_key_state = 0 },
+        },
+        &.{.{ .key_down = true, .virtual_key_code = 0x51, .unicode_char = 0x40, .control_key_state = 9 }},
+        &.{.{ .key_down = false, .virtual_key_code = 0, .unicode_char = 0, .control_key_state = 0 }},
+        // A left-Ctrl press, then control and C.
+        &.{
+            .{ .key_down = true, .virtual_key_code = 0x11, .unicode_char = 0, .control_key_state = 8 },
+            .{ .key_down = true, .virtual_key_code = 0x43, .unicode_char = 3, .control_key_state = 8 },
+        },
+        // A left-Ctrl press and its release.
+        &.{
+            .{ .key_down = true, .virtual_key_code = 0x11, .unicode_char = 0, .control_key_state = 8 },
+            .{ .key_down = false, .virtual_key_code = 0x11, .unicode_char = 0, .control_key_state = 0 },
+        },
+    };
+    for (examples) |records| for ([_]bool{ false, true }) |report_key_up| try property.holds(report_key_up, records);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
