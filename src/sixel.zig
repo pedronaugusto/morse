@@ -22,7 +22,6 @@
 //! Read against the VT330/VT340 programmer reference, chapter 14.
 
 const std = @import("std");
-const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 const style = @import("style.zig");
 
@@ -598,11 +597,18 @@ test "parseSixelGraphics reads xterm's answers and its refusals" {
 test "fuzz parseSixelGraphics" {
     // The property: no input panics or overflows, and every report that
     // parses writes back, values and all, to a report that parses the same.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[?1;0;256S",
+        "\x1b[?2;0;1000;1000S",
+        "\x1b[?2;3;0S",
+        "\x1b[?1;1S",
+        "\x1b[?2;0;4294967296;1S",
+        "\x1b[?1;0;256;1S",
+        "\x1b[?3;0;640;480S",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const report = parseSixelGraphics(bytes) orelse return;
 
             var output: [64]u8 = undefined;
@@ -612,13 +618,12 @@ test "fuzz parseSixelGraphics" {
             try w.writeByte('S');
             try testing.expectEqual(report, parseSixelGraphics(w.buffered()).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[?1;0;256S"),
-        corpus.entry("\x1b[?2;0;1000;1000S"),
-        corpus.entry("\x1b[?2;3;0S"),
-        corpus.entry("\x1b[?1;1S"),
-        corpus.entry("\x1b[?2;0;4294967296;1S"),
-        corpus.entry("\x1b[?1;0;256;1S"),
-        corpus.entry("\x1b[?3;0;640;480S"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }

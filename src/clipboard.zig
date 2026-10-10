@@ -345,11 +345,20 @@ test "fuzz parseClipboardReply and decodeClipboard" {
     // reproduces a reply that decodes to the same bytes again. The parser's
     // promise -- that what it returns is base64 `decodeClipboard` cannot fail
     // on -- is the one worth holding to an adversary.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b]52;c;aGk=\x1b\\",
+        "\x1b]52;p;Zm9vYmFy\x07",
+        "\x1b]52;pc;\x1b\\",
+        "\x1b]52;7;Zg==\x1b\\",
+        "\x1b]52;c;?\x1b\\",
+        "\x1b]52;c;aB==\x1b\\",
+        "\x1b]52;c;a=k=\x1b\\",
+        "\x1b]52;z;aGk=\x1b\\",
+        "\x1b]52;c;aGk=",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const reply = parseClipboardReply(bytes) orelse return;
             try std.testing.expect(reply.data.len % 4 == 0);
 
@@ -371,15 +380,12 @@ test "fuzz parseClipboardReply and decodeClipboard" {
             var redecoded: [48]u8 = undefined;
             try std.testing.expectEqualSlices(u8, plain, try decodeClipboard(again, &redecoded));
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b]52;c;aGk=\x1b\\"),
-        corpus.entry("\x1b]52;p;Zm9vYmFy\x07"),
-        corpus.entry("\x1b]52;pc;\x1b\\"),
-        corpus.entry("\x1b]52;7;Zg==\x1b\\"),
-        corpus.entry("\x1b]52;c;?\x1b\\"),
-        corpus.entry("\x1b]52;c;aB==\x1b\\"),
-        corpus.entry("\x1b]52;c;a=k=\x1b\\"),
-        corpus.entry("\x1b]52;z;aGk=\x1b\\"),
-        corpus.entry("\x1b]52;c;aGk="),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }

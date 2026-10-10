@@ -23,7 +23,6 @@
 //! the caller framed itself.
 
 const std = @import("std");
-const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 const style = @import("style.zig");
 
@@ -928,11 +927,18 @@ test "fuzz parseExtraCursors" {
     // The property: no input panics or overflows, the iterator terminates,
     // every cursor it yields has a shape the protocol names, and the same
     // bytes read the same way twice.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [96]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[>100 q",
+        "\x1b[>100;1:2:7:1:7:3 q",
+        "\x1b[>100;29:0;2:2:4:5;3:4:1:1:2:2 q",
+        "\x1b[>100;1:2:7:1:9 q",
+        "\x1b[>100;9:2:3:4 q",
+        "\x1b[>100;1:2:4294967296 q",
+        "\x1b[>101;30:0;40:1 q",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const report = parseExtraCursors(bytes) orelse return;
             const start = @intFromPtr(bytes.ptr);
             try std.testing.expect(@intFromPtr(report.blocks.ptr) >= start);
@@ -951,26 +957,30 @@ test "fuzz parseExtraCursors" {
             while (again.next()) |_| twice += 1;
             try std.testing.expectEqual(seen, twice);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[>100 q"),
-        corpus.entry("\x1b[>100;1:2:7:1:7:3 q"),
-        corpus.entry("\x1b[>100;29:0;2:2:4:5;3:4:1:1:2:2 q"),
-        corpus.entry("\x1b[>100;1:2:7:1:9 q"),
-        corpus.entry("\x1b[>100;9:2:3:4 q"),
-        corpus.entry("\x1b[>100;1:2:4294967296 q"),
-        corpus.entry("\x1b[>101;30:0;40:1 q"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [96]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz parseExtraCursorColors" {
     // The property: no input panics or overflows, and every reply that
     // parses renders back -- through the reply grammar, which is not the
     // writer's -- to a reply that parses to the same pair.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[>101;30:0;40:1 q",
+        "\x1b[>101;30:2:255:0:0;40:5:9 q",
+        "\x1b[>101;30:3;40:1 q",
+        "\x1b[>101;30:2:256:0:0;40:1 q",
+        "\x1b[>100;1:2:3:4 q",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const colors = parseExtraCursorColors(bytes) orelse return;
 
             var output: [96]u8 = undefined;
@@ -983,33 +993,40 @@ test "fuzz parseExtraCursorColors" {
             const again = parseExtraCursorColors(w.buffered()).?;
             try std.testing.expectEqualDeep(colors, again);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[>101;30:0;40:1 q"),
-        corpus.entry("\x1b[>101;30:2:255:0:0;40:5:9 q"),
-        corpus.entry("\x1b[>101;30:3;40:1 q"),
-        corpus.entry("\x1b[>101;30:2:256:0:0;40:1 q"),
-        corpus.entry("\x1b[>100;1:2:3:4 q"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz parseExtraCursorSupport" {
     // The property: no input panics or overflows, and every reply that
     // parses reads the same way twice.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[>1;2;3;29;30;40;100;101 q",
+        "\x1b[> q",
+        "\x1b[>1;7;102 q",
+        "\x1b[>1;2; q",
+        "\x1b[>4294967296 q",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const support = parseExtraCursorSupport(bytes) orelse return;
             try std.testing.expectEqualDeep(support, parseExtraCursorSupport(bytes).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[>1;2;3;29;30;40;100;101 q"),
-        corpus.entry("\x1b[> q"),
-        corpus.entry("\x1b[>1;7;102 q"),
-        corpus.entry("\x1b[>1;2; q"),
-        corpus.entry("\x1b[>4294967296 q"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 /// Test support: one `; shape : type : co-ordinates` block of the reply to

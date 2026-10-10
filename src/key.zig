@@ -2516,60 +2516,69 @@ test "fuzz KeyParser" {
     // progress -- a feed that is run to null either empties the buffer or
     // leaves a partial sequence strictly shorter than the buffer -- and the
     // events do not depend on where the reads were cut.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [256]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[97:65:97;2:3;65u",
+        "\x1b[27u",
+        "\x1b[1;5A",
+        "\x1b[[A",
+        "\x1b[[B",
+        "\x1b[[C",
+        "\x1b[[D",
+        "\x1b[[E",
+        "\x1b[2$",
+        "\x1b[5^",
+        "\x1b[3@",
+        "\x1b[a\x1bOa",
+        "\x1b[3;2~",
+        "\x1b[27;5;9~",
+        "\x1b[200~pasted\x1b[201~",
+        "\x1b[I\x1b[O",
+        "\x1bOP\x1bOy",
+        "\x1b[<0;40;12M",
+        "\x1b]52;c;aGk=\x1b\\",
+        "\x1b_Gi=31;OK\x1b\\",
+        "\x1b\x1b[A",
+        "\x1b",
+        "\x1b[",
+        "\xf0\x9f\x99\x82",
+        "\x1b[1;2;3;4;5;6;7;8;9A",
+        "\x1b[99999999999u",
+        "hello world",
+        "\x1b[200~a much longer pasted run\x1b[201~",
+        "text\x01text\x7ftext",
+        "\u{4e2d}\u{6587}\u{1f642}ab",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8, first: usize, second: usize) !void {
             var whole_buffer: [16 * 1024]u8 = undefined;
             var whole: std.Io.Writer = .fixed(&whole_buffer);
             try transcribe(bytes, &.{}, &whole);
 
             // Cut in two places a real read could have ended.
-            const len: u16 = @intCast(bytes.len); // safe: the input is at most 256 bytes
-            var cuts = [2]usize{
-                smith.valueRangeAtMostWithHash(u16, 0, len, 1),
-                smith.valueRangeAtMostWithHash(u16, 0, len, 2),
-            };
-            std.mem.sort(usize, &cuts, {}, std.sort.asc(usize));
+            const cuts = [2]usize{ @min(first, second), @max(first, second) };
             var split_buffer: [16 * 1024]u8 = undefined;
             var split: std.Io.Writer = .fixed(&split_buffer);
             try transcribe(bytes, &cuts, &split);
 
             try std.testing.expectEqualStrings(whole.buffered(), split.buffered());
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[97:65:97;2:3;65u"),
-        corpus.entry("\x1b[27u"),
-        corpus.entry("\x1b[1;5A"),
-        corpus.entry("\x1b[[A"),
-        corpus.entry("\x1b[[B"),
-        corpus.entry("\x1b[[C"),
-        corpus.entry("\x1b[[D"),
-        corpus.entry("\x1b[[E"),
-        corpus.entry("\x1b[2$"),
-        corpus.entry("\x1b[5^"),
-        corpus.entry("\x1b[3@"),
-        corpus.entry("\x1b[a\x1bOa"),
-        corpus.entry("\x1b[3;2~"),
-        corpus.entry("\x1b[27;5;9~"),
-        corpus.entry("\x1b[200~pasted\x1b[201~"),
-        corpus.entry("\x1b[I\x1b[O"),
-        corpus.entry("\x1bOP\x1bOy"),
-        corpus.entry("\x1b[<0;40;12M"),
-        corpus.entry("\x1b]52;c;aGk=\x1b\\"),
-        corpus.entry("\x1b_Gi=31;OK\x1b\\"),
-        corpus.entry("\x1b\x1b[A"),
-        corpus.entry("\x1b"),
-        corpus.entry("\x1b["),
-        corpus.entry("\xf0\x9f\x99\x82"),
-        corpus.entry("\x1b[1;2;3;4;5;6;7;8;9A"),
-        corpus.entry("\x1b[99999999999u"),
-        corpus.entry("hello world"),
-        corpus.entry("\x1b[200~a much longer pasted run\x1b[201~"),
-        corpus.entry("text\x01text\x7ftext"),
-        corpus.entry("\u{4e2d}\u{6587}\u{1f642}ab"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [256]u8 = undefined;
+            const bytes = fuzz.input(case.source, &input, &examples);
+            const first = fuzz.gen.intRange(case.source, usize, 0, bytes.len);
+            const second = fuzz.gen.intRange(case.source, usize, 0, bytes.len);
+            try holds(bytes, first, second);
+        }
+    };
+    // Every example, cut at every pair of places.
+    for (examples) |example| {
+        for (0..example.len + 1) |first| {
+            for (first..example.len + 1) |second| try property.holds(example, first, second);
+        }
+    }
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "the events do not depend on where the reads were cut" {
@@ -2599,11 +2608,20 @@ test "the events do not depend on where the reads were cut" {
 test "fuzz the parameter scanner" {
     // The property: no parameter string panics or overflows, and what is read
     // back never claims more parameters than the parser holds.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "",
+        "1",
+        "1;5",
+        "97:65:97;2:3;65",
+        ";5",
+        "1;2;3;4;5;6;7;8;9",
+        "1:2:3:4:5",
+        "99999999999",
+        "1;a",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const params = scanParams(bytes) orelse return;
             try std.testing.expect(params.count <= max_params);
             for (0..params.count) |i| {
@@ -2611,17 +2629,14 @@ test "fuzz the parameter scanner" {
                 for (0..max_subparams) |j| _ = params.get(i, j);
             }
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry(""),
-        corpus.entry("1"),
-        corpus.entry("1;5"),
-        corpus.entry("97:65:97;2:3;65"),
-        corpus.entry(";5"),
-        corpus.entry("1;2;3;4;5;6;7;8;9"),
-        corpus.entry("1:2:3:4:5"),
-        corpus.entry("99999999999"),
-        corpus.entry("1;a"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 //=========================================================================
@@ -2943,10 +2958,12 @@ test "fuzz the framing against a second framer" {
     // sequences -- the same starts and the same lengths, in the same order.
     // A disagreement is a bug in one of them, and the test does not say
     // which, which is the point: neither is the oracle.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+    const fuzz = @import("testing/fuzz.zig");
+    const property = struct {
+        fn body(_: void, case: *fuzz.Case) !void {
             var picks: [128]u8 = undefined;
-            const chosen = picks[0..smith.sliceWithHash(&picks, 0)];
+            const chosen = picks[0..fuzz.gen.intRange(case.source, usize, 0, picks.len)];
+            case.source.bytes(chosen);
 
             var input: [512]u8 = undefined;
             _ = try checkFraming(buildStream(chosen, &input));
@@ -2954,17 +2971,8 @@ test "fuzz the framing against a second framer" {
             // have put together.
             _ = try checkFraming(chosen);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x00\x01\x02\x03\x04\x05\x06\x07"),
-        corpus.entry("\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f"),
-        corpus.entry("\x10\x11\x12\x13\x14\x15\x16\x17"),
-        corpus.entry("\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f"),
-        corpus.entry("\x20\x21\x22"),
-        corpus.entry("\x04\x05\x06\xff\xfe\x1b\x1c"),
-        corpus.entry("\x19\x1a\x19\x1a\x19\x1a"),
-        corpus.entry("\x11\x91\x92\x11\x93"),
-        corpus.entry("\x13\x14\x15\x16\x17\x18"),
-    } });
+    };
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "an X10 mouse report is framed whole, not split into keypresses" {
@@ -3559,11 +3567,23 @@ test "fuzz the win32 input mode decoder" {
     // never read past the end, and never produce a key whose text is not
     // valid UTF-8 -- with the key-up half both dropped and reported, because
     // that flag is the one thing that changes which events come out.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [128]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[65;30;97;1;0;1_",
+        "\x1b[65;30;97;0;0;1_",
+        "\x1b[65;30;97;1;0;3_",
+        "\x1b[37;0;0;1;16;1_",
+        "\x1b[112;0;0;1;8;1_",
+        "\x1b[;;;;;_",
+        "\x1b[_",
+        "\x1b[0;0;55357;1;0;1_",
+        "\x1b[65536;0;0;1;0;1_",
+        "\x1b[65;0;97;1;0;65535_",
+        "\x1b[65;0;97;1;0;1;1_",
+        "\x1b[65;30;97;1;0;2_b",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             for ([_]bool{ false, true }) |key_up| {
                 var storage: [KeyParser.min_buffer]u8 = undefined;
                 var parser: KeyParser = .init(&storage);
@@ -3591,20 +3611,14 @@ test "fuzz the win32 input mode decoder" {
                 try std.testing.expectEqual(@as(usize, 0), parser.pending().len);
             }
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[65;30;97;1;0;1_"),
-        corpus.entry("\x1b[65;30;97;0;0;1_"),
-        corpus.entry("\x1b[65;30;97;1;0;3_"),
-        corpus.entry("\x1b[37;0;0;1;16;1_"),
-        corpus.entry("\x1b[112;0;0;1;8;1_"),
-        corpus.entry("\x1b[;;;;;_"),
-        corpus.entry("\x1b[_"),
-        corpus.entry("\x1b[0;0;55357;1;0;1_"),
-        corpus.entry("\x1b[65536;0;0;1;0;1_"),
-        corpus.entry("\x1b[65;0;97;1;0;65535_"),
-        corpus.entry("\x1b[65;0;97;1;0;1;1_"),
-        corpus.entry("\x1b[65;30;97;1;0;2_b"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [128]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "a colour scheme report decodes to the scheme it names" {
@@ -3968,10 +3982,15 @@ test "fuzz the encoder against the parser" {
     // protocol does not carry, a shifted form without shift held and either
     // alternate on a key that is not a codepoint, and less a typed
     // codepoint the protocol has given to a named key.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [256]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[97:65:98;2:3;65u",
+        "\x1b[1;129A\x1b[3;5:2~",
+        "a\x01\x1bb\x1b[27;6;97~",
+        "\x1b[57399:65;2;48u\x1b[1u",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             var decoded: [64]KeyEvent = undefined;
             for (decodeKeys(bytes, &decoded)) |k| {
                 var expected = k;
@@ -3989,10 +4008,12 @@ test "fuzz the encoder against the parser" {
                 try std.testing.expectEqual(expected, back[0]);
             }
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[97:65:98;2:3;65u"),
-        corpus.entry("\x1b[1;129A\x1b[3;5:2~"),
-        corpus.entry("a\x01\x1bb\x1b[27;6;97~"),
-        corpus.entry("\x1b[57399:65;2;48u\x1b[1u"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [256]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }

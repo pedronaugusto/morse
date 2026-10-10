@@ -34,7 +34,6 @@
 //! because only the caller owns its timeout or quiescence timer.
 
 const std = @import("std");
-const corpus = @import("shakedown").corpus;
 const device = @import("device.zig");
 const graphics = @import("graphics.zig");
 const key = @import("key.zig");
@@ -667,33 +666,39 @@ test "the question an event answers is the question its bytes match" {
 test "fuzz matches" {
     // The property: arbitrary bytes never panic and never answer two
     // questions at once, whatever they happen to look like.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[?62;52;c",
+        "\x1b[>1;4000;48c",
+        "\x1b[?2026;1$y",
+        "\x1b[?2027;0$y",
+        "\x1b[12;40R",
+        "\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\",
+        "\x1b[?29u",
+        "\x1b[>4;2m",
+        "\x1b_Gi=31;OK\x1b\\",
+        "\x1b[8;24;80t",
+        "\x1b[6;16;8t",
+        "\x1bP>|name(390)\x1b\\",
+        "\x1b[>1;29 q",
+        "\x1b[?997;1n",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             var hits: usize = 0;
             for (every_question) |question| {
                 if (matches(bytes, question)) hits += 1;
             }
             try std.testing.expect(hits <= 1);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[?62;52;c"),
-        corpus.entry("\x1b[>1;4000;48c"),
-        corpus.entry("\x1b[?2026;1$y"),
-        corpus.entry("\x1b[?2027;0$y"),
-        corpus.entry("\x1b[12;40R"),
-        corpus.entry("\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\"),
-        corpus.entry("\x1b[?29u"),
-        corpus.entry("\x1b[>4;2m"),
-        corpus.entry("\x1b_Gi=31;OK\x1b\\"),
-        corpus.entry("\x1b[8;24;80t"),
-        corpus.entry("\x1b[6;16;8t"),
-        corpus.entry("\x1bP>|name(390)\x1b\\"),
-        corpus.entry("\x1b[>1;29 q"),
-        corpus.entry("\x1b[?997;1n"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "the probe asks the colour count and routes its answer or refusal" {

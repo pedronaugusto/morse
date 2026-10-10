@@ -8,7 +8,6 @@
 
 const std = @import("std");
 const aegis = @import("aegis");
-const corpus = @import("shakedown").corpus;
 const framing = @import("framing.zig");
 const seq = @import("seq.zig");
 const strings = @import("strings.zig");
@@ -606,11 +605,19 @@ test "fuzz parseTextSize and parseHyperlink" {
     // it was given, and the same bytes read the same way twice. Neither
     // sequence has a reply, so the round trip is against the writers in the
     // test above rather than against a terminal.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [96]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b]66;;hi\x1b\\",
+        "\x1b]66;s=2;Double sized text\x1b\\",
+        "\x1b]66;w=1:n=1:d=2;lf\x1b\\",
+        "\x1b]66;s=7:w=3:n=5:d=15:v=2:h=1;x\x07",
+        "\x1b]66;s=2:s=3;x\x1b\\",
+        "\x1b]66;s=2\x1b\\",
+        "8;id=log;file:///tmp/log",
+        "8;;",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const start = @intFromPtr(bytes.ptr);
             if (parseHyperlink(bytes)) |link| {
                 for ([_][]const u8{ link.params, link.uri }) |field| {
@@ -624,16 +631,14 @@ test "fuzz parseTextSize and parseHyperlink" {
             try std.testing.expect(@intFromPtr(read.text.ptr) + read.text.len <= start + bytes.len);
             try std.testing.expectEqual(read, readTextSize(bytes).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b]66;;hi\x1b\\"),
-        corpus.entry("\x1b]66;s=2;Double sized text\x1b\\"),
-        corpus.entry("\x1b]66;w=1:n=1:d=2;lf\x1b\\"),
-        corpus.entry("\x1b]66;s=7:w=3:n=5:d=15:v=2:h=1;x\x07"),
-        corpus.entry("\x1b]66;s=2:s=3;x\x1b\\"),
-        corpus.entry("\x1b]66;s=2\x1b\\"),
-        corpus.entry("8;id=log;file:///tmp/log"),
-        corpus.entry("8;;"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [96]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "title is OSC 2 terminated by BEL" {

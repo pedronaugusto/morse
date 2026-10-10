@@ -1156,11 +1156,17 @@ test "parseModifyKeysReply returns null on anything it does not recognise" {
 test "fuzz parseModifyKeysReply" {
     // The property: no input panics or overflows, and whatever is accepted
     // writes back the bytes it was read from.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [32]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[>4;2m",
+        "\x1b[>0;0m",
+        "\x1b[>4m",
+        "\x1b[>4;m",
+        "\x1b[>5;2m",
+        "\x1b[?4m",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const report = parseModifyKeysReply(bytes) orelse return;
             var buffer: [32]u8 = undefined;
             var w: Writer = .fixed(&buffer);
@@ -1170,14 +1176,14 @@ test "fuzz parseModifyKeysReply" {
             try std.testing.expectEqual(report.resource, again.resource);
             try std.testing.expectEqual(report.value, again.value);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[>4;2m"),
-        corpus.entry("\x1b[>0;0m"),
-        corpus.entry("\x1b[>4m"),
-        corpus.entry("\x1b[>4;m"),
-        corpus.entry("\x1b[>5;2m"),
-        corpus.entry("\x1b[?4m"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [32]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "Rgb16 narrows to eight bits a channel by taking the top byte" {
@@ -1376,11 +1382,22 @@ test "fuzz parseDeviceAttributes" {
     // The property: no input panics or overflows, and every reply that parses
     // renders back to a reply that parses to the same attributes. A terminal
     // writes these; the round trip is against that renderer.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[?1;2c",
+        "\x1b[?62;1;6;9;15;22;29c",
+        "\x1b[?6c",
+        "\x1b[?0;0c",
+        "\x1b[?65535;65535c",
+        "\x1b[?62;65536c",
+        "\x1b[?62;;1c",
+        "\x1b[?62;52;c",
+        "\x1b[?62;",
+        "\x1b[62;1c",
+        "\x1b[?62;1cc",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const da = parseDeviceAttributes(bytes) orelse return;
             try std.testing.expect(da.attribute_count <= DeviceAttributes.max_attributes);
 
@@ -1391,30 +1408,33 @@ test "fuzz parseDeviceAttributes" {
             try w.writeAll("c");
             try std.testing.expectEqual(da, parseDeviceAttributes(w.buffered()).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[?1;2c"),
-        corpus.entry("\x1b[?62;1;6;9;15;22;29c"),
-        corpus.entry("\x1b[?6c"),
-        corpus.entry("\x1b[?0;0c"),
-        corpus.entry("\x1b[?65535;65535c"),
-        corpus.entry("\x1b[?62;65536c"),
-        corpus.entry("\x1b[?62;;1c"),
-        corpus.entry("\x1b[?62;52;c"),
-        corpus.entry("\x1b[?62;"),
-        corpus.entry("\x1b[62;1c"),
-        corpus.entry("\x1b[?62;1cc"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz parseSecondaryDeviceAttributes" {
     // The property: no input panics or overflows, and every reply that parses
     // renders back -- always in the three-parameter form, since a missing
     // keyboard field means zero -- to a reply that parses the same.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[>0;276;0c",
+        "\x1b[>1;4000c",
+        "\x1b[>41;357;0c",
+        "\x1b[>65535;4294967295;65535c",
+        "\x1b[>0;4294967296;0c",
+        "\x1b[>0;276;0;1c",
+        "\x1b[?0;276;0c",
+        "\x1b[>0;276;0",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const da = parseSecondaryDeviceAttributes(bytes) orelse return;
 
             var output: [64]u8 = undefined;
@@ -1422,16 +1442,14 @@ test "fuzz parseSecondaryDeviceAttributes" {
             try w.print("\x1b[>{d};{d};{d}c", .{ da.terminal_type, da.version, da.keyboard });
             try std.testing.expectEqual(da, parseSecondaryDeviceAttributes(w.buffered()).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[>0;276;0c"),
-        corpus.entry("\x1b[>1;4000c"),
-        corpus.entry("\x1b[>41;357;0c"),
-        corpus.entry("\x1b[>65535;4294967295;65535c"),
-        corpus.entry("\x1b[>0;4294967296;0c"),
-        corpus.entry("\x1b[>0;276;0;1c"),
-        corpus.entry("\x1b[?0;276;0c"),
-        corpus.entry("\x1b[>0;276;0"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz parseVersion" {
@@ -1439,37 +1457,52 @@ test "fuzz parseVersion" {
     // sub-slice of the bytes it was read from, and the same bytes parse the
     // same way twice. A round trip would prove less than it looks: the name is
     // free-form, so re-rendering it is only concatenation.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1bP>|xterm(390)\x1b\\",
+        "\x1bP>|name(1.16.2)\x07",
+        "\x1bP>|\x1b\\",
+        "\x1bP>|99999999999999999999\x1b\\",
+        "\x1bP>|xterm(390)",
+        "\x1bP>xterm(390)\x1b\\",
+        "\x1b[>|xterm(390)\x1b\\",
+        "\x1bP>|",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const name = parseVersion(bytes) orelse return;
             try std.testing.expect(borrows(bytes, name));
             try std.testing.expect(name.len <= bytes.len);
             try std.testing.expectEqualStrings(name, parseVersion(bytes).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1bP>|xterm(390)\x1b\\"),
-        corpus.entry("\x1bP>|name(1.16.2)\x07"),
-        corpus.entry("\x1bP>|\x1b\\"),
-        corpus.entry("\x1bP>|99999999999999999999\x1b\\"),
-        corpus.entry("\x1bP>|xterm(390)"),
-        corpus.entry("\x1bP>xterm(390)\x1b\\"),
-        corpus.entry("\x1b[>|xterm(390)\x1b\\"),
-        corpus.entry("\x1bP>|"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz parseKittyKeyboardReply" {
     // The property: no input panics or overflows, every set of flags that
     // parses is within the five bits the protocol defines, and rendering it
     // back gives a reply that parses to the same flags.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[?0u",
+        "\x1b[?1u",
+        "\x1b[?31u",
+        "\x1b[?32u",
+        "\x1b[?255u",
+        "\x1b[?256u",
+        "\x1b[?1;2u",
+        "\x1b[>1u",
+        "\x1b[?1",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const flags = parseKittyKeyboardReply(bytes) orelse return;
 
             var output: [32]u8 = undefined;
@@ -1477,17 +1510,14 @@ test "fuzz parseKittyKeyboardReply" {
             try w.print("\x1b[?{d}u", .{flags.bits()});
             try std.testing.expectEqual(flags, parseKittyKeyboardReply(w.buffered()).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[?0u"),
-        corpus.entry("\x1b[?1u"),
-        corpus.entry("\x1b[?31u"),
-        corpus.entry("\x1b[?32u"),
-        corpus.entry("\x1b[?255u"),
-        corpus.entry("\x1b[?256u"),
-        corpus.entry("\x1b[?1;2u"),
-        corpus.entry("\x1b[>1u"),
-        corpus.entry("\x1b[?1"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz parseColorReply" {
@@ -1496,11 +1526,23 @@ test "fuzz parseColorReply" {
     // to a reply that parses to the same colour. That is a real check on the
     // scaling arithmetic: a short channel that scaled wrongly would not come
     // back to itself through the four-digit form.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b]11;rgb:0000/0000/0000\x1b\\",
+        "\x1b]10;rgb:ffff/ffff/ffff\x1b\\",
+        "\x1b]12;rgb:1c1c/1c1c/1c1c\x07",
+        "\x1b]11;rgb:f/0/0\x1b\\",
+        "\x1b]11;rgb:80/00/00\x1b\\",
+        "\x1b]11;rgb:f/00/8080\x1b\\",
+        "\x1b]11;rgb:AB/CD/EF\x1b\\",
+        "\x1b]11;rgb:00000/00/00\x1b\\",
+        "\x1b]11;rgb:0/0/0/0\x1b\\",
+        "\x1b]13;rgb:0/0/0\x1b\\",
+        "\x1b]11;#ff0000\x1b\\",
+        "\x1b]11;?\x1b\\",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const report = parseColorReply(bytes) orelse return;
 
             var output: [64]u8 = undefined;
@@ -1508,20 +1550,14 @@ test "fuzz parseColorReply" {
             try setColor(&w, report.target, report.color);
             try std.testing.expectEqual(report, parseColorReply(w.buffered()).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b]11;rgb:0000/0000/0000\x1b\\"),
-        corpus.entry("\x1b]10;rgb:ffff/ffff/ffff\x1b\\"),
-        corpus.entry("\x1b]12;rgb:1c1c/1c1c/1c1c\x07"),
-        corpus.entry("\x1b]11;rgb:f/0/0\x1b\\"),
-        corpus.entry("\x1b]11;rgb:80/00/00\x1b\\"),
-        corpus.entry("\x1b]11;rgb:f/00/8080\x1b\\"),
-        corpus.entry("\x1b]11;rgb:AB/CD/EF\x1b\\"),
-        corpus.entry("\x1b]11;rgb:00000/00/00\x1b\\"),
-        corpus.entry("\x1b]11;rgb:0/0/0/0\x1b\\"),
-        corpus.entry("\x1b]13;rgb:0/0/0\x1b\\"),
-        corpus.entry("\x1b]11;#ff0000\x1b\\"),
-        corpus.entry("\x1b]11;?\x1b\\"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "fuzz parsePaletteReply" {
@@ -1530,11 +1566,23 @@ test "fuzz parsePaletteReply" {
     // to a reply that parses to the same entry and the same colour. The
     // scaling arithmetic is shared with the dynamic colours; the index is not,
     // and this is what holds it to a byte.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b]4;0;rgb:0000/0000/0000\x1b\\",
+        "\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\",
+        "\x1b]4;1;rgb:cdcd/0000/0000\x07",
+        "\x1b]4;9;rgb:f/0/0\x1b\\",
+        "\x1b]4;9;rgb:AB/cd/ef00\x1b\\",
+        "\x1b]4;256;rgb:0/0/0\x1b\\",
+        "\x1b]4;;rgb:0/0/0\x1b\\",
+        "\x1b]4;1;rgb:0/0/0/0\x1b\\",
+        "\x1b]4;1;#ff0000\x1b\\",
+        "\x1b]4;1;?\x1b\\",
+        "\x1b]104;1\x1b\\",
+        "\x1b]11;rgb:0/0/0\x1b\\",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const report = parsePaletteReply(bytes) orelse return;
 
             var output: [64]u8 = undefined;
@@ -1545,20 +1593,14 @@ test "fuzz parsePaletteReply" {
             // And the reply that is not this one, whatever the bytes said.
             try std.testing.expect(parseColorReply(bytes) == null);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b]4;0;rgb:0000/0000/0000\x1b\\"),
-        corpus.entry("\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\"),
-        corpus.entry("\x1b]4;1;rgb:cdcd/0000/0000\x07"),
-        corpus.entry("\x1b]4;9;rgb:f/0/0\x1b\\"),
-        corpus.entry("\x1b]4;9;rgb:AB/cd/ef00\x1b\\"),
-        corpus.entry("\x1b]4;256;rgb:0/0/0\x1b\\"),
-        corpus.entry("\x1b]4;;rgb:0/0/0\x1b\\"),
-        corpus.entry("\x1b]4;1;rgb:0/0/0/0\x1b\\"),
-        corpus.entry("\x1b]4;1;#ff0000\x1b\\"),
-        corpus.entry("\x1b]4;1;?\x1b\\"),
-        corpus.entry("\x1b]104;1\x1b\\"),
-        corpus.entry("\x1b]11;rgb:0/0/0\x1b\\"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
 
 test "queryWindowSize asks with the number for each size" {
@@ -1632,11 +1674,19 @@ test "parseWindowSize returns null on anything it does not recognise" {
 test "fuzz parseWindowSize" {
     // The property: no input panics or overflows, and every report that
     // parses renders back to a report that parses to the same size.
-    try std.testing.fuzz({}, struct {
-        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
-            var input: [64]u8 = undefined;
-            const bytes = input[0..smith.sliceWithHash(&input, 0)];
-
+    const fuzz = @import("testing/fuzz.zig");
+    const examples = [_][]const u8{
+        "\x1b[8;24;80t",
+        "\x1b[6;16;8t",
+        "\x1b[4;0;0t",
+        "\x1b[9;4294967295;4294967295t",
+        "\x1b[8;4294967296;80t",
+        "\x1b[7;24;80t",
+        "\x1b[48;24;80t",
+        "\x1b[8;24;80",
+    };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
             const size = parseWindowSize(bytes) orelse return;
 
             var output: [64]u8 = undefined;
@@ -1648,14 +1698,12 @@ test "fuzz parseWindowSize" {
             });
             try std.testing.expectEqual(size, parseWindowSize(w.buffered()).?);
         }
-    }.one, .{ .corpus = &.{
-        corpus.entry("\x1b[8;24;80t"),
-        corpus.entry("\x1b[6;16;8t"),
-        corpus.entry("\x1b[4;0;0t"),
-        corpus.entry("\x1b[9;4294967295;4294967295t"),
-        corpus.entry("\x1b[8;4294967296;80t"),
-        corpus.entry("\x1b[7;24;80t"),
-        corpus.entry("\x1b[48;24;80t"),
-        corpus.entry("\x1b[8;24;80"),
-    } });
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.input(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
 }
