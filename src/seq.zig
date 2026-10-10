@@ -6,6 +6,7 @@
 //! writing the bytes directly than by a half-typed byte vocabulary.
 
 const std = @import("std");
+const aegis = @import("aegis");
 
 /// `ESC` (0x1b), the first byte of every sequence this package writes.
 pub const esc: u8 = 0x1b;
@@ -158,8 +159,8 @@ pub fn scanInt(comptime T: type, bytes: []const u8) ?Scan(T) {
     var value: T = 0;
     var len: usize = 0;
     while (len < bytes.len and bytes[len] >= '0' and bytes[len] <= '9') : (len += 1) {
-        value = std.math.mul(T, value, 10) catch return null;
-        value = std.math.add(T, value, @as(T, bytes[len] - '0')) catch return null;
+        const scaled = aegis.int.Checked(T).init(value).mul(10) catch return null;
+        value = (scaled.add(@as(T, bytes[len] - '0')) catch return null).raw();
     }
     if (len == 0) return null;
     return .{ .value = value, .len = len };
@@ -249,7 +250,7 @@ test "decimalLen is the length writeInt spells, at every width" {
             try writeInt(&c, v);
             try std.testing.expectEqual(w.buffered().len, c.n);
         }
-        value = std.math.mul(u64, value, 10) catch break;
+        value = (aegis.int.Checked(u64).init(value).mul(10) catch break).raw();
     }
     try std.testing.expectEqual(@as(usize, 20), decimalLen(std.math.maxInt(u64)));
     try std.testing.expectEqual(@as(usize, 1), decimalLen(0));

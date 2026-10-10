@@ -7,6 +7,7 @@
 //! through byte for byte. `printable` strips controls only when asked.
 
 const std = @import("std");
+const aegis = @import("aegis");
 const corpus = @import("shakedown").corpus;
 const framing = @import("framing.zig");
 const seq = @import("seq.zig");
@@ -351,10 +352,10 @@ pub fn parseTextSize(body: []const u8) ?SizedText {
         // Digits only, so the one error left is a value past a byte.
         const value = std.fmt.parseInt(u8, pair[2..], 10) catch return null;
         switch (pair[0]) {
-            's' => size.scale = std.math.cast(u3, value) orelse return null,
-            'w' => size.width = std.math.cast(u3, value) orelse return null,
-            'n' => size.numerator = std.math.cast(u4, value) orelse return null,
-            'd' => size.denominator = std.math.cast(u4, value) orelse return null,
+            's' => size.scale = aegis.int.cast(u3, value) catch return null,
+            'w' => size.width = aegis.int.cast(u3, value) catch return null,
+            'n' => size.numerator = aegis.int.cast(u4, value) catch return null,
+            'd' => size.denominator = aegis.int.cast(u4, value) catch return null,
             'v' => size.vertical = std.enums.fromInt(VerticalAlign, value) orelse return null,
             'h' => size.horizontal = std.enums.fromInt(HorizontalAlign, value) orelse return null,
             else => {},

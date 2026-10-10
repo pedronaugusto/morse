@@ -1224,7 +1224,7 @@ fn keySigned(c: Command, name: u8) ?i32 {
     const digits = if (negative) value[1..] else value;
     const scan = seq.scanInt(i64, digits) orelse return null;
     if (scan.len != digits.len) return null;
-    return std.math.cast(i32, if (negative) -scan.value else scan.value);
+    return aegis.int.cast(i32, if (negative) -scan.value else scan.value) catch null;
 }
 
 /// Which required animation image the command names.

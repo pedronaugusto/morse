@@ -32,6 +32,7 @@
 //! anything.
 
 const std = @import("std");
+const aegis = @import("aegis");
 const corpus = @import("shakedown").corpus;
 const seq = @import("seq.zig");
 
@@ -283,7 +284,7 @@ pub fn parseMouseRxvt(bytes: []const u8) ?MouseEvent {
     if (code.value < x10_bias or x.value < x10_bias or y.value < x10_bias) return null;
     // The code is one byte's worth of flags however wide the field it arrived
     // in, so a larger number is not a report this package hands back.
-    const flags = std.math.cast(u8, code.value - x10_bias) orelse return null;
+    const flags = aegis.int.cast(u8, code.value - x10_bias) catch return null;
     const button = buttonFromCode(flags) orelse return null;
 
     return .{

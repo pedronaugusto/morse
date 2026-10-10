@@ -36,6 +36,7 @@
 //! what held, and stops there.
 
 const std = @import("std");
+const aegis = @import("aegis");
 const utf8 = @import("utf8.zig");
 const corpus = @import("shakedown").corpus;
 const framing = @import("framing.zig");
@@ -1027,14 +1028,14 @@ const Win32Report = union(enum) {
 fn win32Event(params: Params, console: *win32.ConsoleState) ?Win32Report {
     if (params.count > 6) return null;
 
-    const vk = std.math.cast(u16, params.get(0, 0) orelse 0) orelse return null;
+    const vk = aegis.int.cast(u16, params.get(0, 0) orelse 0) catch return null;
     // The scan code names a position rather than a key, so it is read only to
     // be checked and then discarded.
-    _ = std.math.cast(u16, params.get(1, 0) orelse 0) orelse return null;
-    const uc = std.math.cast(u16, params.get(2, 0) orelse 0) orelse return null;
+    _ = aegis.int.cast(u16, params.get(1, 0) orelse 0) catch return null;
+    const uc = aegis.int.cast(u16, params.get(2, 0) orelse 0) catch return null;
     const down = (params.get(3, 0) orelse 0) != 0;
     const state = params.get(4, 0) orelse 0;
-    const repeat = std.math.cast(u16, params.get(5, 0) orelse 1) orelse return null;
+    const repeat = aegis.int.cast(u16, params.get(5, 0) orelse 1) catch return null;
 
     const ev = switch (console.decode(vk, uc, state, down)) {
         .key => |ev| ev,

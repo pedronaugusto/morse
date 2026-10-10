@@ -28,6 +28,7 @@
 //! environment, or picks a profile on its own.
 
 const std = @import("std");
+const aegis = @import("aegis");
 const seq = @import("seq.zig");
 
 const Writer = std.Io.Writer;
@@ -901,7 +902,7 @@ fn sgrNumber(field: []const u8) ?u32 {
 
 /// The same, for a value that has to fit in a byte: a channel or an index.
 fn sgrByte(field: []const u8) ?u8 {
-    return std.math.cast(u8, sgrNumber(field) orelse return null);
+    return aegis.int.cast(u8, sgrNumber(field) orelse return null) catch null;
 }
 
 /// The underline a `4:n` names. A style past the five SGR numbers is drawn
