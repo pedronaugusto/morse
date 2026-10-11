@@ -8,9 +8,9 @@
 //! holds, what is in its image storage. Then it runs the other way, and the
 //! emulator's replies go through the parsers in this package.
 //!
-//! The emulator is pinned to one commit in this directory's own manifest,
-//! so morse's manifest never names it: `zig build test` fetches nothing for
-//! it, and the module a consumer imports still has no dependencies.
+//! The emulator is a development dependency, pinned to one commit in morse's
+//! manifest, so no build of a program on morse fetches anything for it, and
+//! the module a consumer imports still has no dependencies.
 //!
 //! Where the emulator does not implement something `morse` writes, the test
 //! says which and skips, rather than asserting nothing and calling it a

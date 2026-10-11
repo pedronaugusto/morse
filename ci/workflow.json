@@ -14,8 +14,8 @@
   "jobs": [
     {
       "name": "conformance",
-      "step": "test",
-      "directory": "conformance",
+      "step": "conformance",
+      "args": ["-Dconformance"],
       "os": ["ubuntu-latest", "macos-latest"],
       "setup": false
     }

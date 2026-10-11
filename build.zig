@@ -83,20 +83,46 @@ pub fn dev(b: *std.Build, tools: type) void {
     //
     // The suite above pins every writer to its exact bytes, which says morse
     // writes what the specifications say. It cannot say a terminal agrees.
-    // The build under conformance/ builds a terminal emulator from source,
-    // feeds it what the writers produce, and asserts on the state the
-    // emulator ends up in -- then reads its replies back through this
-    // package's parsers. It is a build of its own, with the emulator in its
-    // own manifest: see conformance/build.zig for why.
+    // conformance/main.zig feeds what the writers produce to a terminal
+    // emulator built from source, asserts on the state the emulator ends up
+    // in, and reads its replies back through this package's parsers. The
+    // emulator is a development dependency: a program on morse never fetches
+    // it, and it is fetched here only when this step is asked for.
     //=====================================================================
 
-    const conformance_step = b.step("conformance", "Run the writers through a terminal emulator");
-    const conformance = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test" });
-    conformance.setCwd(p.path("conformance"));
-    conformance.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
-    if (test_filter) |filter| conformance.addArg(b.fmt("-Dtest-filter={s}", .{filter}));
-    conformance.has_side_effects = true;
-    conformance_step.dependOn(&conformance.step);
+    // The emulator's build script accepts one Zig, and Zig fetches and compiles it
+    // for any build whose script asks for it, whichever step runs. Only a build
+    // that asks for conformance does: `bay conformance -Dconformance`.
+    const conformance_step = b.step("conformance", "Run the writers through a terminal emulator (needs -Dconformance)");
+    const with_emulator = b.option(bool, "conformance", "Fetch the terminal emulator and build the conformance tests") orelse false;
+    if (!with_emulator) {
+        conformance_step.dependOn(&b.addFail("the conformance step needs the emulator, which only a build asked with -Dconformance fetches: bay conformance -Dconformance").step);
+    } else if (b.dependencyLazy("ghostty", .{
+        .target = target,
+        .optimize = optimize,
+        // The emulator's SIMD paths are vendored C and C++, and nothing
+        // under test here goes through them. morse's own promise is that
+        // building it involves no C toolchain; the build that checks morse
+        // should not quietly need one.
+        .simd = false,
+    })) |emulator| {
+        const conformance = b.addTest(.{
+            .name = "morse-conformance",
+            .filters = if (test_filter) |filter| &.{filter} else &.{},
+            .root_module = b.createModule(.{
+                .root_source_file = p.path("conformance/main.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "morse", .module = module },
+                    .{ .name = "vt", .module = emulator.module("ghostty-vt") },
+                },
+            }),
+        });
+        conformance_step.dependOn(&b.addRunArtifact(conformance).step);
+    } else |_| {
+        // Not fetched yet: Zig fetches the emulator and configures again.
+    }
 
     // Test support and measuring stay outside the consumer module. shakedown
     // is bound to morse's aegis, so a binary links one.
