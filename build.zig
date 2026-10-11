@@ -1,45 +1,46 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) !void {
-    // lazyImport compares every package of the dependency tree at comptime;
-    // a large tree runs past the default quota of 1000 branches.
-    @setEvalBranchQuota(100_000);
+/// What a project that depends on morse builds: the `morse` module, pure Zig
+/// and aegis scalar types, nothing to link. The tests, examples, conformance and
+/// gate are `dev`'s.
+pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-
-    //=====================================================================
-    // The module. Pure Zig and aegis scalar types, nothing to link.
-    //=====================================================================
-
     const module = b.addModule("morse", .{
         .root_source_file = b.path("src/morse.zig"),
         .target = target,
         .optimize = optimize,
     });
+    module.addImport("aegis", b.dependency("aegis", .{ .target = target, .optimize = optimize }).module("aegis"));
+}
 
-    const aegis = b.dependency("aegis", .{ .target = target, .optimize = optimize });
-    module.addImport("aegis", aegis.module("aegis"));
-
-    // Everything below is morse's own tree: a program that depends on morse
-    // builds the module and its aegis dependency; no checkout-only tools.
-    if (b.pkg_hash.len != 0) return;
+/// morse's development: its tests, examples, conformance and benchmarks under
+/// preflight's gate, with shakedown bound to morse's aegis. Run through bay.
+pub fn dev(b: *std.Build, tools: type) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const test_filter = b.option([]const u8, "test-filter", "Select tests by name");
+    const package = b.dependency("morse", .{ .target = target, .optimize = optimize });
+    const p = package.builder;
+    const module = package.module("morse");
+    const aegis_dependency = p.dependency("aegis", .{ .target = target, .optimize = optimize });
+    const aegis = aegis_dependency.module("aegis");
 
     //=====================================================================
     // Tests. The suite lives beside the code it tests, so the root module's
     // test block is what pulls every file in.
     //=====================================================================
 
-    const test_filter = b.option([]const u8, "test-filter", "Select tests by name");
     const tests = b.addTest(.{
         .name = "morse-tests",
         .filters = if (test_filter) |filter| &.{filter} else &.{},
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/tests.zig"),
+            .root_source_file = p.path("src/tests.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    tests.root_module.addImport("aegis", aegis.module("aegis"));
+    tests.root_module.addImport("aegis", aegis);
     const test_step = b.step("test", "Run the morse tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
@@ -66,7 +67,7 @@ pub fn build(b: *std.Build) !void {
         const example = b.addExecutable(.{
             .name = std.Io.Dir.path.stem(source),
             .root_module = b.createModule(.{
-                .root_source_file = b.path(source),
+                .root_source_file = p.path(source),
                 .target = target,
                 .optimize = optimize,
                 .imports = &.{.{ .name = "morse", .module = module }},
@@ -91,26 +92,16 @@ pub fn build(b: *std.Build) !void {
 
     const conformance_step = b.step("conformance", "Run the writers through a terminal emulator");
     const conformance = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test" });
-    conformance.setCwd(b.path("conformance"));
+    conformance.setCwd(p.path("conformance"));
     conformance.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
     if (test_filter) |filter| conformance.addArg(b.fmt("-Dtest-filter={s}", .{filter}));
     conformance.has_side_effects = true;
     conformance_step.dependOn(&conformance.step);
 
-    //=====================================================================
-    // CI wiring, and the test doubles
-    //
-    // preflight and shakedown are lazy, and only morse's own tree asks for
-    // them, both in one configure pass. A lazy package's build.zig can only
-    // be reached through `lazyImport`: a plain `@import` of it fails to
-    // compile in any project that depends on morse and has not fetched
-    // preflight, which is every such project.
-    //=====================================================================
-
-    const ci = b.lazyImport(@This(), "preflight");
-    // Test support and measuring stay outside the consumer module.
-    const shakedown = try b.dependencyLazy("shakedown", .{ .target = target, .optimize = optimize, .aegis = .consumer });
-    if (b.lazyImport(@This(), "shakedown")) |shakedown_build| shakedown_build.useAegis(shakedown, aegis.module("aegis"));
+    // Test support and measuring stay outside the consumer module. shakedown
+    // is bound to morse's aegis, so a binary links one.
+    const shakedown = b.dependency("shakedown", .{ .target = target, .optimize = optimize, .aegis = .consumer });
+    tools.shakedown.useAegis(shakedown, aegis);
     tests.root_module.addImport("shakedown", shakedown.module("shakedown"));
     const measurement_options = b.addOptions();
     measurement_options.addOption([]const u8, "commit", "test");
@@ -120,7 +111,7 @@ pub fn build(b: *std.Build) !void {
         .name = "measurement-tests",
         .filters = if (test_filter) |filter| &.{filter} else &.{},
         .root_module = b.createModule(.{
-            .root_source_file = b.path("bench/budgets_test.zig"),
+            .root_source_file = p.path("bench/budgets_test.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -132,31 +123,32 @@ pub fn build(b: *std.Build) !void {
     measurement_tests.root_module.addOptions("preflight_bench_options", measurement_options);
     test_step.dependOn(&b.addRunArtifact(measurement_tests).step);
     check_step.dependOn(&measurement_tests.step);
-    if (ci) |preflight| {
-        preflight.addCi(b, .{
-            .tests = test_step,
-            .portable_tests = true,
-            // Workloads only; shakedown measures and preflight wires the steps.
-            .bench = .{
-                .programs = &.{.{ .name = "budgets", .source = "bench/budgets.zig" }},
-                .imports = benchImports,
-                .target = target,
-                .optimize = optimize,
-            },
-        });
-        // The build a consumer gets: nothing morse fetches for itself.
-        preflight.addConsumerCheck(b, .{ .package = "morse", .program = b.path("ci/consumer.zig"), .packages = &.{aegis} });
-    }
+    tools.preflight.addCi(b, p, .{
+        .tests = test_step,
+        .portable_tests = true,
+        // Workloads only; shakedown measures and preflight wires the steps.
+        .bench = .{
+            .programs = &.{.{ .name = "budgets", .source = "bench/budgets.zig" }},
+            .imports = benchImports,
+            .target = target,
+            .optimize = optimize,
+        },
+    });
+    // The build a consumer gets: nothing morse fetches for itself.
+    tools.preflight.addConsumerCheck(b, p, .{ .package = "morse", .program = p.path("ci/consumer.zig"), .packages = &.{aegis_dependency} });
 }
 
 /// morse in the mode a benchmark builds in: an imported module keeps its own
 /// mode, so a ReleaseFast benchmark over the Debug module would time the
-/// Debug module.
+/// Debug module. `b` is the development build.
 fn benchImports(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize) []const std.Build.Module.Import {
-    const morse = b.createModule(.{ .root_source_file = b.path("src/morse.zig"), .target = target, .optimize = optimize });
-    morse.addImport("aegis", b.dependency("aegis", .{ .target = target, .optimize = optimize }).module("aegis"));
-    // Select morse's published measuring pin rather than preflight's default.
-    const shakedown = b.dependency("shakedown", .{ .target = target, .optimize = optimize });
+    const p = b.dependency("morse", .{ .target = target, .optimize = optimize }).builder;
+    const aegis = p.dependency("aegis", .{ .target = target, .optimize = optimize }).module("aegis");
+    const morse = b.createModule(.{ .root_source_file = p.path("src/morse.zig"), .target = target, .optimize = optimize });
+    morse.addImport("aegis", aegis);
+    // The same binding as `useAegis`, which only a `dev` has the tools for: one aegis is linked.
+    const shakedown = b.dependency("shakedown", .{ .target = target, .optimize = optimize, .aegis = .consumer });
+    shakedown.module("shakedown").addImport("aegis", aegis);
     return b.allocator.dupe(std.Build.Module.Import, &.{
         .{ .name = "morse", .module = morse },
         .{ .name = "shakedown", .module = shakedown.module("shakedown") },

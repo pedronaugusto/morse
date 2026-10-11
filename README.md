@@ -118,27 +118,29 @@ caller supplies deadlines because a terminal need not answer.
 
 - [Zig](https://ziglang.org) 0.17.0 and its standard library; nothing else is
   linked into the module.
-- [shakedown](https://github.com/pedronaugusto/shakedown) supplies test support and benchmark measurement.
-- [preflight](https://github.com/pedronaugusto/preflight) runs the source checks,
-  the tests and CI.
+- [bay](https://github.com/pedronaugusto/bay) runs morse's development.
+  [shakedown](https://github.com/pedronaugusto/shakedown) (test support and
+  benchmark measurement) and [preflight](https://github.com/pedronaugusto/preflight)
+  (the source checks, the tests and CI) are dev dependencies through bay, which a
+  project that depends on morse never sees.
 - [Ghostty](https://github.com/ghostty-org/ghostty)'s `libghostty-vt` is the
   emulator the conformance build writes to, named only in `conformance/build.zig.zon`.
 
 ## Testing
 
-Local build scripts clear `.zig-cache/{o,h,z,tmp}` above the measured cap through preflight; run `zig build cache` before direct Zig builds (only a rebuild is lost).
+Local build scripts clear `.zig-cache/{o,h,z,tmp}` above the measured cap through preflight; run `bay cache` before direct Zig builds (only a rebuild is lost).
 
-`zig build test` runs `zig build lint` first, then the unit suite and both examples, in
+`bay test` runs `bay lint` first, then the unit suite and both examples, in
 Debug by default; `-Dci-lint=false` leaves the lint step out. Tests check writer bytes,
 malformed input, split framing, console records and parser round trips.
-`zig build examples` runs the examples separately; `zig build check` compiles the tests
-and examples without running them. `zig build check-consumer`, part of lint, builds a
+`bay examples` runs the examples separately; `bay check` compiles the tests
+and examples without running them. `bay check-consumer`, part of lint, builds a
 project that depends on morse with no packages fetched.
 
-`zig build bench` measures the workloads in `bench/` in ReleaseFast through
+`bay bench` measures the workloads in `bench/` in ReleaseFast through
 `shakedown.bench`, emitting JSON lines with samples, best, median, p99, throughput
-and build provenance. `zig build bench-build` compiles them without running them.
-Local `zig build test` smoke-runs every row once with small inputs; hosted CI
+and build provenance. `bay bench-build` compiles them without running them.
+Local `bay test` smoke-runs every row once with small inputs; hosted CI
 compiles the benchmarks and leaves timings to manual runs. Byte counts and buffer
 bounds remain unit tests. Timing results have no pass/fail ceilings.
 
@@ -147,7 +149,7 @@ performed: calls, moves, images or bytes; sample values are always nanoseconds p
 unit. A smoke image is 32×32 RGBA; a measured image is 512×512. The parser grid
 keeps two input streams, three buffer sizes and four read sizes.
 
-`zig build bench-ab -- --base <commit> --program budgets --row <prefix> --pairs 5`
+`bay bench-ab -- --base <commit> --program budgets --row <prefix> --pairs 5`
 uses preflight's interleaved runner and shakedown's comparison. Both revisions must
 already implement `bench-build` and JSONL row selection; revisions before this
 migration use the old tab-separated output and cannot be compared by that command.
@@ -161,7 +163,7 @@ the clock policy. There is no ThreadSanitizer job.
 
 Compile-only jobs cover `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-windows-gnu`,
 `aarch64-windows-gnu`, `x86_64-macos` and `aarch64-macos`. Separate Ubuntu and macOS
-jobs run the conformance build under `conformance/` (`zig build conformance` locally)
+jobs run the conformance build under `conformance/` (`bay conformance` locally)
 on pull requests and merge or release dispatches, not on pushes to `main`. The merge and release
 tiers also run the Debug suite on Zig master on Ubuntu; it never blocks.
 

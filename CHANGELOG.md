@@ -8,6 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking
 
+- morse is developed with [bay](https://github.com/pedronaugusto/bay): preflight and shakedown are dev dependencies, and the tests, examples, conformance and benchmarks are the development build's (`bay test`, `bay conformance`, `bay bench`). What a project that depends on morse builds is unchanged: the `morse` module over aegis.
 - Graphics image IDs, image numbers and placement IDs now use `ImageId`, `ImageNumber` and `PlacementId` throughout commands, deletion ranges, placeholders and replies; construct with `fromRaw` and extract with `raw` at serialization boundaries. `queryGraphics` and `Probe.graphics_id` take nonzero `QueryImageId`, whose constructor rejects zero.
 - Graphics rectangles, frame composition and image dimensions use `Pixels`; placement dimensions use `Cells` and parent offsets use signed `CellOffset`, preserving their representations and wire spelling.
 - `Transmit` and `Frame` file sizes/offsets take `GraphicsBytes`. `Csi.len`, `ControlString.len`, `Reply.copySize` and `Event.copySize` return `ByteCount`; use `raw()` for slice and allocation byte lengths. `Placeholder.placement` takes `PlaceholderPlacement`, constructed with `init`, which rejects values above 0xffffff.
