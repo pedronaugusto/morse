@@ -159,10 +159,8 @@ fn benchImports(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.l
     const aegis = p.dependency("aegis", .{ .target = target, .optimize = optimize }).module("aegis");
     const morse = b.createModule(.{ .root_source_file = p.path("src/morse.zig"), .target = target, .optimize = optimize });
     morse.addImport("aegis", aegis);
-    const shakedown = b.dependency("shakedown", .{ .target = target, .optimize = optimize });
     return b.allocator.dupe(std.Build.Module.Import, &.{
         .{ .name = "morse", .module = morse },
-        .{ .name = "shakedown", .module = shakedown.module("shakedown") },
     }) catch @panic("OOM");
 }
 
