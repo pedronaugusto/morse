@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-12
+
+### Changed
+
+- Pins aegis 0.1.1, preflight 0.3.4 and shakedown 0.2.6.
+
 ## [0.8.0] - 2026-10-12
 
 ### Breaking
@@ -801,7 +807,8 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
-[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/pedronaugusto/morse/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/pedronaugusto/morse/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.7.0
 [0.6.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.6.0
