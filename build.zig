@@ -87,16 +87,31 @@ pub fn dev(b: *std.Build, tools: type) void {
     // feeds it what the writers produce, and asserts on the state the
     // emulator ends up in -- then reads its replies back through this
     // package's parsers. It is a build of its own, with the emulator in its
-    // own manifest: see conformance/build.zig for why.
+    // own manifest: see conformance/build.zig for why. That manifest is
+    // written before the run, naming morse by path and the emulator, which
+    // only this build names.
     //=====================================================================
 
     const conformance_step = b.step("conformance", "Run the writers through a terminal emulator");
-    const conformance = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test" });
-    conformance.setCwd(p.path("conformance"));
-    conformance.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
-    if (test_filter) |filter| conformance.addArg(b.fmt("-Dtest-filter={s}", .{filter}));
-    conformance.has_side_effects = true;
-    conformance_step.dependOn(&conformance.step);
+    const conformance = tools.preflight.addNestedBuild(b, p, .{
+        .directory = "conformance",
+        .name = "morse_conformance",
+        .fingerprint = 0xf96a1a84acde5b1b,
+        .paths = &.{ "build.zig", "build.zig.zon", "main.zig" },
+        .path_dependencies = &.{.{ .name = "morse", .path = ".." }},
+        // Pinned to a commit rather than to a tag, because the step is a
+        // claim about the bytes one revision of one emulator accepted. The
+        // commit is the head of ghostty's `zig-0.17` branch
+        // (ghostty-org/ghostty#14519) until that port reaches its main;
+        // visor's conformance pins the same.
+        .pins = &.{.{
+            .name = "emulator",
+            .url = "git+https://github.com/ghostty-org/ghostty#5147c0a503cdeed7615cce245cdd815ed7a6b692",
+            .hash = "ghostty-1.3.2-dev-5UdBC-lZeAVJbemF7Fz8y5ApP0uA6wTc2uzECn3c6Z_Y",
+        }},
+        .args = if (test_filter) |filter| &.{ "test", b.fmt("-Doptimize={s}", .{@tagName(optimize)}), b.fmt("-Dtest-filter={s}", .{filter}) } else &.{ "test", b.fmt("-Doptimize={s}", .{@tagName(optimize)}) },
+    });
+    conformance_step.dependOn(conformance);
 
     // Test support and measuring stay outside the consumer module. shakedown
     // is bound to morse's aegis, so a binary links one.

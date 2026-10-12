@@ -53,6 +53,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Check text for controls a vector at a time, and have the title, icon name, working directory, hyperlink and notification writers copy their text into the writer's buffer in one pass that checks it; the bytes written are unchanged.
 - Spell style changes once into a stack buffer with a decimal table, pricing the reset spelling by counting instead of formatting it; the bytes written are unchanged.
 - Read single-byte ASCII and plain CSI values without copying them, and resume incomplete sequences after appending new input.
+- The conformance build is assembled under the cache and run there, its manifest written from morse's own pins (preflight's `addNestedBuild`); its `build.zig.zon` is no longer kept in the tree.
+- Pins aegis 0.1.0; developed with preflight 0.3.0 and shakedown 0.2.0.
 
 ### Fixed
 
