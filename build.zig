@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) void {
 }
 
 /// morse's development: its tests, examples, conformance and benchmarks under
-/// preflight's gate, with shakedown bound to morse's aegis. Run through bay.
+/// preflight's gate. Run through bay.
 pub fn dev(b: *std.Build, tools: type) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -113,10 +113,8 @@ pub fn dev(b: *std.Build, tools: type) void {
     });
     conformance_step.dependOn(conformance);
 
-    // Test support and measuring stay outside the consumer module. shakedown
-    // is bound to morse's aegis, so a binary links one.
-    const shakedown = b.dependency("shakedown", .{ .target = target, .optimize = optimize, .aegis = .consumer });
-    tools.shakedown.useAegis(shakedown, aegis);
+    // Test support and measuring stay outside the consumer module.
+    const shakedown = b.dependency("shakedown", .{ .target = target, .optimize = optimize });
     tests.root_module.addImport("shakedown", shakedown.module("shakedown"));
     const measurement_options = b.addOptions();
     measurement_options.addOption([]const u8, "commit", "test");
@@ -161,9 +159,7 @@ fn benchImports(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.l
     const aegis = p.dependency("aegis", .{ .target = target, .optimize = optimize }).module("aegis");
     const morse = b.createModule(.{ .root_source_file = p.path("src/morse.zig"), .target = target, .optimize = optimize });
     morse.addImport("aegis", aegis);
-    // The same binding as `useAegis`, which only a `dev` has the tools for: one aegis is linked.
-    const shakedown = b.dependency("shakedown", .{ .target = target, .optimize = optimize, .aegis = .consumer });
-    shakedown.module("shakedown").addImport("aegis", aegis);
+    const shakedown = b.dependency("shakedown", .{ .target = target, .optimize = optimize });
     return b.allocator.dupe(std.Build.Module.Import, &.{
         .{ .name = "morse", .module = morse },
         .{ .name = "shakedown", .module = shakedown.module("shakedown") },
