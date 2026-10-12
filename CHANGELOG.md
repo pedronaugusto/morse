@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-12
+
 ### Breaking
 
 - morse is developed with [bay](https://github.com/pedronaugusto/bay): preflight and shakedown are dev dependencies, and the tests, examples, conformance and benchmarks are the development build's (`bay test`, `bay conformance`, `bay bench`). What a project that depends on morse builds is unchanged: the `morse` module over aegis.
@@ -799,7 +801,8 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
-[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/pedronaugusto/morse/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.7.0
 [0.6.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.6.0
 [0.5.0]: https://github.com/pedronaugusto/morse/releases/tag/v0.5.0
