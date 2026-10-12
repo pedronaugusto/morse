@@ -45,10 +45,10 @@ const mouse = (events.next() orelse return error.MissingMouse).mouse;
 
 ## Design
 
-The library uses `std` and aegis scalar types and allocates no storage of its own. The conformance step
-pins a Ghostty emulator as a development dependency to check terminal behaviour; it
-is not one of morse's dependencies, so no build of a program on morse fetches or
-compiles it. Writers take a `*std.Io.Writer` and leave flushing to the caller.
+The library uses `std` and aegis scalar types and allocates no storage of its own. The conformance build
+under `conformance/` pins a Ghostty emulator in a manifest of its own to check terminal
+behaviour; morse's manifest does not name it, so no build of a program on morse fetches
+or compiles it. Writers take a `*std.Io.Writer` and leave flushing to the caller.
 Parsers borrow their input; `KeyParser` retains incomplete sequences in a caller-owned
 buffer. Drain each `Events` iterator before feeding more bytes, and consume borrowed
 event data before the next iterator step, feed or flush.
@@ -124,7 +124,7 @@ caller supplies deadlines because a terminal need not answer.
   (the source checks, the tests and CI) are dev dependencies through bay, which a
   project that depends on morse never sees.
 - [Ghostty](https://github.com/ghostty-org/ghostty)'s `libghostty-vt` is the
-  emulator the conformance step writes to, a development dependency.
+  emulator the conformance build writes to, named only in `conformance/build.zig.zon`.
 
 ## Testing
 
@@ -163,8 +163,8 @@ the clock policy. There is no ThreadSanitizer job.
 
 Compile-only jobs cover `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-windows-gnu`,
 `aarch64-windows-gnu`, `x86_64-macos` and `aarch64-macos`. Separate Ubuntu and macOS
-jobs run the conformance step (`bay conformance -Dconformance` locally, which is the
-build that fetches the emulator) on pull requests and merge or release dispatches, not on pushes to `main`. The merge and release
+jobs run the conformance build under `conformance/` (`bay conformance` locally)
+on pull requests and merge or release dispatches, not on pushes to `main`. The merge and release
 tiers also run the Debug suite on Zig master on Ubuntu; it never blocks.
 
 ## Licence
