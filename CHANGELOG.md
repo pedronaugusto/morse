@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The README no longer calls the Zig 0.17 port unreleased; it shipped in 0.8.0.
+
 ## [0.8.2] - 2026-10-12
 
 ### Changed
