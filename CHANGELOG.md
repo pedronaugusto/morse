@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Fuzz properties for `parseCsi` and `Reply.parse`, the two parsers of what a terminal sends that had none: what they frame or borrow lies inside the bytes, and a framed sequence frames again the same.
+
 ### Changed
 
 - The parsers' fuzz properties take their input from shakedown's `gen.mutated`, which is what `testing/fuzz.zig` held: a failure now shrinks toward the parser's first example, where it shrank toward empty input.

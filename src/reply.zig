@@ -210,3 +210,24 @@ test "Reply.copy keeps every borrowed arm after its source is overwritten" {
     try testing.expectEqual(@as(usize, 0), value.copySize().raw());
     try testing.expectEqualDeep(value, try value.copy(&.{}));
 }
+
+test "fuzz reading a reply: any sequence is one reply or none, and what it borrows lies inside it" {
+    const fuzz = @import("shakedown");
+    const examples = [_][]const u8{ "\x1b[?2026;2$y", "\x1b[>1;4000;29c", "\x1bP>|ghostty 1.3\x1b\\", "\x1b]4;1;rgb:f3/8b/a8\x1b\\", "\x1b_Gi=7;EBADPNG:bad\x1b\\", "\x1b]52;c;aGk=\x07" };
+    const property = struct {
+        fn holds(bytes: []const u8) !void {
+            const reply = Reply.parse(bytes) orelse return;
+            const borrowed = reply.borrowed();
+            if (borrowed.len == 0) return;
+            try testing.expect(@intFromPtr(borrowed.ptr) >= @intFromPtr(bytes.ptr));
+            try testing.expect(@intFromPtr(borrowed.ptr) + borrowed.len <= @intFromPtr(bytes.ptr) + bytes.len);
+        }
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [96]u8 = undefined;
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(testing.allocator, {}, property.body, .{});
+}

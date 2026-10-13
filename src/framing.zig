@@ -214,3 +214,34 @@ test "a control string not all here yet is not framed" {
         try testing.expect(parseControlString(bytes) == null);
     }
 }
+
+test "fuzz framing a control sequence: what it frames lies inside the bytes, and frames again the same" {
+    const fuzz = @import("shakedown");
+    const examples = [_][]const u8{ "\x1b[?62;4;22c", "\x1b[2 q", "\x1b[12;40R", "\x1b[<0;10;5M", "\x1b[" };
+    const property = struct {
+        fn inside(bytes: []const u8, part: []const u8) bool {
+            if (part.len == 0) return true;
+            return @intFromPtr(part.ptr) >= @intFromPtr(bytes.ptr) and @intFromPtr(part.ptr) + part.len <= @intFromPtr(bytes.ptr) + bytes.len;
+        }
+
+        fn holds(bytes: []const u8) !void {
+            const csi = parseCsi(bytes) orelse return;
+            const len = csi.len.raw();
+            try std.testing.expect(len >= 2 and len <= bytes.len);
+            try std.testing.expect(inside(bytes[0..len], csi.params));
+            try std.testing.expect(inside(bytes[0..len], csi.intermediates));
+            // An abandoned sequence ends in front of the byte that abandoned it, so alone it is not yet whole.
+            if (csi.final == 0) return;
+            const again = parseCsi(bytes[0..len]) orelse return error.TestUnexpectedResult;
+            try std.testing.expectEqual(len, again.len.raw());
+            try std.testing.expectEqual(csi.final, again.final);
+        }
+
+        fn body(_: void, case: *fuzz.Case) !void {
+            var input: [64]u8 = undefined;
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
+        }
+    };
+    for (examples) |example| try property.holds(example);
+    try fuzz.check(std.testing.allocator, {}, property.body, .{});
+}
