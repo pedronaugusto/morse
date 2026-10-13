@@ -2,7 +2,7 @@
 
 morse writes terminal control sequences and decodes terminal input in Zig. Typed writers
 and parsers cover screen commands, keys, mouse reports and query replies, including
-input split across reads. The Zig 0.17 changes are work in progress and unreleased.
+input split across reads.
 
 ## Install
 
