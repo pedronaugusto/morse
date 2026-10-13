@@ -597,7 +597,7 @@ test "parseSixelGraphics reads xterm's answers and its refusals" {
 test "fuzz parseSixelGraphics" {
     // The property: no input panics or overflows, and every report that
     // parses writes back, values and all, to a report that parses the same.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[?1;0;256S",
         "\x1b[?2;0;1000;1000S",
@@ -621,7 +621,7 @@ test "fuzz parseSixelGraphics" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);

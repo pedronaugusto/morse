@@ -1156,7 +1156,7 @@ test "parseModifyKeysReply returns null on anything it does not recognise" {
 test "fuzz parseModifyKeysReply" {
     // The property: no input panics or overflows, and whatever is accepted
     // writes back the bytes it was read from.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[>4;2m",
         "\x1b[>0;0m",
@@ -1179,7 +1179,7 @@ test "fuzz parseModifyKeysReply" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [32]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -1382,7 +1382,7 @@ test "fuzz parseDeviceAttributes" {
     // The property: no input panics or overflows, and every reply that parses
     // renders back to a reply that parses to the same attributes. A terminal
     // writes these; the round trip is against that renderer.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[?1;2c",
         "\x1b[?62;1;6;9;15;22;29c",
@@ -1411,7 +1411,7 @@ test "fuzz parseDeviceAttributes" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -1422,7 +1422,7 @@ test "fuzz parseSecondaryDeviceAttributes" {
     // The property: no input panics or overflows, and every reply that parses
     // renders back -- always in the three-parameter form, since a missing
     // keyboard field means zero -- to a reply that parses the same.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[>0;276;0c",
         "\x1b[>1;4000c",
@@ -1445,7 +1445,7 @@ test "fuzz parseSecondaryDeviceAttributes" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -1457,7 +1457,7 @@ test "fuzz parseVersion" {
     // sub-slice of the bytes it was read from, and the same bytes parse the
     // same way twice. A round trip would prove less than it looks: the name is
     // free-form, so re-rendering it is only concatenation.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1bP>|xterm(390)\x1b\\",
         "\x1bP>|name(1.16.2)\x07",
@@ -1478,7 +1478,7 @@ test "fuzz parseVersion" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -1489,7 +1489,7 @@ test "fuzz parseKittyKeyboardReply" {
     // The property: no input panics or overflows, every set of flags that
     // parses is within the five bits the protocol defines, and rendering it
     // back gives a reply that parses to the same flags.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[?0u",
         "\x1b[?1u",
@@ -1513,7 +1513,7 @@ test "fuzz parseKittyKeyboardReply" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -1526,7 +1526,7 @@ test "fuzz parseColorReply" {
     // to a reply that parses to the same colour. That is a real check on the
     // scaling arithmetic: a short channel that scaled wrongly would not come
     // back to itself through the four-digit form.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b]11;rgb:0000/0000/0000\x1b\\",
         "\x1b]10;rgb:ffff/ffff/ffff\x1b\\",
@@ -1553,7 +1553,7 @@ test "fuzz parseColorReply" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -1566,7 +1566,7 @@ test "fuzz parsePaletteReply" {
     // to a reply that parses to the same entry and the same colour. The
     // scaling arithmetic is shared with the dynamic colours; the index is not,
     // and this is what holds it to a byte.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b]4;0;rgb:0000/0000/0000\x1b\\",
         "\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\",
@@ -1596,7 +1596,7 @@ test "fuzz parsePaletteReply" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -1674,7 +1674,7 @@ test "parseWindowSize returns null on anything it does not recognise" {
 test "fuzz parseWindowSize" {
     // The property: no input panics or overflows, and every report that
     // parses renders back to a report that parses to the same size.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[8;24;80t",
         "\x1b[6;16;8t",
@@ -1701,7 +1701,7 @@ test "fuzz parseWindowSize" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);

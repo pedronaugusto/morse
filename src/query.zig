@@ -434,7 +434,7 @@ test "fuzz parseModeReply" {
     // The property: no input panics or overflows, and every reply that parses
     // renders back to a reply that parses to the same report. A terminal
     // writes these; the round trip is against that renderer.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[?2026;1$y",
         "\x1b[?0;0$y",
@@ -457,7 +457,7 @@ test "fuzz parseModeReply" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -467,7 +467,7 @@ test "fuzz parseModeReply" {
 test "fuzz parseCursorPosition" {
     // The property: no input panics or overflows, and every report that parses
     // renders back to a report that parses to the same position.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[12;40R",
         "\x1b[1;1R",
@@ -490,7 +490,7 @@ test "fuzz parseCursorPosition" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -502,7 +502,7 @@ test "fuzz parseExtendedCursorPosition" {
     // parses renders back to a report that parses to the same position --
     // the page included, which is the field that tells this report from the
     // plain one.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[?12;40;1R",
         "\x1b[?1;1;1R",
@@ -528,7 +528,7 @@ test "fuzz parseExtendedCursorPosition" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -581,7 +581,7 @@ test "the colour scheme report is not a mode report and the reverse" {
 test "fuzz parseColorSchemeReply" {
     // The property: no input panics or overflows, and every report that
     // parses renders back to a report that parses to the same scheme.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[?997;1n",
         "\x1b[?997;2n",
@@ -605,7 +605,7 @@ test "fuzz parseColorSchemeReply" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);

@@ -1391,7 +1391,7 @@ test "fuzz ConsoleDecoder" {
     // carries valid UTF-8 and never a surrogate, a mouse report is inside the
     // coordinate space, and the same record translates the same way twice
     // through a decoder that has seen nothing else.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const property = struct {
         fn holds(a: u16, b: u16, c: u16, d: u16, state: u32) !void {
             const records = [_]ConsoleRecord{
@@ -1469,7 +1469,7 @@ test "fuzz a run of records through one decoder" {
     // left-Ctrl press it holds for AltGr is never lost: unless the record
     // after it is AltGr's right-Alt press, the Ctrl press is the first thing
     // that record gives back, or what `flush` gives back after the last one.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const property = struct {
         fn holds(report_key_up: bool, records: []const ConsoleKeyRecord) !void {
             var decoder: ConsoleDecoder = .{ .report_key_up = report_key_up };

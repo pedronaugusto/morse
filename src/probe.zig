@@ -666,7 +666,7 @@ test "the question an event answers is the question its bytes match" {
 test "fuzz matches" {
     // The property: arbitrary bytes never panic and never answer two
     // questions at once, whatever they happen to look like.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[?62;52;c",
         "\x1b[>1;4000;48c",
@@ -694,7 +694,7 @@ test "fuzz matches" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);

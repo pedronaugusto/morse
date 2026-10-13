@@ -2526,7 +2526,7 @@ test "fuzz KeyParser" {
     // progress -- a feed that is run to null either empties the buffer or
     // leaves a partial sequence strictly shorter than the buffer -- and the
     // events do not depend on where the reads were cut.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[97:65:97;2:3;65u",
         "\x1b[27u",
@@ -2578,7 +2578,7 @@ test "fuzz KeyParser" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [256]u8 = undefined;
-            const bytes = fuzz.input(case.source, &input, &examples);
+            const bytes = fuzz.gen.mutated(case.source, &input, &examples);
             const first = fuzz.gen.intRange(case.source, usize, 0, bytes.len);
             const second = fuzz.gen.intRange(case.source, usize, 0, bytes.len);
             try holds(bytes, first, second);
@@ -2620,7 +2620,7 @@ test "the events do not depend on where the reads were cut" {
 test "fuzz the parameter scanner" {
     // The property: no parameter string panics or overflows, and what is read
     // back never claims more parameters than the parser holds.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "",
         "1",
@@ -2644,7 +2644,7 @@ test "fuzz the parameter scanner" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -2970,7 +2970,7 @@ test "fuzz the framing against a second framer" {
     // sequences -- the same starts and the same lengths, in the same order.
     // A disagreement is a bug in one of them, and the test does not say
     // which, which is the point: neither is the oracle.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const property = struct {
         fn body(_: void, case: *fuzz.Case) !void {
             var picks: [128]u8 = undefined;
@@ -3586,7 +3586,7 @@ test "fuzz the win32 input mode decoder" {
     // never read past the end, and never produce a key whose text is not
     // valid UTF-8 -- with the key-up half both dropped and reported, because
     // that flag is the one thing that changes which events come out.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[65;30;97;1;0;1_",
         "\x1b[65;30;97;0;0;1_",
@@ -3633,7 +3633,7 @@ test "fuzz the win32 input mode decoder" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [128]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -4003,7 +4003,7 @@ test "fuzz the encoder against the parser" {
     // codepoint in the block the protocol gives to its named keys and
     // reserves the rest of: written as `CSI u` it reads back as a named key
     // or as nothing, and the text it came as is the only way to say it.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[97:65:98;2:3;65u",
         "\x1b[1;129A\x1b[3;5:2~",
@@ -4036,7 +4036,7 @@ test "fuzz the encoder against the parser" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [256]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);

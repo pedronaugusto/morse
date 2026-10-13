@@ -622,7 +622,7 @@ test "fuzz parseMouse" {
     // The property: no input panics or overflows, and every input that parses
     // re-encodes to something that parses back to the same event. That is the
     // encoder and the parser agreeing on inputs no test author enumerated.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[<0;10;5M",
         "\x1b[<62;7;9m",
@@ -660,7 +660,7 @@ test "fuzz parseMouse" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -763,7 +763,7 @@ test "fuzz parseMouseX10" {
     // parses re-encodes to the same three biased bytes and parses back to an
     // identical event. The encoder is inline because this package writes no
     // X10 reports -- it only reads them.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[M\x20\x21\x21",
         "\x1b[M\x23\x21\x21",
@@ -799,7 +799,7 @@ test "fuzz parseMouseX10" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -926,7 +926,7 @@ test "fuzz parseMouseRxvt" {
     // the same three decimal fields and parses back to an identical event.
     // The encoder is inline because this package writes no rxvt reports -- it
     // only reads them.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[32;33;34M",
         "\x1b[35;33;33M",
@@ -970,7 +970,7 @@ test "fuzz parseMouseRxvt" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);

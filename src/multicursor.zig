@@ -927,7 +927,7 @@ test "fuzz parseExtraCursors" {
     // The property: no input panics or overflows, the iterator terminates,
     // every cursor it yields has a shape the protocol names, and the same
     // bytes read the same way twice.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[>100 q",
         "\x1b[>100;1:2:7:1:7:3 q",
@@ -960,7 +960,7 @@ test "fuzz parseExtraCursors" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [96]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -971,7 +971,7 @@ test "fuzz parseExtraCursorColors" {
     // The property: no input panics or overflows, and every reply that
     // parses renders back -- through the reply grammar, which is not the
     // writer's -- to a reply that parses to the same pair.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[>101;30:0;40:1 q",
         "\x1b[>101;30:2:255:0:0;40:5:9 q",
@@ -996,7 +996,7 @@ test "fuzz parseExtraCursorColors" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -1006,7 +1006,7 @@ test "fuzz parseExtraCursorColors" {
 test "fuzz parseExtraCursorSupport" {
     // The property: no input panics or overflows, and every reply that
     // parses reads the same way twice.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[>1;2;3;29;30;40;100;101 q",
         "\x1b[> q",
@@ -1022,7 +1022,7 @@ test "fuzz parseExtraCursorSupport" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);

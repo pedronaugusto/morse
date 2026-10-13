@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The parsers' fuzz properties take their input from shakedown's `gen.mutated`, which is what `testing/fuzz.zig` held: a failure now shrinks toward the parser's first example, where it shrank toward empty input.
+
 ## [0.8.4] - 2026-10-14
 
 ### Changed

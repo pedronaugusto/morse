@@ -2063,7 +2063,7 @@ test "fuzz the animation round trip" {
     // writes a sequence the reader accepts, and reading it back gives the
     // command that was written -- which is what says the three are not
     // sharing a meaning for the letters they share.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const property = struct {
         fn holds(a: u32, b: u32, c: u32, d: u32, e: u32) !void {
             const image: AnimationImage = if (a & 1 == 0)
@@ -2289,7 +2289,7 @@ test "fuzz readCommand" {
     // The property: no input panics or overflows, what it returns borrows
     // from the bytes it was given, and the same bytes read the same way
     // twice.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b_Gi=31,s=1,v=1;YWJj\x1b\\",
         "\x1b_Ga=p,q=2,i=6,p=1,c=78,r=26,z=-3,C=1\x1b\\",
@@ -2315,7 +2315,7 @@ test "fuzz readCommand" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [96]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -2326,7 +2326,7 @@ test "fuzz the transmit round trip" {
     // The property: whatever the payload, every sequence written parses back
     // as a command, the chunk rule holds on each of them, and the payloads
     // joined and decoded are the bytes that went in.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "",
         "a",
@@ -2370,7 +2370,7 @@ test "fuzz the transmit round trip" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [chunk_bytes * 2 + 16]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
@@ -2478,7 +2478,7 @@ test "fuzz parseGraphicsResponse" {
     // sub-slice of the bytes it was read from, and the same bytes parse the
     // same way twice. The message is free-form and this package writes no
     // graphics commands, so there is no renderer to round trip through.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b_Gi=31;OK\x1b\\",
         "\x1b_Gi=1,I=2,p=3;OK\x1b\\",
@@ -2509,7 +2509,7 @@ test "fuzz parseGraphicsResponse" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);

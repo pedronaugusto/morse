@@ -482,7 +482,7 @@ test "fuzz parseCapabilityReply" {
     // digits it came from. That is the codec checked in both directions on
     // inputs no test author enumerated, and it is why an odd-length or
     // non-hex field has to be refused at parse time rather than at decode.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1bP1+r436f=323536\x1b\\",
         "\x1bP1+r6b656e64=1b4f46\x1b\\",
@@ -543,7 +543,7 @@ test "fuzz parseCapabilityReply" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [64]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);

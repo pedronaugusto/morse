@@ -457,7 +457,7 @@ test "a Stripper is its own state: every field is documented Private:" {
 test "fuzz Stripper" {
     // The properties: no input panics; the text never grows; it holds no
     // ESC; and any split of the input strips to what the whole of it does.
-    const fuzz = @import("testing/fuzz.zig");
+    const fuzz = @import("shakedown");
     const examples = [_][]const u8{
         "\x1b[1mbold\x1b[0m",
         "\x1b]8;;u\x1b\\t\x1b]8;;\x1b\\",
@@ -483,7 +483,7 @@ test "fuzz Stripper" {
 
         fn body(_: void, case: *fuzz.Case) !void {
             var input: [256]u8 = undefined;
-            try holds(fuzz.input(case.source, &input, &examples));
+            try holds(fuzz.gen.mutated(case.source, &input, &examples));
         }
     };
     for (examples) |example| try property.holds(example);
