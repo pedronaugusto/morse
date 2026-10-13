@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-10-13
+
 ### Fixed
 
 - The README no longer calls the Zig 0.17 port unreleased; it shipped in 0.8.0.
@@ -817,7 +819,8 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
-[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/pedronaugusto/morse/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/pedronaugusto/morse/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/pedronaugusto/morse/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/pedronaugusto/morse/compare/v0.7.0...v0.8.0
