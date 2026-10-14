@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-10-14
+
 ### Added
 
 - Fuzz properties for `parseCsi` and `Reply.parse`, the two parsers of what a terminal sends that had none: what they frame or borrow lies inside the bytes, and a framed sequence frames again the same.
@@ -833,7 +835,8 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
-[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/pedronaugusto/morse/compare/v0.8.3...v0.8.5
 [0.8.3]: https://github.com/pedronaugusto/morse/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/pedronaugusto/morse/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/pedronaugusto/morse/compare/v0.8.0...v0.8.1
