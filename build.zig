@@ -139,6 +139,9 @@ pub fn dev(b: *std.Build, tools: type) void {
     tools.preflight.addCi(b, p, .{
         .tests = test_step,
         .portable_tests = true,
+        // The release tier fuzzes the parsers' properties and runs the suite
+        // under ThreadSanitizer.
+        .hardened = .{ .fuzz_step = "test", .tsan_step = "test" },
         // Workloads only; shakedown measures and preflight wires the steps.
         .bench = .{
             .programs = &.{.{ .name = "budgets", .source = "bench/budgets.zig" }},

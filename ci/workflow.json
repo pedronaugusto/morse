@@ -12,6 +12,7 @@
     "aarch64-macos"
   ],
   "compile_once": false,
+  "hardened": true,
   "jobs": [
     {
       "name": "conformance",

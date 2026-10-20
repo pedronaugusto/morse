@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Development: the suite runs under the release tier's hardened profile (`bay hardened`, `bay hardened-fuzz`, `bay hardened-tsan`).
+
 ## [0.8.5] - 2026-10-14
 
 ### Added
