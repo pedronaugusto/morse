@@ -100,14 +100,12 @@ pub fn dev(b: *std.Build, tools: type) void {
         .paths = &.{ "build.zig", "build.zig.zon", "main.zig" },
         .path_dependencies = &.{.{ .name = "morse", .path = ".." }},
         // Pinned to a commit rather than to a tag, because the step is a
-        // claim about the bytes one revision of one emulator accepted. The
-        // commit is the head of ghostty's `zig-0.17` branch
-        // (ghostty-org/ghostty#14519) until that port reaches its main;
-        // visor's conformance pins the same.
+        // claim about the bytes one revision of one emulator accepted: a
+        // commit of ghostty's main. visor's conformance pins the same.
         .pins = &.{.{
             .name = "emulator",
-            .url = "git+https://github.com/ghostty-org/ghostty#5147c0a503cdeed7615cce245cdd815ed7a6b692",
-            .hash = "ghostty-1.3.2-dev-5UdBC-lZeAVJbemF7Fz8y5ApP0uA6wTc2uzECn3c6Z_Y",
+            .url = "git+https://github.com/ghostty-org/ghostty#f54340ad77814fe319d136e5e915d6a48de8dd23",
+            .hash = "ghostty-1.3.2-dev-5UdBCwB2hQVxHcUiN4kYlsRDu1qcBPAbNJb35Kkyx752",
         }},
         .args = if (test_filter) |filter| &.{ "test", b.fmt("-Doptimize={s}", .{@tagName(optimize)}), b.fmt("-Dtest-filter={s}", .{filter}) } else &.{ "test", b.fmt("-Doptimize={s}", .{@tagName(optimize)}) },
     });

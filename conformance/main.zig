@@ -1835,9 +1835,6 @@ const Difference = enum {
     scroll_lock,
     /// Ghostty has no kitty spelling for the menu key and writes nothing.
     menu,
-    /// Ghostty writes nothing for backspace with control, alt and shift,
-    /// which every other combination spells as its control code.
-    backspace_all_three,
     /// The fixterms form keeps super beside control so it reads back;
     /// ghostty's has room for shift, alt and control only.
     super_in_fixterms,
@@ -1872,7 +1869,6 @@ fn difference(case: KeyCase, enc: morse.KeyEncoding, ours: []const u8, theirs: [
     }
     _ = ours;
     switch (case.key) {
-        .backspace => if (case.mods.ctrl and case.mods.alt and case.mods.shift and !enc.modify_other_keys) return .backspace_all_three,
         .kp_equal, .kp_separator => if (theirs.len == 0) return .keypad_equal_separator,
         .char => if (case.mods.ctrl and case.mods.super) return .super_in_fixterms,
         else => {},
@@ -2074,6 +2070,6 @@ test "strip leaves what the emulator prints" {
 //=========================================================================
 
 test "how many claims this file made" {
-    try std.testing.expectEqual(@as(usize, 3841), checks);
+    try std.testing.expectEqual(@as(usize, 3840), checks);
     std.log.info("conformance: {d} assertions against the emulator\n", .{checks});
 }
