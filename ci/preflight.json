@@ -39,7 +39,23 @@
   "glint": {
     "rules": [{"id": "P001", "level": "gate"}, {"id": "P003", "level": "gate"}, 
       {
+        "id": "A001",
+        "level": "report"
+      },
+      {
+        "id": "A002",
+        "level": "gate"
+      },
+      {
+        "id": "A003",
+        "level": "gate"
+      },
+      {
         "id": "A004",
+        "level": "gate"
+      },
+      {
+        "id": "A005",
         "level": "gate"
       },
       {
