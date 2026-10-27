@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-10-27
+
 ### Changed
 
 - Pins aegis 0.2.2, the 0.2 line: `SecretBytes` holds no allocator.
@@ -842,7 +844,8 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
-[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.8.6...HEAD
+[0.8.6]: https://github.com/pedronaugusto/morse/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/pedronaugusto/morse/compare/v0.8.3...v0.8.5
 [0.8.3]: https://github.com/pedronaugusto/morse/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/pedronaugusto/morse/compare/v0.8.1...v0.8.2
