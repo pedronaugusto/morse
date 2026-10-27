@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Pins aegis 0.2.2, the 0.2 line: `SecretBytes` holds no allocator.
+- Development: developed with preflight 0.18.3 and shakedown 0.5.0, under the whole aegis pack. The conformance step's clipboard copy is bounded by its buffer; a longer write was copied past it.
 - Development: the suite runs under the release tier's hardened profile (`bay hardened`, `bay hardened-fuzz`, `bay hardened-tsan`).
 - Development: the conformance step pins ghostty's main (f54340a), where its Zig 0.17 port landed (ghostty-org/ghostty#14519), instead of the port's branch. ghostty now writes backspace with control, alt and shift as morse does, so that difference is no longer named.
 

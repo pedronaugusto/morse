@@ -37,6 +37,7 @@
     "build.zig"
   ],
   "glint": {
+    "unresolved": {"A001": 2},
     "rules": [{"id": "P003", "level": "gate"}, 
       {
         "id": "A001",
