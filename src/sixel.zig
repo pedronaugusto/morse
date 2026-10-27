@@ -104,7 +104,10 @@ fn spellSixel(w: anytype, image: Sixel) !void {
     const pixel_count = @as(usize, image.width) * image.height;
     switch (image.pixels) {
         .indexed => |p| std.debug.assert(p.len >= pixel_count),
-        .rgba => |p| std.debug.assert(p.len >= pixel_count * 4 and (pixel_count == 0 or image.palette.len != 0)),
+        .rgba => |p| {
+            std.debug.assert(p.len >= pixel_count * 4);
+            std.debug.assert(pixel_count == 0 or image.palette.len != 0);
+        },
     }
 
     try w.writeAll(seq.dcs);

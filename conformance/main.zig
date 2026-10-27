@@ -102,9 +102,11 @@ var clipboard_len: usize = 0;
 fn clipboardWrite(_: *Handler, write: vt.clipboard.Write) void {
     clipboard_location = write.location;
     clipboard_len = 0;
+    // A write longer than the buffer is cut, and the check after it fails on the shorter text.
     for (write.contents) |content| {
-        @memcpy(clipboard_text[clipboard_len..][0..content.data.len], content.data);
-        clipboard_len += content.data.len;
+        const n = @min(clipboard_text.len - clipboard_len, content.data.len);
+        @memcpy(clipboard_text[clipboard_len..][0..n], content.data[0..n]);
+        clipboard_len += n;
     }
 }
 
@@ -2001,7 +2003,7 @@ const StreamAction = vt.StreamAction;
 
 /// The text the emulator prints, and the four C0 controls it executes that
 /// a program writes into text, collected as bytes.
-const Printed = struct {
+pub const Printed = struct {
     out: [8192]u8 = undefined,
     len: usize = 0,
 
