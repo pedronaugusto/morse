@@ -392,7 +392,7 @@ pub fn paletteRgb(index: u8) ?Rgb {
     }
     const cube = index - 16;
     const levels = [6]u8{ 0, 95, 135, 175, 215, 255 };
-    return .{ .r = levels[cube / 36], .g = levels[cube / 6 % 6], .b = levels[cube % 6] };
+    return .{ .r = levels[cube / 36], .g = levels[(cube / 6) % 6], .b = levels[cube % 6] };
 }
 
 /// Whether a cell's glyphs are raised, lowered, or neither: SGR 73, 74 and
@@ -527,7 +527,7 @@ const decimal: [256]Decimal = blk: {
         else if (value < 100)
             .{ .digits = .{ '0' + value / 10, '0' + value % 10, 0 }, .len = 2 }
         else
-            .{ .digits = .{ '0' + value / 100, '0' + value / 10 % 10, '0' + value % 10 }, .len = 3 };
+            .{ .digits = .{ '0' + value / 100, '0' + (value / 10) % 10, '0' + value % 10 }, .len = 3 };
     }
     break :blk table;
 };

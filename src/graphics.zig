@@ -321,9 +321,9 @@ pub const GraphicsColor = extern struct {
     /// The one number the protocol carries the colour as, `0xRRGGBBAA`:
     /// red in the most significant byte and alpha in the least.
     pub fn rgba(color: GraphicsColor) u32 {
-        return @as(u32, color.r) << 24 |
-            @as(u32, color.g) << 16 |
-            @as(u32, color.b) << 8 |
+        return (@as(u32, color.r) << 24) |
+            (@as(u32, color.g) << 16) |
+            (@as(u32, color.b) << 8) |
             @as(u32, color.a);
     }
 };
