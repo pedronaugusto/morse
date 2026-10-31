@@ -417,8 +417,16 @@ fn draw(bytes: []const u8, width: u32, height: u32, grid: []u16, palette: []Rgb)
                     i += scan.len;
                     if (i < end and bytes[i] == ';') i += 1 else break;
                 }
-                register = @intCast(fields[0]);
-                if (n == 5) palette[register] = .{ .r = @intCast(fields[2]), .g = @intCast(fields[3]), .b = @intCast(fields[4]) };
+                // A `#` names a register the palette holds.
+                if (n == 0) return error.BadRegister;
+                register = std.math.cast(u16, fields[0]) orelse return error.BadRegister;
+                if (register >= palette.len) return error.BadRegister;
+                // Its colour in RGB percentages, when given.
+                if (n == 5) palette[register] = .{
+                    .r = std.math.cast(u8, fields[2]) orelse return error.BadColour,
+                    .g = std.math.cast(u8, fields[3]) orelse return error.BadColour,
+                    .b = std.math.cast(u8, fields[4]) orelse return error.BadColour,
+                };
             },
             '$' => {
                 x = 0;
@@ -451,6 +459,13 @@ fn draw(bytes: []const u8, width: u32, height: u32, grid: []u16, palette: []Rgb)
             else => return error.UnexpectedByte,
         }
     }
+}
+
+test "the reader refuses a register it has no colour for" {
+    var grid: [1]u16 = @splat(0);
+    var palette: [256]Rgb = @splat(.{ .r = 0, .g = 0, .b = 0 });
+    try testing.expectError(error.BadRegister, draw("\x1bPq#?\x1b\\", 1, 1, &grid, &palette));
+    try testing.expectError(error.BadRegister, draw("\x1bPq#300?\x1b\\", 1, 1, &grid, &palette));
 }
 
 test "a small image is the header, the registers, and one band" {

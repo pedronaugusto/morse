@@ -30,7 +30,7 @@ const Writer = std.Io.Writer;
 /// every field is its own state, and a caller writes none of them.
 pub const Stripper = struct {
     /// Private: where the last piece ended, in text or inside a sequence.
-    state: State = .text, // aegis: design: a lexer's states, every byte moving each one somewhere, so no transition is refused for state.Machine to check
+    state: State = .text, // aegis: design(A017): a lexer's states, every byte moving each one somewhere, so no transition is refused for state.Machine to check
     /// Private: the bytes of a codepoint the last piece ended inside.
     held: [3]u8 = undefined,
     /// Private: how many of `held` there are.
