@@ -2700,11 +2700,11 @@ fn frameWithGrammar(bytes: []const u8, out: []Frame) []Frame {
         if (bytes[i] != seq.esc) {
             // Neither framer can look past a codepoint the bytes do not
             // hold the whole of: what follows it might complete it, so a
-            // streaming framer waits there and frames nothing after it.
+            // streaming framer waits there and frames nothing after it. A
+            // byte no codepoint starts with stands alone: nothing completes it.
             if (bytes[i] >= 0x80) {
-                if (std.unicode.utf8ByteSequenceLength(bytes[i])) |n| {
-                    if (i + n > bytes.len) break;
-                } else |_| {}
+                const n = std.unicode.utf8ByteSequenceLength(bytes[i]) catch 1;
+                if (i + n > bytes.len) break;
             }
             i += 1;
             continue;
