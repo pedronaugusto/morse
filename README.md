@@ -11,6 +11,12 @@ git+https://github.com/pedronaugusto/morse`, then obtain the `morse` module thro
 `b.dependency` and add it to your executable's imports. Forward your target and optimize
 settings.
 
+## Stability
+
+morse is 0.x and tracks Zig 0.17.x. A breaking change comes only in a minor release
+(0.8 to 0.9), with a CHANGELOG entry saying what changed and what to write instead; a
+patch release never breaks.
+
 ## Usage
 
 [examples/quickstart.zig](examples/quickstart.zig)
