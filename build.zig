@@ -143,7 +143,7 @@ pub fn dev(b: *std.Build, tools: type) void {
         // Workloads only; shakedown measures and preflight wires the steps.
         .bench = .{
             .programs = &.{.{ .name = "budgets", .source = "bench/budgets.zig" }},
-            .imports = benchImports,
+            .imports = tools.preflight.Bench.importsFrom(benchImports),
             .target = target,
             .optimize = optimize,
         },

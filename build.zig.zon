@@ -14,8 +14,8 @@
 
     .dependencies = .{
         .aegis = .{
-            .url = "git+https://github.com/pedronaugusto/aegis#3c0b13e5fc25797b5fbcc25fec48b0a8411cc668",
-            .hash = "aegis-0.2.4-rsxoug3uCwBiVYRBbQolOSbqdOEzmmUeaj19tWOo2rmc",
+            .url = "git+https://github.com/pedronaugusto/aegis#c8982a86cbd8a85ac9941df59b6c36a10a252355",
+            .hash = "aegis-0.2.4-rsxouvwTDACNY2hXYVwyUefGiHkfV4nV6HBftNXJRliQ",
         },
 
         // Test support and measuring, asked for only in
@@ -26,8 +26,8 @@
     },
     .dev_dependencies = .{
         .preflight = .{
-            .url = "git+https://github.com/pedronaugusto/preflight?ref=v0.18.3#c253c7b7b9f0a9e6ccf02357494eb4cce7664cf4",
-            .hash = "preflight-0.18.3-LX1Zwn_UEwBDhK-WvHl1kBupXsPvCT7UHfbNvh9ZPrKL",
+            .url = "git+https://github.com/pedronaugusto/preflight?ref=ci-standard#454b12e663bf57993890ba18a06f33df619a659e",
+            .hash = "preflight-0.18.6-LX1ZwhfdGABszxizm4q2gQoTUwWG3UbYWnTZlnuZIxg5",
         },
 
         .shakedown = .{
