@@ -12,6 +12,7 @@
 //! it once between them.
 
 const std = @import("std");
+const aegis = @import("aegis");
 
 const Writer = std.Io.Writer;
 
@@ -67,8 +68,8 @@ pub fn write(w: *Writer, bytes: []const u8) Writer.Error!void {
 /// Encodes `src`, whole groups of three bytes, into `dest`, four characters
 /// for each. The standard library's encoder reads twelve bytes at a time.
 fn encodeGroups(dest: []u8, src: []const u8) void {
-    std.debug.assert(src.len % 3 == 0);
-    std.debug.assert(dest.len == src.len / 3 * 4);
+    aegis.assert.invariant(src.len % 3 == 0, "src.len % 3 == 0");
+    aegis.assert.invariant(dest.len == src.len / 3 * 4, "dest.len == src.len / 3 * 4");
     _ = std.base64.standard.Encoder.encode(dest, src);
 }
 
@@ -93,7 +94,7 @@ pub fn isValid(data: []const u8) bool {
             if (index[c] == invalid) return false;
         }
     }
-    std.debug.assert(padding <= 2);
+    aegis.assert.invariant(padding <= 2, "padding <= 2");
     return switch (padding) {
         0 => true,
         1 => index[data[data.len - 2]] & 0x03 == 0,
@@ -106,8 +107,8 @@ pub fn isValid(data: []const u8) bool {
 ///
 /// Exact, not an upper bound, and it assumes `isValid(data)`.
 pub fn decodedLen(data: []const u8) usize {
-    std.debug.assert(isValid(data));
-    std.debug.assert(data.len % 4 == 0);
+    aegis.assert.invariant(isValid(data), "isValid(data)");
+    aegis.assert.invariant(data.len % 4 == 0, "data.len % 4 == 0");
     if (data.len == 0) return 0;
     var padding: usize = 0;
     if (data[data.len - 1] == '=') padding += 1;
@@ -137,10 +138,10 @@ pub fn decode(data: []const u8, out: []u8) error{NoSpaceLeft}![]u8 {
             out[written] = @truncate(accumulator >> @intCast(bits));
             written += 1;
         }
-        std.debug.assert(bits < 8);
-        std.debug.assert(written <= len);
+        aegis.assert.invariant(bits < 8, "bits < 8");
+        aegis.assert.invariant(written <= len, "written <= len");
     }
-    std.debug.assert(written == len);
+    aegis.assert.invariant(written == len, "written == len");
     return out[0..len];
 }
 
@@ -254,7 +255,7 @@ test "a writer with no room left reports the failure" {
 }
 
 comptime {
-    std.debug.assert(alphabet.len == 64);
-    std.debug.assert(index.len == 256);
-    for (alphabet, 0..) |char, i| std.debug.assert(index[char] == i);
+    aegis.assert.invariant(alphabet.len == 64, "alphabet.len == 64");
+    aegis.assert.invariant(index.len == 256, "index.len == 256");
+    for (alphabet, 0..) |char, i| aegis.assert.invariant(index[char] == i, "index[char] == i");
 }

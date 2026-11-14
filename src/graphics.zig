@@ -46,7 +46,7 @@ pub const CellOffset = aegis.units.Count(Cells.Domain, i32);
 /// A placeholder underline colour can carry only 24 placement bits.
 pub const PlaceholderPlacement = aegis.int.Ranged(u32, 0, 0xffffff);
 /// The placeholder without an underline colour, which the protocol leaves unwritten.
-const no_placement = PlaceholderPlacement.init(0) catch unreachable; // unreachable: zero is inside the range
+const no_placement = PlaceholderPlacement.init(0) catch unreachable; // glint-ignore: Z026 -- zero is inside the range
 const base64 = @import("base64.zig");
 const seq = @import("seq.zig");
 
@@ -472,8 +472,8 @@ pub const chunk_base64_max: usize = 4096;
 pub const chunk_bytes: usize = chunk_base64_max / 4 * 3;
 
 comptime {
-    std.debug.assert(base64.encodedLen(chunk_bytes) == chunk_base64_max);
-    std.debug.assert(chunk_base64_max % 4 == 0);
+    aegis.assert.invariant(base64.encodedLen(chunk_bytes) == chunk_base64_max, "base64.encodedLen(chunk_bytes) == chunk_base64_max");
+    aegis.assert.invariant(chunk_base64_max % 4 == 0, "chunk_base64_max % 4 == 0");
 }
 
 //=========================================================================
@@ -855,7 +855,7 @@ pub const Placeholder = struct {
     /// The placement, carried in the underline colour. Zero writes no
     /// underline colour, and the terminal picks any virtual placement of the
     /// image. Construction rejects values above the colour's 24-bit range.
-    placement: PlaceholderPlacement = PlaceholderPlacement.init(0) catch unreachable, // unreachable: zero is in the comptime range.
+    placement: PlaceholderPlacement = PlaceholderPlacement.init(0) catch unreachable, // glint-ignore: Z026 -- zero is in the comptime range.
     /// Which row of the grid, counting from zero.
     row: u16,
     /// How many cells wide the row is, counting from column zero.
@@ -922,7 +922,7 @@ pub fn placeholderRow(w: *Writer, row: Placeholder) PlaceholderError!void {
 /// `error.PlaceholderOutOfRange` before anything is written.
 pub fn placeholderCell(w: *Writer, row: u16, col: u16, id_top: u8) PlaceholderError!void {
     if (row >= placeholder_max or col >= placeholder_max) return error.PlaceholderOutOfRange;
-    comptime std.debug.assert(std.math.maxInt(u8) < placeholder_max);
+    comptime aegis.assert.invariant(std.math.maxInt(u8) < placeholder_max, "std.math.maxInt(u8) < placeholder_max");
 
     try writeCodepoint(w, placeholder);
     try writeCodepoint(w, diacritics[row]);
@@ -932,9 +932,9 @@ pub fn placeholderCell(w: *Writer, row: u16, col: u16, id_top: u8) PlaceholderEr
 
 /// Writes one codepoint as UTF-8.
 fn writeCodepoint(w: *Writer, cp: u21) Writer.Error!void {
-    std.debug.assert(std.unicode.utf8ValidCodepoint(cp));
+    aegis.assert.invariant(std.unicode.utf8ValidCodepoint(cp), "std.unicode.utf8ValidCodepoint(cp)");
     var buffer: [4]u8 = undefined;
-    const len = std.unicode.utf8Encode(cp, &buffer) catch unreachable; // unreachable: all callers pass the scalar placeholder or entries of the validated diacritic table
+    const len = std.unicode.utf8Encode(cp, &buffer) catch unreachable; // glint-ignore: Z026 -- all callers pass the scalar placeholder or entries of the validated diacritic table
     try w.writeAll(buffer[0..len]);
 }
 
@@ -987,10 +987,10 @@ const diacritics = [_]u21{
 };
 
 comptime {
-    std.debug.assert(diacritics[0] == 0x305);
-    std.debug.assert(diacritics[1] == 0x30d);
-    std.debug.assert(diacritics[2] == 0x30e);
-    std.debug.assert(diacritics.len == 297);
+    aegis.assert.invariant(diacritics[0] == 0x305, "diacritics[0] == 0x305");
+    aegis.assert.invariant(diacritics[1] == 0x30d, "diacritics[1] == 0x30d");
+    aegis.assert.invariant(diacritics[2] == 0x30e, "diacritics[2] == 0x30e");
+    aegis.assert.invariant(diacritics.len == 297, "diacritics.len == 297");
 }
 
 //=========================================================================
@@ -2517,9 +2517,9 @@ test "fuzz parseGraphicsResponse" {
 }
 
 comptime {
-    std.debug.assert(diacritics.len >= 256);
-    std.debug.assert(std.unicode.utf8ValidCodepoint(placeholder));
-    for (diacritics) |cp| std.debug.assert(std.unicode.utf8ValidCodepoint(cp));
+    aegis.assert.invariant(diacritics.len >= 256, "diacritics.len >= 256");
+    aegis.assert.invariant(std.unicode.utf8ValidCodepoint(placeholder), "std.unicode.utf8ValidCodepoint(placeholder)");
+    for (diacritics) |cp| aegis.assert.invariant(std.unicode.utf8ValidCodepoint(cp), "std.unicode.utf8ValidCodepoint(cp)");
 }
 
 test "graphics domains retain scalar layout and nonzero probe bounds" {

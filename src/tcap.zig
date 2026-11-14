@@ -26,6 +26,7 @@
 
 const std = @import("std");
 const seq = @import("seq.zig");
+const aegis = @import("aegis");
 
 const Writer = std.Io.Writer;
 
@@ -237,13 +238,13 @@ fn isHex(text: []const u8) bool {
 /// only error is an `out` too small. A `Capability` built by hand rather than
 /// parsed must hold the same thing.
 fn decodeHex(hex: []const u8, out: []u8) error{NoSpaceLeft}![]u8 {
-    std.debug.assert(hex.len % 2 == 0);
-    for (hex) |digit| std.debug.assert(std.ascii.isHex(digit));
+    aegis.assert.invariant(hex.len % 2 == 0, "hex.len % 2 == 0");
+    for (hex) |digit| aegis.assert.invariant(std.ascii.isHex(digit), "std.ascii.isHex(digit)");
     const len = hex.len / 2;
     if (out.len < len) return error.NoSpaceLeft;
     for (0..len) |i| {
-        const high = std.fmt.charToDigit(hex[i * 2], 16) catch unreachable; // unreachable: hex digits are checked below and by parseCapabilityReply
-        const low = std.fmt.charToDigit(hex[i * 2 + 1], 16) catch unreachable; // unreachable: hex digits are checked below and by parseCapabilityReply
+        const high = std.fmt.charToDigit(hex[i * 2], 16) catch unreachable; // glint-ignore: Z026 -- hex digits are checked below and by parseCapabilityReply
+        const low = std.fmt.charToDigit(hex[i * 2 + 1], 16) catch unreachable; // glint-ignore: Z026 -- hex digits are checked below and by parseCapabilityReply
         out[i] = @as(u8, high) * 16 + low;
     }
     return out[0..len];

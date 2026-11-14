@@ -311,8 +311,8 @@ pub fn parseMouseRxvt(bytes: []const u8) ?MouseEvent {
 /// `pixels` false, so converting twice is harmless. `cell_w` and `cell_h`
 /// must be non-zero.
 pub fn toCells(ev: MouseEvent, cell_w: u32, cell_h: u32) MouseEvent {
-    std.debug.assert(cell_w != 0);
-    std.debug.assert(cell_h != 0);
+    aegis.assert.invariant(cell_w != 0, "cell_w != 0");
+    aegis.assert.invariant(cell_h != 0, "cell_h != 0");
     if (!ev.pixels) return ev;
 
     var cells = ev;
@@ -356,8 +356,8 @@ pub const CellPosition = struct {
 /// the middle, 0.5 each way; a cell coordinate of 0 is taken as 1 too.
 /// `cell_w` and `cell_h` must be greater than zero.
 pub fn toCellsAt(ev: MouseEvent, cell_w: f32, cell_h: f32) CellPosition {
-    std.debug.assert(cell_w > 0);
-    std.debug.assert(cell_h > 0);
+    aegis.assert.invariant(cell_w > 0, "cell_w > 0");
+    aegis.assert.invariant(cell_h > 0, "cell_h > 0");
     if (!ev.pixels) return .{ .col = ev.x -| 1, .row = ev.y -| 1, .x = 0.5, .y = 0.5 };
     const across = cellOf(ev.x, cell_w);
     const down = cellOf(ev.y, cell_h);

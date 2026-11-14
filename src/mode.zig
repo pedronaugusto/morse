@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const seq = @import("seq.zig");
+const aegis = @import("aegis");
 
 const Writer = std.Io.Writer;
 
@@ -1097,7 +1098,7 @@ test "the setMode cost is the length setMode writes, for every mode" {
 }
 
 comptime {
-    std.debug.assert(@bitSizeOf(Mouse.Motion) == 16);
-    std.debug.assert(@bitSizeOf(Mouse.Encoding) == 16);
-    std.debug.assert(@bitSizeOf(Mouse) == 32);
+    aegis.assert.invariant(@bitSizeOf(Mouse.Motion) == 16, "@bitSizeOf(Mouse.Motion) == 16");
+    aegis.assert.invariant(@bitSizeOf(Mouse.Encoding) == 16, "@bitSizeOf(Mouse.Encoding) == 16");
+    aegis.assert.invariant(@bitSizeOf(Mouse) == 32, "@bitSizeOf(Mouse) == 32");
 }

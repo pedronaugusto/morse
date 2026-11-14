@@ -20,6 +20,7 @@ const std = @import("std");
 const utf8 = @import("utf8.zig");
 const framing = @import("framing.zig");
 const seq = @import("seq.zig");
+const aegis = @import("aegis");
 
 const Writer = std.Io.Writer;
 
@@ -30,7 +31,7 @@ const Writer = std.Io.Writer;
 /// every field is its own state, and a caller writes none of them.
 pub const Stripper = struct {
     /// Private: where the last piece ended, in text or inside a sequence.
-    state: State = .text, // aegis: design(A017): a lexer's states, every byte moving each one somewhere, so no transition is refused for state.Machine to check
+    state: State = .text,
     /// Private: the bytes of a codepoint the last piece ended inside.
     held: [3]u8 = undefined,
     /// Private: how many of `held` there are.
@@ -65,8 +66,8 @@ pub const Stripper = struct {
             var joined: [4]u8 = undefined;
             const held = s.held[0..s.held_len];
             @memcpy(joined[0..held.len], held);
-            const need = std.unicode.utf8ByteSequenceLength(held[0]) catch unreachable; // unreachable: held is written only from a prefix accepted by codepoint
-            std.debug.assert(held.len < need);
+            const need = std.unicode.utf8ByteSequenceLength(held[0]) catch unreachable; // glint-ignore: Z026 -- held is written only from a prefix accepted by codepoint
+            aegis.assert.invariant(held.len < need, "held.len < need");
             const take = @min(need - held.len, bytes.len);
             @memcpy(joined[held.len..][0..take], bytes[0..take]);
             const have = held.len + take;
@@ -144,10 +145,10 @@ pub const Stripper = struct {
     }
 
     fn assertValid(s: *const Stripper) void {
-        std.debug.assert(s.held_len <= s.held.len);
+        aegis.assert.invariant(s.held_len <= s.held.len, "s.held_len <= s.held.len");
         if (s.held_len != 0) {
-            std.debug.assert(s.state == .text);
-            std.debug.assert(codepoint(s.held[0..s.held_len]) == .partial);
+            aegis.assert.invariant(s.state == .text, "s.state == .text");
+            aegis.assert.invariant(codepoint(s.held[0..s.held_len]) == .partial, "codepoint(s.held[0..s.held_len]) == .partial");
         }
     }
 
@@ -292,9 +293,9 @@ pub fn strip(out: []u8, text: []const u8) StripError![]u8 {
     if (out.len < text.len) return error.NoSpaceLeft;
     var into: InPlace = .{ .out = out };
     var s: Stripper = .{};
-    s.feed(&into.writer, text) catch unreachable; // unreachable: stripping only removes bytes and out is at least text.len bytes
-    s.finish(&into.writer) catch unreachable; // unreachable: the retained prefix is part of text and stripping cannot expand it
-    std.debug.assert(into.end <= text.len);
+    s.feed(&into.writer, text) catch unreachable; // glint-ignore: Z026 -- stripping only removes bytes and out is at least text.len bytes
+    s.finish(&into.writer) catch unreachable; // glint-ignore: Z026 -- the retained prefix is part of text and stripping cannot expand it
+    aegis.assert.invariant(into.end <= text.len, "into.end <= text.len");
     return out[0..into.end];
 }
 

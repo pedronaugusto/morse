@@ -295,14 +295,14 @@ pub const KeyParser = struct {
 
     /// A parser over `buffer`, which must be at least `min_buffer` bytes.
     pub fn init(buffer: []u8) KeyParser {
-        std.debug.assert(buffer.len >= min_buffer);
+        aegis.assert.invariant(buffer.len >= min_buffer, "buffer.len >= min_buffer");
         return .{ .buffer = buffer };
     }
 
     fn assertValid(p: *const KeyParser) void {
-        std.debug.assert(p.buffer.len >= min_buffer);
-        std.debug.assert(p.start <= p.end);
-        std.debug.assert(p.end <= p.buffer.len);
+        aegis.assert.invariant(p.buffer.len >= min_buffer, "p.buffer.len >= min_buffer");
+        aegis.assert.invariant(p.start <= p.end, "p.start <= p.end");
+        aegis.assert.invariant(p.end <= p.buffer.len, "p.end <= p.buffer.len");
     }
 
     /// Hands `bytes` to the parser and returns the events they complete.
@@ -678,7 +678,7 @@ fn ready(event: Event, len: usize) Decoded {
 
 /// Reads one event off the front of `bytes`, which is never empty.
 fn decode(bytes: []const u8, report_key_up: bool, console: *win32.ConsoleState) Decoded {
-    std.debug.assert(bytes.len != 0);
+    aegis.assert.invariant(bytes.len != 0, "bytes.len != 0");
     if (bytes[0] == seq.esc) return decodeEscape(bytes, report_key_up, console);
     return decodeRun(bytes);
 }
@@ -811,8 +811,8 @@ fn decodeString(bytes: []const u8) Decoded {
 /// with: alt and the introducer, as `KeyParser.flush` reads the same two
 /// bytes, and the byte after it is read as itself.
 fn abandonedIntroducer(bytes: []const u8) Decoded {
-    std.debug.assert(bytes.len > 2);
-    std.debug.assert(bytes[1] == '[' or bytes[1] == 'O');
+    aegis.assert.invariant(bytes.len > 2, "bytes.len > 2");
+    aegis.assert.invariant(bytes[1] == '[' or bytes[1] == 'O', "bytes[1] == '[' or bytes[1] == 'O'");
     return ready(.{ .key = .{ .key = .{ .char = bytes[1] }, .mods = .{ .alt = true } } }, 2);
 }
 
@@ -2726,8 +2726,8 @@ fn frameWithGrammar(bytes: []const u8, out: []Frame) []Frame {
 /// exception is `ESC [` or `ESC O` with such a byte straight after it:
 /// those two bytes are alt and a key, a frame of two.
 fn frameEscape(bytes: []const u8) ?usize {
-    std.debug.assert(bytes.len != 0);
-    std.debug.assert(bytes[0] == seq.esc);
+    aegis.assert.invariant(bytes.len != 0, "bytes.len != 0");
+    aegis.assert.invariant(bytes[0] == seq.esc, "bytes[0] == seq.esc");
     if (bytes.len == 1) return null;
     const b = bytes[1];
     if (b == seq.esc) return 1;
@@ -3800,7 +3800,7 @@ fn keyCorpus(comptime visit: anytype, context: anytype) !void {
     var buffer: [96]u8 = undefined;
     const Print = struct {
         fn go(comptime fmt: []const u8, b: []u8, args: anytype) []const u8 {
-            return std.mem.print(b, fmt, args) catch unreachable; // unreachable: the corpus uses a 96-byte buffer for bounded numeric key sequences
+            return std.mem.print(b, fmt, args) catch unreachable; // glint-ignore: Z026 -- the corpus uses a 96-byte buffer for bounded numeric key sequences
         }
     };
 

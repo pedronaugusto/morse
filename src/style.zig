@@ -730,10 +730,10 @@ comptime {
     // comparison read it.
     var total: usize = 0;
     for (@typeInfo(Style).@"struct".field_types) |T| total += @sizeOf(T);
-    std.debug.assert(total == @sizeOf(Style));
-    std.debug.assert(@alignOf(Style) == 1);
-    std.debug.assert(@sizeOf(Color) == 4);
-    std.debug.assert(@alignOf(Color) == 1);
+    aegis.assert.invariant(total == @sizeOf(Style), "total == @sizeOf(Style)");
+    aegis.assert.invariant(@alignOf(Style) == 1, "@alignOf(Style) == 1");
+    aegis.assert.invariant(@sizeOf(Color) == 4, "@sizeOf(Color) == 4");
+    aegis.assert.invariant(@alignOf(Color) == 1, "@alignOf(Color) == 1");
 }
 
 /// Resets every attribute and both colours: `CSI 0 m`.
@@ -2152,17 +2152,17 @@ const oracle = struct {
     fn diff(w: *Writer, from: Style, to: Style) Writer.Error!void {
         var scratch: [max_sequence]u8 = undefined;
         var delta: Writer.Discarding = .init(&scratch);
-        const turned_off = writeSgr(&delta.writer, from, to, false) catch unreachable; // unreachable: Discarding accepts and counts every byte without a failing drain
+        const turned_off = writeSgr(&delta.writer, from, to, false) catch unreachable; // glint-ignore: Z026 -- Discarding accepts and counts every byte without a failing drain
         const difference = delta.fullCount();
-        std.debug.assert(difference <= max_sequence);
+        aegis.assert.invariant(difference <= max_sequence, "difference <= max_sequence");
         if (difference == 0) return;
         if (!turned_off) {
             _ = try writeSgr(w, from, to, false);
             return;
         }
         var whole: Writer.Discarding = .init(&scratch);
-        _ = writeSgr(&whole.writer, from, to, true) catch unreachable; // unreachable: Discarding accepts and counts every byte without a failing drain
-        std.debug.assert(whole.fullCount() <= max_sequence);
+        _ = writeSgr(&whole.writer, from, to, true) catch unreachable; // glint-ignore: Z026 -- Discarding accepts and counts every byte without a failing drain
+        aegis.assert.invariant(whole.fullCount() <= max_sequence, "whole.fullCount() <= max_sequence");
         _ = try writeSgr(w, from, to, whole.fullCount() < difference);
     }
 

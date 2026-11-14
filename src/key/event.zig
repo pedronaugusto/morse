@@ -1,6 +1,7 @@
 //! Keys and their text, shared by stream and console decoders.
 const std = @import("std");
 const utf8 = @import("../utf8.zig");
+const aegis = @import("aegis");
 
 /// A key, either the codepoint it stands for or the name it goes by.
 ///
@@ -544,7 +545,7 @@ const named_codes = [_]u21{
 
 comptime {
     const tags = @typeInfo(Key).@"union".field_names;
-    std.debug.assert(named_codes.len == tags.len - @backingInt(std.meta.Tag(Key).caps_lock));
+    aegis.assert.invariant(named_codes.len == tags.len - @backingInt(std.meta.Tag(Key).caps_lock), "named_codes.len == tags.len - @backingInt(std.meta.Tag(Key).caps_lock)");
 }
 
 /// Records the bytes a key produced, when it produced any.

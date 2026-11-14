@@ -24,6 +24,7 @@
 const std = @import("std");
 const seq = @import("seq.zig");
 const style = @import("style.zig");
+const aegis = @import("aegis");
 
 const Writer = std.Io.Writer;
 const Rgb = style.Rgb;
@@ -100,13 +101,13 @@ const block_columns = 256;
 
 /// The bytes of `sixel`, into a `*Writer` or a `*seq.Count`.
 fn spellSixel(w: anytype, image: Sixel) !void {
-    std.debug.assert(image.palette.len <= sixel_palette_max);
+    aegis.assert.invariant(image.palette.len <= sixel_palette_max, "image.palette.len <= sixel_palette_max");
     const pixel_count = @as(usize, image.width) * image.height;
     switch (image.pixels) {
-        .indexed => |p| std.debug.assert(p.len >= pixel_count),
+        .indexed => |p| aegis.assert.invariant(p.len >= pixel_count, "p.len >= pixel_count"),
         .rgba => |p| {
-            std.debug.assert(p.len >= pixel_count * 4);
-            std.debug.assert(pixel_count == 0 or image.palette.len != 0);
+            aegis.assert.invariant(p.len >= pixel_count * 4, "p.len >= pixel_count * 4");
+            aegis.assert.invariant(pixel_count == 0 or image.palette.len != 0, "pixel_count == 0 or image.palette.len != 0");
         },
     }
 
