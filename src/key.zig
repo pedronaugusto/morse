@@ -701,8 +701,10 @@ fn decodeRun(bytes: []const u8) Decoded {
             codepoints += 1;
             continue;
         }
+        // glint-ignore: Z026 -- a byte that starts no UTF-8 sequence ends the run, as the doc comment says
         const n = std.unicode.utf8ByteSequenceLength(b) catch break;
         if (len + n > bytes.len) break;
+        // glint-ignore: Z026 -- bytes that are not valid UTF-8 end the run, as the doc comment says
         _ = utf8.decode(bytes[len..][0..n]) catch break;
         len += n;
         codepoints += 1;

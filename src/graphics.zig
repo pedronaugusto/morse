@@ -883,27 +883,31 @@ pub const Placeholder = struct {
 pub fn placeholderRow(w: *Writer, row: Placeholder) PlaceholderError!void {
     if (row.row >= placeholder_max or row.columns > placeholder_max) return error.PlaceholderOutOfRange;
 
+    // The image id's low three bytes are the foreground's red, green and blue, and its top
+    // byte goes in each cell; the placement's three bytes are the underline colour's.
+    const id = row.id.toBytes(.big);
     try w.writeAll(seq.csi ++ "38;2;");
-    try seq.writeInt(w, (row.id.raw() >> 16) & 0xff);
+    try seq.writeInt(w, id[1]);
     try w.writeByte(';');
-    try seq.writeInt(w, (row.id.raw() >> 8) & 0xff);
+    try seq.writeInt(w, id[2]);
     try w.writeByte(';');
-    try seq.writeInt(w, row.id.raw() & 0xff);
+    try seq.writeInt(w, id[3]);
     try w.writeByte('m');
 
     if (row.placement != no_placement) {
+        const placement = std.mem.toBytes(std.mem.nativeToBig(u32, row.placement.raw()));
         try w.writeAll(seq.csi ++ "58:2::");
-        try seq.writeInt(w, (row.placement.raw() >> 16) & 0xff);
+        try seq.writeInt(w, placement[1]);
         try w.writeByte(':');
-        try seq.writeInt(w, (row.placement.raw() >> 8) & 0xff);
+        try seq.writeInt(w, placement[2]);
         try w.writeByte(':');
-        try seq.writeInt(w, row.placement.raw() & 0xff);
+        try seq.writeInt(w, placement[3]);
         try w.writeByte('m');
     }
 
     var col: u16 = 0;
     while (col < row.columns) : (col += 1) {
-        try placeholderCell(w, row.row, col, @truncate(row.id.raw() >> 24));
+        try placeholderCell(w, row.row, col, id[0]);
     }
 
     try w.writeAll(seq.csi ++ "39m");

@@ -179,11 +179,11 @@ pub const Stripper = struct {
                 const rest = bytes[i..];
                 if (rest.len >= 2) switch (rest[1]) {
                     '[' => if (framing.parseCsi(rest)) |c| {
-                        i += c.len.raw();
+                        i += rest[0..c.len.raw()].len;
                         continue;
                     },
                     ']', 'P', 'X', '^', '_' => if (framing.parseControlString(rest)) |c| {
-                        i += c.len.raw();
+                        i += rest[0..c.len.raw()].len;
                         continue;
                     },
                     else => {},

@@ -345,6 +345,7 @@ fn capabilityQuestion(reply: tcap.CapabilityReply) ?Probe.Question {
     var count = false;
     while (it.next()) |capability| {
         var name: [8]u8 = undefined;
+        // glint-ignore: Z026 -- a name that does not decode into 8 bytes is none of the questions asked
         const n = capability.decodeName(&name) catch continue;
         if (std.mem.eql(u8, n, "Tc") or std.mem.eql(u8, n, "RGB")) return .truecolor;
         if (std.mem.eql(u8, n, "Co")) count = true;

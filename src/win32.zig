@@ -20,6 +20,7 @@
 //! asks for the other shape, and the rest is the caller's.
 
 const std = @import("std");
+const aegis = @import("aegis");
 const key = @import("key/event.zig");
 const mouse = @import("mouse.zig");
 
@@ -486,7 +487,7 @@ pub const ConsoleDecoder = struct {
     /// generates a fake left-Ctrl press and a right-Alt press, and treats the
     /// Ctrl as genuine only when they are more than 50 ms apart:
     /// https://github.com/microsoft/terminal/blob/main/src/terminal/input/terminalInput.cpp#L363-L375
-    pub const altgr_window: std.Io.Duration = .fromMilliseconds(50);
+    pub const altgr_window: std.Io.Duration = aegis.units.Duration(.millisecond, u32).fromRaw(50).toIoDuration();
 
     /// What a half-arrived character is held in.
     state: ConsoleState = .{},

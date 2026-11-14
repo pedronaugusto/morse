@@ -632,6 +632,7 @@ fn keypad(w: anytype, enc: KeyEncoding, param: u16, any: bool, final: u8, normal
 /// Writes `cp` as UTF-8.
 fn writeCodepoint(w: anytype, cp: u21) !void {
     var buffer: [4]u8 = undefined;
+    // glint-ignore: Z026 -- a surrogate has no UTF-8 form, so a key holding one writes no text
     const n = std.unicode.utf8Encode(cp, &buffer) catch return;
     try w.writeAll(buffer[0..n]);
 }
