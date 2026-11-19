@@ -239,8 +239,9 @@ pub const KeyParser = struct {
     pub const min_buffer = 64;
 
     /// What a sequence too long for the buffer is still waiting for, while
-    /// the rest of it is skipped past.
-    const Skipping = enum {
+    /// the rest of it is skipped past. Kept only by `KeyParser`: the type of
+    /// a private field.
+    pub const Skipping = enum {
         /// A control string: `OSC`, `DCS`, `SOS`, `PM` or `APC`. It ends at
         /// `BEL`, or at the `ESC` that either opens its `ST` or begins the
         /// next sequence.

@@ -835,6 +835,11 @@ test {
     _ = @import("win32.zig");
 }
 
+test "each type a public field holds is named from morse's root" {
+    try std.testing.expect(?KeyParser.Skipping == @FieldType(KeyParser, "skipping"));
+    try std.testing.expect(Stripper.State == @FieldType(Stripper, "state"));
+}
+
 test "a frame's lengths, counted through cost, add up to what it writes" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();

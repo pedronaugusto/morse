@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- The type each public field holds is public, where it was private and a caller could not name what the field holds (glint Z012): `KeyParser.skipping` holds `KeyParser.Skipping`, `Stripper.state` `Stripper.State`. Each field stays private as its doc says; no field or behaviour changed.
+
 ### Changed
 
 - The development build pins preflight ci-standard 9c18016 and shakedown b99b768, the family's target, where it pinned preflight f991816 and shakedown 327bc61; ci.yml regenerated (`bay dev generate`).

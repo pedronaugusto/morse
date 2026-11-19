@@ -37,7 +37,9 @@ pub const Stripper = struct {
     /// Private: how many of `held` there are.
     held_len: u2 = 0,
 
-    const State = enum {
+    /// Where a piece ended, in text or inside a sequence. Kept only by
+    /// `Stripper`: the type of a private field.
+    pub const State = enum {
         /// Between sequences.
         text,
         /// Just past an `ESC`.
