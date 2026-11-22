@@ -12,6 +12,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- morse's own development holds it to the family's policy: `"policy": "family"` in ci/preflight.json, beside the hardened profile ci/workflow.json already declares; the hardened and hardened-tsan legs pass.
 - The development build pins preflight ci-standard 9c18016 and shakedown b99b768, the family's target, where it pinned preflight f991816 and shakedown 327bc61; ci.yml regenerated (`bay dev generate`).
 - Pins aegis f52eabe (the aegis line, with `Id.raws`), the one aegis the family moves to together; the development build pins preflight ci-standard f991816 and shakedown 327bc61, whose fuzz runner takes the options preflight passes it; ci.yml regenerated (`bay generate`).
 - Pins aegis dc3ed602, still 0.2.4: additive commits after 3c0b13e (the role declarations a linter reads, `lint_rules`; `eql` and `compare` on the checked integers; Duration's ratio, mod, negate and abs), the aegis reactor, airlock and the packages built with them pin, so a plain build holds one aegis. Nothing this package calls changed.
