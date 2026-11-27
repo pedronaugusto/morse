@@ -18,6 +18,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Pins aegis dc3ed602, still 0.2.4: additive commits after 3c0b13e (the role declarations a linter reads, `lint_rules`; `eql` and `compare` on the checked integers; Duration's ratio, mod, negate and abs), the aegis reactor, airlock and the packages built with them pin, so a plain build holds one aegis. Nothing this package calls changed.
 - Pins aegis 0.3 (breaking-0.3 a34e694) and shakedown on it, the one aegis the family builds with; morse uses nothing aegis 0.3 renamed.
 - Mixed operators are parenthesized where Zig master refuses them as ambiguous (`a << b | c`, `a / b % c`): the parentheses say what Zig 0.17 already did, and nothing changes at runtime.
+- Pins aegis 0.5.0.
 
 ## [0.8.6] - 2026-10-27
 
