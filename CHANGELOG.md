@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-27
+
 ### Breaking
 
 - The type each public field holds is public, where it was private and a caller could not name what the field holds (glint Z012): `KeyParser.skipping` holds `KeyParser.Skipping`, `Stripper.state` `Stripper.State`. Each field stays private as its doc says; no field or behaviour changed.
@@ -858,7 +860,8 @@ First release. Requires Zig 0.16.0.
   1016 reports, `Button` and `MouseEvent`, and `toCells` for converting a
   pixel report to cells.
 
-[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.8.6...HEAD
+[Unreleased]: https://github.com/pedronaugusto/morse/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/pedronaugusto/morse/compare/v0.8.6...v0.9.0
 [0.8.6]: https://github.com/pedronaugusto/morse/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/pedronaugusto/morse/compare/v0.8.3...v0.8.5
 [0.8.3]: https://github.com/pedronaugusto/morse/compare/v0.8.2...v0.8.3
